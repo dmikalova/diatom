@@ -40,8 +40,8 @@ github.com/clipperhouse/uax29/v2 v2.7.0 h1:+gs4oBZ2gPfVrKPthwbMzWZDaAFPGYK72F0NJ
 github.com/clipperhouse/uax29/v2 v2.7.0/go.mod h1:EFJ2TJMRUaplDxHKj1qAEhCtQPW2tJSwu5BF98AuoVM=
 github.com/dlclark/regexp2/v2 v2.2.1 h1:mf4KkFUj0gJuarK8P+LgiS+Lit7m9N1yAwEfPbee7R0=
 github.com/dlclark/regexp2/v2 v2.2.1/go.mod h1:avUrQvPaLz2DrFNHJF0taWAFFX2C1GMSSoeiqFjcBmU=
-github.com/dmikalova/project-standards v1.31.2 h1:cDnHfg7u06M+9l8ursI2mRmF8XCD2sz8BwcONwjhVRk=
-github.com/dmikalova/project-standards v1.31.2/go.mod h1:vMyQZMZJDOLqw0CEPeE9aixdLzWmxB+GxGxPmtr/70s=
+github.com/dmikalova/project-standards v1.32.0 h1:zoyBpu4NgHLijQyoW1MSGLKNCVmiOTYWLcYtCWMKlkQ=
+github.com/dmikalova/project-standards v1.32.0/go.mod h1:vMyQZMZJDOLqw0CEPeE9aixdLzWmxB+GxGxPmtr/70s=
 github.com/go-toolsmith/astcopy v1.0.2 h1:YnWf5Rnh1hUudj11kei53kI57quN/VH6Hp1n+erozn0=
 github.com/go-toolsmith/astcopy v1.0.2/go.mod h1:4TcEdbElGc9twQEYpVo/aieIXfHhiuLh4aLAck6dO7Y=
 github.com/go-toolsmith/astequal v1.0.0/go.mod h1:H+xSiq0+LtiDC11+h1G32h7Of5O3CYFJ99GVbS5lDKY=

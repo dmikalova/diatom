@@ -7,7 +7,7 @@ require (
 	charm.land/bubbletea/v2 v2.0.10
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/bluekeyes/go-gitdiff v0.9.0
-	github.com/dmikalova/project-standards v1.31.2
+	github.com/dmikalova/project-standards v1.32.0
 	go.yaml.in/yaml/v3 v3.0.4
 )
 
