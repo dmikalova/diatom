@@ -46,7 +46,7 @@ func NewQuestions(env Env) *Questions {
 	area.Placeholder = "Your answer. enter sends it, shift+enter adds a line, esc goes back."
 	area.ShowLineNumbers = false
 	area.Prompt = ""
-	area.KeyMap.InsertNewline = newline
+	editKeys(&area)
 	area.SetStyles(plainStyles())
 	q := &Questions{env: env, area: area, width: 80, height: 24}
 	q.reload()
@@ -124,11 +124,22 @@ func (m *Questions) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "r":
 			m.reload()
 		}
+	default:
+		// Pastes, the clipboard's replies and the cursor's blink are the
+		// answer box's.
+		if m.answering {
+			var cmd tea.Cmd
+			m.area, cmd = m.area.Update(msg)
+			return m, cmd
+		}
 	}
 	return m, nil
 }
 
 func (m *Questions) updateAnswer(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if cmd, ok := cut(&m.area, msg); ok {
+		return m, cmd
+	}
 	switch msg.String() {
 	case "esc":
 		m.answering = false

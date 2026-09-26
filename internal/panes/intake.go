@@ -34,7 +34,7 @@ func NewIntake(env Env) *Intake {
 	area := textarea.New()
 	area.ShowLineNumbers = false
 	area.Prompt = ""
-	area.KeyMap.InsertNewline = newline
+	editKeys(&area)
 	area.SetStyles(plainStyles())
 	area.Focus()
 	m := &Intake{env: env, area: area, width: 80, height: 12}
@@ -61,9 +61,37 @@ func plainStyles() textarea.Styles {
 	return s
 }
 
-// newline adds a line to the text instead of sending it. shift+enter needs a
-// terminal that tells it apart from enter; alt+enter and ctrl+j work in any.
-var newline = keybind.NewBinding(keybind.WithKeys("shift+enter", "alt+enter", "ctrl+j"))
+// The keys the text boxes edit with, beside the text box's own. The shifted
+// ones need a terminal that tells them apart, as zellij and Ghostty do; the
+// alt ones work in any. ctrl+g, the text box's own select-all, is zellij's
+// lock.
+var (
+	// newline adds a line to the text instead of sending it.
+	newline   = keybind.NewBinding(keybind.WithKeys("shift+enter", "alt+enter", "ctrl+j"))
+	selectAll = keybind.NewBinding(keybind.WithKeys("alt+a", "ctrl+shift+a"))
+	copyText  = keybind.NewBinding(keybind.WithKeys("ctrl+shift+c", "alt+c"))
+	cutText   = keybind.NewBinding(keybind.WithKeys("ctrl+x", "alt+x"))
+)
+
+// editKeys gives a text box the panes' editing keys. Pasting, with the
+// terminal's paste or ctrl+v, and selecting with shift and the arrows are the
+// text box's own.
+func editKeys(area *textarea.Model) {
+	area.KeyMap.InsertNewline = newline
+	area.KeyMap.SelectAll = selectAll
+	area.KeyMap.CopySelection = copyText
+}
+
+// cut copies the selected text and deletes it, which the text box has no key
+// for.
+func cut(area *textarea.Model, msg tea.KeyPressMsg) (tea.Cmd, bool) {
+	if !keybind.Matches(msg, cutText) || !area.HasSelection() {
+		return nil, false
+	}
+	cmd := area.CopySelection()
+	area.DeleteSelection()
+	return cmd, true
+}
 
 func (m *Intake) reload() {
 	fc, err := m.env.Focus.Read()
@@ -120,6 +148,9 @@ func (m *Intake) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.flash = ""
+		if cmd, ok := cut(&m.area, msg); ok {
+			return m, cmd
+		}
 	}
 	var cmd tea.Cmd
 	m.area, cmd = m.area.Update(msg)

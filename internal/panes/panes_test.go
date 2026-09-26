@@ -110,6 +110,10 @@ func key(m tea.Model, keys ...string) {
 			msg = tea.KeyPressMsg{Code: tea.KeyEscape}
 		case "shift+enter":
 			msg = tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift}
+		case "alt+a", "alt+c":
+			msg = tea.KeyPressMsg{Code: rune(k[4]), Mod: tea.ModAlt}
+		case "ctrl+x":
+			msg = tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl}
 		default:
 			r, _ := utf8.DecodeRuneInString(k)
 			msg = tea.KeyPressMsg{Code: r, Text: k}
@@ -516,5 +520,28 @@ func TestStatusEndsAndLandsAGoal(t *testing.T) {
 	if tip, err := bare.RevParse(ctx, "main"); err != nil || s.err != nil ||
 		!strings.Contains(s.render(), "pushed, waiting to show up on origin/main") {
 		t.Errorf("after two U: main upstream %s, %v, %v\n%s", tip, err, s.err, s.render())
+	}
+}
+
+func TestPasteAndCut(t *testing.T) {
+	f := newFixture(t)
+	q := NewQuestions(f.env)
+	key(q, "enter")
+	q.Update(tea.PasteMsg{Content: "pasted from elsewhere"})
+	if q.area.Value() != "pasted from elsewhere" {
+		t.Fatalf("answer after a paste = %q", q.area.Value())
+	}
+	// Selecting all and cutting empties it; the clipboard write is the
+	// command key throws away, so the test leaves the real clipboard alone.
+	key(q, "alt+a", "ctrl+x")
+	if q.area.Value() != "" {
+		t.Errorf("answer after select all and cut = %q", q.area.Value())
+	}
+
+	in := NewIntake(f.env)
+	in.Update(tea.PasteMsg{Content: "a pasted intake"})
+	key(in, "alt+a", "ctrl+x")
+	if in.area.Value() != "" {
+		t.Errorf("intake after select all and cut = %q", in.area.Value())
 	}
 }
