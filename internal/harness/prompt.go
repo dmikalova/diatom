@@ -211,7 +211,12 @@ func writeTriage(b *strings.Builder, repo Repo) error {
 			"planned: its grilling starts another round with it.\n",
 	)
 	b.WriteString(
-		"  - `diatom task new-goal <id> -title \"<title>\" [-plan <plan.yaml>] < description` " +
+		"  - `diatom task after <id> -goal <goal> -after <goal>,<goal>` makes a goal wait for others: " +
+			"none of its work starts until they are finished, merged upstream. Name goals by name, or by " +
+			"the title of one you start in this session. No -after clears it.\n",
+	)
+	b.WriteString(
+		"  - `diatom task new-goal <id> -title \"<title>\" [-after <goals>] [-plan <plan.yaml>] < description` " +
 			"starts a new goal, which is grilled before any work starts. Pass -plan only when the input already " +
 			"decides everything, workstreams and tasks: the goal then skips grilling and waits for the human " +
 			"to sign the plan off. The plan's format is below.\n\n",
@@ -223,7 +228,9 @@ func writeTriage(b *strings.Builder, repo Repo) error {
 			"- New intent becomes a new goal, or several when the input covers separate things that land " +
 			"apart. Draw each goal's description from the input and the files it points at, so grilling " +
 			"starts from everything it needs.\n" +
-			"- Anything unclear, or that needs a design decision, is a question to the human.\n\n" +
+			"- Anything unclear, or that needs a design decision, is a question to the human.\n" +
+			"- When goals would edit the same code, or the human orders them, make the later ones wait " +
+			"for the earlier: goals that run side by side only meet when they land.\n\n" +
 			"The goal the human was looking at when they sent it is noted in the intake: a hint, not a rule. " +
 			"You can't add a workstream: ask instead. Mark each intake done once it is sorted.\n\n",
 	)
@@ -257,6 +264,9 @@ func writeTriage(b *strings.Builder, repo Repo) error {
 // work can be placed after.
 func writeGoal(b *strings.Builder, s *queue.Store, g *queue.Goal) error {
 	fmt.Fprintf(b, "### %s: %s (%s)\n\n", g.Name, g.Title, g.State)
+	if len(g.After) > 0 {
+		fmt.Fprintf(b, "Waits for: %s\n\n", strings.Join(g.After, ", "))
+	}
 	if len(g.Workstreams) > 0 {
 		b.WriteString("Workstreams:")
 		for _, w := range g.Workstreams {

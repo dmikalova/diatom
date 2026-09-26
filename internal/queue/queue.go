@@ -66,6 +66,10 @@ type Goal struct {
 	Base        string       `yaml:"base"`
 	Created     time.Time    `yaml:"created"`
 	Workstreams []Workstream `yaml:"workstreams,omitempty"`
+	// After names the goals this one waits for: none of its work starts,
+	// grilling included, until each is finished, merged upstream with its
+	// checks passing (ADR 0003).
+	After []string `yaml:"after,omitempty"`
 }
 
 // Workstream is a named line of work within a goal, with its own branch and

@@ -160,6 +160,20 @@ func TestStatus(t *testing.T) {
 	s.Update(tickMsg{})
 }
 
+func TestStatusShowsWaitingGoal(t *testing.T) {
+	f := newFixture(t)
+	if err := f.store.CreateGoal(&queue.Goal{Name: "later", State: queue.GoalActive}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.SetAfter("later", []string{"set"}); err != nil {
+		t.Fatal(err)
+	}
+	if out := ansi.Strip(NewStatus(context.Background(), f.env).render()); !strings.Contains(out,
+		"waiting for set to finish") {
+		t.Errorf("status:\n%s", out)
+	}
+}
+
 func TestStatusShowsRunningSession(t *testing.T) {
 	f := newFixture(t)
 	task, _ := f.store.Task("set", "0001")

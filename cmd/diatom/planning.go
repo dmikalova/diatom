@@ -17,7 +17,8 @@ import (
 //
 //	diatom task add-task <id> -goal <goal> -ws <workstream> -title <title> [-after ids] [-profile p] < body
 //	diatom task feedback <id> -goal <goal> < text
-//	diatom task new-goal <id> -title <title> [-plan plan.yaml] < description
+//	diatom task new-goal <id> -title <title> [-after goals] [-plan plan.yaml] < description
+//	diatom task after <id> -goal <goal> [-after goals]
 //	diatom task plan <id> < plan.yaml
 func planningReport(sub string, args []string, stdin io.Reader, stdout io.Writer) error {
 	fs := flag.NewFlagSet("task "+sub, flag.ContinueOnError)
@@ -45,7 +46,7 @@ func planningReport(sub string, args []string, stdin io.Reader, stdout io.Writer
 	}
 	e := session.Entry{Task: pos[0], Text: string(bytes.TrimSpace(body))}
 	switch sub {
-	case "add-task", "feedback", "new-goal":
+	case "add-task", "after", "feedback", "new-goal":
 		if spec.Kind != queue.Triage {
 			return fmt.Errorf("task %s is only for triage sessions", sub)
 		}
@@ -84,6 +85,8 @@ func planningReport(sub string, args []string, stdin io.Reader, stdout io.Writer
 		)
 	case session.EntryFeedback:
 		_, _ = fmt.Fprintf(stdout, "The feedback will go to goal %s's grilling.\n", e.Goal)
+	case session.EntryAfter:
+		_, _ = fmt.Fprintf(stdout, "Goal %s will wait for %s.\n", e.Goal, orNone(e.After))
 	case session.EntryGoal:
 		if e.Plan != "" {
 			_, _ = fmt.Fprintf(
@@ -116,6 +119,15 @@ func triageEntry(e *session.Entry, sub, goal, title, ws, after, profile, planFil
 		}
 		e.Type, e.Goal = session.EntryFeedback, goal
 		return nil
+	case "after":
+		if goal == "" {
+			return fmt.Errorf(
+				"%w: task after needs -goal, and -after with the goals it waits for",
+				errUsage,
+			)
+		}
+		e.Type, e.Goal, e.After = session.EntryAfter, goal, splitList(after)
+		return nil
 	case "add-task":
 		if goal == "" || ws == "" || strings.TrimSpace(title) == "" {
 			return fmt.Errorf("%w: task add-task needs -goal, -ws and -title", errUsage)
@@ -131,7 +143,7 @@ func triageEntry(e *session.Entry, sub, goal, title, ws, after, profile, planFil
 	if strings.TrimSpace(title) == "" {
 		return fmt.Errorf("%w: task new-goal needs -title", errUsage)
 	}
-	e.Type, e.Title = session.EntryGoal, title
+	e.Type, e.Title, e.After = session.EntryGoal, title, splitList(after)
 	if planFile == "" {
 		return nil
 	}
@@ -144,4 +156,11 @@ func triageEntry(e *session.Entry, sub, goal, title, ws, after, profile, planFil
 	}
 	e.Plan = string(b)
 	return nil
+}
+
+func orNone(names []string) string {
+	if len(names) == 0 {
+		return "no other goal"
+	}
+	return strings.Join(names, " and ")
 }

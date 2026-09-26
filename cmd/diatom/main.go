@@ -7,11 +7,12 @@
 //	diatom run
 //	diatom stop [-drain]
 //	diatom status
-//	diatom goal new <name> [-title text] < description
+//	diatom goal new <name> [-title text] [-after goal,goal] < description
 //	diatom goal new <name> [-title text] -ws engine,cards:engine -active
 //	diatom goal plan|approve <name>
 //	diatom goal list
 //	diatom goal activate|park|pin|unpin <name>
+//	diatom goal after <name> [goal...]
 //	diatom goal done <name> [-force]
 //	diatom goal finish <name> [-push | -prs] [-remote origin] [-force]
 //	diatom task add -goal <goal> -ws <workstream> [-kind planned] [-profile name]
@@ -118,11 +119,12 @@ const usage = `Usage:
   diatom run                        run the scheduler; Ctrl-C suspends its sessions
   diatom stop [-drain]              suspend the running scheduler, or let it drain
   diatom status                     show every goal in the repo
-  diatom goal new <name> [-title text] < description   grill a new goal
+  diatom goal new <name> [-title text] [-after a,b] < description   grill a new goal
   diatom goal new <name> -ws engine,cards:engine -active   skip grilling
   diatom goal plan|approve <name>   show or sign off a goal's plan
   diatom goal list
   diatom goal activate|park|pin|unpin <name>
+  diatom goal after <name> [goal...]   wait for those goals to finish; none clears it
   diatom goal done <name> [-force]  finish a goal and lay it out for landing
   diatom goal finish <name> [-push | -prs] [-remote origin]   land a done goal
   diatom task add -goal <goal> -ws <workstream> [-kind planned] [-profile name]

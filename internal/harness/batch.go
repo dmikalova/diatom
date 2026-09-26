@@ -65,7 +65,7 @@ func (h *Harness) runBatch(ctx context.Context, repo Repo, b schedule.Batch) err
 	main := git.Repo{Dir: s.Repo()}
 	wt := git.Repo{Dir: s.WorktreeDir(g.Name, b.Workstream)}
 	unlock := h.lockRepo(s.Repo())
-	err = main.CreateBranch(ctx, g.IntegrationBranch(), g.Base)
+	err = main.CreateBranch(ctx, g.IntegrationBranch(), goalStart(ctx, main, g))
 	if err == nil {
 		err = main.EnsureWorktree(
 			ctx,

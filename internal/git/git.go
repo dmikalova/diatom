@@ -158,6 +158,16 @@ func (r Repo) IsIgnored(ctx context.Context, path string) bool {
 	return err == nil
 }
 
+// Upstream returns the remote-tracking branch branch follows, such as
+// origin/main, or "" when it follows none.
+func (r Repo) Upstream(ctx context.Context, branch string) string {
+	up, err := r.Run(ctx, "rev-parse", "--abbrev-ref", "--symbolic-full-name", branch+"@{upstream}")
+	if err != nil {
+		return ""
+	}
+	return up
+}
+
 // IsAncestor reports whether a is an ancestor of, or the same commit as, b.
 func (r Repo) IsAncestor(ctx context.Context, a, b string) (bool, error) {
 	_, err := r.Run(ctx, "merge-base", "--is-ancestor", a, b)

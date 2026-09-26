@@ -68,6 +68,8 @@ diatom goal new new-set -title "Implement the new set" < goal.md   # grilled fir
 diatom goal plan new-set
 diatom goal approve new-set
 
+diatom goal after sweep catalog   # the sweep waits until catalog is finished
+
 # Or skip grilling and write the tasks by hand.
 diatom goal new hotfix -ws engine -active
 diatom task add -goal hotfix -ws engine "Fix ward stacking" < fix.md

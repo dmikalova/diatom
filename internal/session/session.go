@@ -112,6 +112,8 @@ const (
 	EntryAdd = "add"
 	// EntryFeedback is feedback triage passes to a goal in grilling.
 	EntryFeedback = "feedback"
+	// EntryAfter sets the goals Goal waits for to After.
+	EntryAfter = "after"
 	// EntryGoal is a new goal triage starts from part of an intake.
 	EntryGoal = "goal"
 	// EntryPlan is the plan grilling hands in, as YAML in Text.
@@ -157,9 +159,9 @@ type Report struct {
 	Questions []Entry
 	// Notes are the notes the agent added, in order.
 	Notes []Entry
-	// Adds, Feedback, Goals and Plans are what triage and grilling handed
-	// in, in order.
-	Adds, Feedback, Goals, Plans []Entry
+	// Adds, Feedback, Goals, Afters and Plans are what triage and grilling
+	// handed in, in order.
+	Adds, Feedback, Goals, Afters, Plans []Entry
 }
 
 // ReadReport reads the session's report.
@@ -192,6 +194,8 @@ func ReadReport(dir string) (Report, error) {
 			r.Adds = append(r.Adds, e)
 		case EntryFeedback:
 			r.Feedback = append(r.Feedback, e)
+		case EntryAfter:
+			r.Afters = append(r.Afters, e)
 		case EntryGoal:
 			r.Goals = append(r.Goals, e)
 		case EntryPlan:

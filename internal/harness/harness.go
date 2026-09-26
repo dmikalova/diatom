@@ -15,6 +15,7 @@ import (
 	"github.com/dmikalova/diatom/internal/config"
 	"github.com/dmikalova/diatom/internal/finish"
 	"github.com/dmikalova/diatom/internal/gate"
+	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/hook"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/runner"
@@ -254,6 +255,11 @@ func (h *Harness) loadGoal(
 	if err != nil {
 		return nil, err
 	}
+	if waiting := s.Waiting(g); len(waiting) > 0 {
+		// Nothing starts, grilling included, until the goals it waits for
+		// have landed: its branch then starts from them (ADR 0003).
+		return nil, nil
+	}
 	switch {
 	case g.Name == queue.IntakeGoal:
 	case g.State == queue.GoalActive:
@@ -322,6 +328,20 @@ func stillBlocked(task, answered string, open []*queue.Question) bool {
 		}
 	}
 	return false
+}
+
+// goalStart is where a goal's integration branch starts: its base branch,
+// or the upstream branch that one follows when it is ahead, as it is once a
+// goal this one waited for has landed there and before the human has pulled.
+func goalStart(ctx context.Context, main git.Repo, g *queue.Goal) string {
+	up := main.Upstream(ctx, g.Base)
+	if up == "" {
+		return g.Base
+	}
+	if ahead, err := main.IsAncestor(ctx, g.Base, up); err != nil || !ahead {
+		return g.Base
+	}
+	return up
 }
 
 // watchTimeout bounds one check of a done goal's landing upstream.

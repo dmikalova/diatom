@@ -167,8 +167,8 @@ func (h *Harness) runPlanning(
 	unlock := h.lockRepo(s.Repo())
 	var err error
 	if g.Name == queue.IntakeGoal {
-		err = main.EnsureDetached(ctx, wt.Dir, g.Base)
-	} else if err = main.CreateBranch(ctx, g.IntegrationBranch(), g.Base); err == nil {
+		err = main.EnsureDetached(ctx, wt.Dir, goalStart(ctx, main, g))
+	} else if err = main.CreateBranch(ctx, g.IntegrationBranch(), goalStart(ctx, main, g)); err == nil {
 		err = main.EnsureDetached(ctx, wt.Dir, g.IntegrationBranch())
 	}
 	unlock()
@@ -283,10 +283,60 @@ func (h *Harness) applyTriage(
 			return err
 		}
 	}
+	// Goals first, so one can wait for another started beside it.
+	started := map[string]string{}
+	var waits []session.Entry
 	for _, e := range report.Goals {
-		if err := h.startGoal(ctx, repo, e); err != nil {
+		g, err := h.startGoal(ctx, repo, e)
+		if err != nil {
 			return err
 		}
+		started[strings.ToLower(e.Title)] = g.Name
+		if len(e.After) > 0 {
+			waits = append(waits, session.Entry{Task: e.Task, Goal: g.Name, After: e.After})
+		}
+	}
+	for _, e := range append(waits, report.Afters...) {
+		if err := h.setAfter(s, e, started, ask); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// setAfter makes a goal wait for others, each named by its name or title,
+// or asks the human when that can't be done.
+func (h *Harness) setAfter(
+	s *queue.Store,
+	e session.Entry,
+	started map[string]string,
+	ask func(task, text string) error,
+) error {
+	goals, err := s.Goals()
+	if err != nil {
+		return err
+	}
+	resolve := func(ref string) string {
+		if name, ok := started[strings.ToLower(ref)]; ok {
+			return name
+		}
+		for _, g := range goals {
+			if g.Name == ref || strings.EqualFold(g.Title, ref) {
+				return g.Name
+			}
+		}
+		return ref
+	}
+	after := make([]string, 0, len(e.After))
+	for _, ref := range e.After {
+		after = append(after, resolve(ref))
+	}
+	if err := s.SetAfter(resolve(e.Goal), after); err != nil {
+		return ask(
+			e.Task,
+			fmt.Sprintf("Triage wanted goal %s to wait for %s, but %v. Should it wait, "+
+				"and for what?", e.Goal, strings.Join(e.After, ", "), err),
+		)
 	}
 	return nil
 }
@@ -371,7 +421,7 @@ func (h *Harness) applyAdd(repo Repo, e session.Entry, ask func(task, text strin
 // startGoal starts a goal triage handed in. It is grilled first, unless
 // triage handed in its plan too because the work was already decided: then
 // the plan waits for the human's sign-off straight away.
-func (h *Harness) startGoal(ctx context.Context, repo Repo, e session.Entry) error {
+func (h *Harness) startGoal(ctx context.Context, repo Repo, e session.Entry) (*queue.Goal, error) {
 	s := repo.Store
 	body := e.Text
 	if body == "" {
@@ -380,15 +430,15 @@ func (h *Harness) startGoal(ctx context.Context, repo Repo, e session.Entry) err
 	g, err := plan.NewGoal(ctx, s, "", e.Title, body,
 		queue.Origin{Type: "triage", Ref: e.Task}, h.now())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	h.log().Info("new goal from triage", "repo", s.Repo(), "goal", g.Name, "planned", e.Plan != "")
 	if e.Plan == "" {
-		return nil
+		return g, nil
 	}
 	tasks, err := s.Tasks(g.Name)
 	if err != nil || len(tasks) == 0 {
-		return err
+		return g, err
 	}
 	grill := tasks[0]
 	p, err := plan.Parse([]byte(e.Plan))
@@ -399,17 +449,17 @@ func (h *Harness) startGoal(ctx context.Context, repo Repo, e session.Entry) err
 		// Grilling starts from the draft instead.
 		grill.Body = appendSection(grill.Body, "A plan triage drafted, which didn't hold up",
 			err.Error()+"\n\n```yaml\n"+strings.TrimSpace(e.Plan)+"\n```")
-		return s.SaveTask(g.Name, grill)
+		return g, s.SaveTask(g.Name, grill)
 	}
 	if err := plan.Save(s.GoalDir(g.Name), p); err != nil {
-		return err
+		return g, err
 	}
 	grill.Body = appendSection(
 		grill.Body,
 		"Planned by triage",
 		"The work was already decided, so triage handed in the plan and there was nothing to grill.",
 	)
-	return s.Move(g.Name, grill, queue.Done)
+	return g, s.Move(g.Name, grill, queue.Done)
 }
 
 // applyPlan saves the plan grilling handed in, and reports which grilling

@@ -62,6 +62,8 @@ type goalRow struct {
 	// intake marks the row of the intake triage is sorting, which isn't a
 	// goal of the human's.
 	intake bool
+	// waiting names the goals this one waits for that aren't finished.
+	waiting []string
 }
 
 // Status shows every goal in the repo, the intake triage is sorting, and the
@@ -145,7 +147,12 @@ func (s *Status) reload() {
 }
 
 func (s *Status) row(store *queue.Store, g *queue.Goal) (goalRow, error) {
-	row := goalRow{repo: store.Repo(), goal: g, counts: map[queue.State]int{}}
+	row := goalRow{
+		repo:    store.Repo(),
+		goal:    g,
+		counts:  map[queue.State]int{},
+		waiting: store.Waiting(g),
+	}
 	tasks, err := store.Tasks(g.Name)
 	if err != nil {
 		return row, err
@@ -578,6 +585,14 @@ func (s *Status) renderRow(b *strings.Builder, i int, r goalRow) {
 		b.WriteString(" · " + tui.Color(fmt.Sprintf("%d to review", r.toReview), tui.Yellow))
 	}
 	b.WriteString("\n")
+	if len(r.waiting) > 0 {
+		b.WriteString(
+			"      " + tui.Color(
+				"waiting for "+strings.Join(r.waiting, ", ")+" to finish",
+				tui.Yellow,
+			) + "\n",
+		)
+	}
 	if r.goal.State == queue.GoalDone {
 		b.WriteString("      " + landingLine(r) + "\n")
 	}

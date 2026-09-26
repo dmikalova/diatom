@@ -68,17 +68,45 @@ func cmdGoal(ctx context.Context, args []string, stdin io.Reader, stdout io.Writ
 		}
 		w := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
 		for _, g := range goals {
-			pin := ""
+			var notes []string
 			if g.Pinned {
-				pin = "pinned"
+				notes = append(notes, "pinned")
 			}
-			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", g.Name, g.State, pin, g.Title)
+			if waiting := s.Waiting(g); len(waiting) > 0 {
+				notes = append(notes, "after "+strings.Join(waiting, ","))
+			}
+			_, _ = fmt.Fprintf(
+				w,
+				"%s\t%s\t%s\t%s\n",
+				g.Name,
+				g.State,
+				strings.Join(notes, " "),
+				g.Title,
+			)
 		}
 		return w.Flush()
 	case "done":
 		return goalDone(ctx, s, rest, stdout)
 	case "finish":
 		return goalFinish(ctx, s, rest, stdout)
+	case "after":
+		if len(rest) == 0 {
+			return fmt.Errorf("%w: goal after takes a goal, then the goals it waits for", errUsage)
+		}
+		if err := s.SetAfter(rest[0], rest[1:]); err != nil {
+			return err
+		}
+		if len(rest) == 1 {
+			_, _ = fmt.Fprintf(stdout, "goal %s waits for no other goal\n", rest[0])
+		} else {
+			_, _ = fmt.Fprintf(
+				stdout,
+				"goal %s waits for %s to finish\n",
+				rest[0],
+				strings.Join(rest[1:], " and "),
+			)
+		}
+		return nil
 	case "activate", "park", "pin", "unpin":
 		if len(rest) != 1 {
 			return fmt.Errorf("%w: goal %s takes a goal name", errUsage, sub)
@@ -241,12 +269,19 @@ func goalNew(
 	title := fs.String("title", "", "what the goal is for")
 	ws := fs.String("ws", "", "workstreams, comma-separated, each as name or name:dep+dep")
 	active := fs.Bool("active", false, "start the goal active instead of planning")
+	after := fs.String("after", "", "goals this one waits for, comma-separated, until they finish")
 	name, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(name) != 1 {
 		return fmt.Errorf("%w: goal new takes one goal name", errUsage)
+	}
+	waitFor := splitList(*after)
+	for _, dep := range waitFor {
+		if _, err := s.Goal(dep); err != nil {
+			return fmt.Errorf("goal %s can't wait for %s: %w", name[0], dep, err)
+		}
 	}
 	repo := git.Repo{Dir: s.Repo()}
 	base, err := repo.CurrentBranch(ctx)
@@ -279,12 +314,16 @@ func goalNew(
 		if err != nil {
 			return err
 		}
+		if err := s.SetAfter(g.Name, waitFor); err != nil {
+			return err
+		}
 		_, _ = fmt.Fprintf(
 			stdout,
 			"goal %s created from %s, in planning: grilling starts once `diatom run` "+
-				"picks it up\n",
+				"picks it up%s\n",
 			g.Name,
 			g.Base,
+			waitNote(waitFor),
 		)
 		return nil
 	}
@@ -303,8 +342,37 @@ func goalNew(
 	if err := s.CreateGoal(g); err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintf(stdout, "goal %s created from %s, %s\n", g.Name, base, g.State)
+	if err := s.SetAfter(g.Name, waitFor); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(
+		stdout,
+		"goal %s created from %s, %s%s\n",
+		g.Name,
+		base,
+		g.State,
+		waitNote(waitFor),
+	)
 	return nil
+}
+
+// waitNote says which goals a new goal waits for.
+func waitNote(after []string) string {
+	if len(after) == 0 {
+		return ""
+	}
+	return ", once " + strings.Join(after, " and ") + " finish"
+}
+
+// splitList splits a comma-separated list, dropping empty items.
+func splitList(s string) []string {
+	var out []string
+	for item := range strings.SplitSeq(s, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 // goalApprove signs a goal's plan off (ADR 0010).
@@ -393,7 +461,7 @@ func cmdTask(ctx context.Context, args []string, stdin io.Reader, stdout io.Writ
 		return taskAdd(ctx, rest, stdin, stdout)
 	case session.EntryDone, session.EntryNote, session.EntryAsk:
 		return taskReport(ctx, sub, rest, stdout)
-	case "add-task", "feedback", "new-goal", "plan":
+	case "add-task", "after", "feedback", "new-goal", "plan":
 		return planningReport(sub, rest, stdin, stdout)
 	}
 	return fmt.Errorf("%w: unknown task subcommand %q", errUsage, args[0])
@@ -610,6 +678,9 @@ func cmdStatus(ctx context.Context, stdout io.Writer) error {
 			if t.State == queue.Active {
 				active = append(active, t.Workstream+"/"+t.ID)
 			}
+		}
+		if waiting := s.Waiting(g); len(waiting) > 0 {
+			active = append(active, "waiting for "+strings.Join(waiting, ","))
 		}
 		_, _ = fmt.Fprintf(w, "%s\t%s\tpending %d\tactive %d\tblocked %d\tdone %d\t%s\n",
 			g.Name, g.State, counts[queue.Pending], counts[queue.Active],

@@ -84,33 +84,28 @@ become one stacked PR each. Four goals:
 | `effect-glyphs`       | gocognit: the `effectGlyphs` exclusion            | The doc itself asks for a glyph-family grilling                    |
 | `mass-mutation-sweep` | Post-Mass-Mutation cleanup sweep, all subsections | Large and heavily overlapping; grilling splits it into workstreams |
 
-**Phase 1:** with the repo focused (`esc` in status), type this into the intake
-pane and press `enter` to send it. `shift+enter` starts a new line:
+With the repo focused (`esc` in status), type this into the intake pane and
+press `enter` to send it. `shift+enter` starts a new line:
 
 ```text
-Turn docs/todo-agent.md into goals, one per ## section, but leave out the
-Post-Mass-Mutation cleanup sweep for now. The ForgeKey and effect catalog
-sections are already decided. Ignore the file's preamble: it's for agents in
-chat, not for you.
+Turn docs/todo-agent.md into goals, one per ## section. The ForgeKey and effect
+catalog sections are already decided. The Post-Mass-Mutation cleanup sweep
+waits for the effect catalog and ForgeKey goals. Ignore the file's preamble:
+it's for agents in chat, not for you.
 ```
 
-Triage reads the file and starts the three goals. It hands in the ForgeKey
-plan with its goal, so that one skips grilling and waits for your sign-off; the
+Triage reads the file and starts the four goals. It hands in the ForgeKey plan
+with its goal, so that one skips grilling and waits for your sign-off; the
 effect catalog may too, if the section decides every task. The effect glyphs
 goal is grilled. The status pane shows the intake as "being sorted" until
 triage is done: open it with `enter` to watch triage work. Anything triage
 can't decide comes to the questions pane, filed under intake.
 
-**Phase 2:** send the sweep only after `effect-catalog` and `forgekey-purge` are
-finished (step 7):
-
-```text
-Turn the Post-Mass-Mutation cleanup sweep in docs/todo-agent.md into a goal.
-```
-
-A goal's branch starts from `main` as it is when the goal is created, and
-diatom doesn't yet pull `main` into a running goal. Created early, the sweep
-would overlap the other two, leaving you to merge by hand when it lands.
+The sweep waits: nothing of it runs, grilling included, until the effect
+catalog and ForgeKey goals are finished (step 7), and status shows it "waiting
+for" them. Its branch then starts from `main` with both landed, pulled or not,
+so it never overlaps them. Set or change what a goal waits for from the command
+line too: `diatom goal after mass-mutation-sweep effect-catalog forgekey-purge`.
 
 The command line works too. `section` prints one `##` section of the file, and
 `diatom goal new` starts a goal from it without triage:

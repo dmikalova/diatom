@@ -666,3 +666,30 @@ func TestSessionState(t *testing.T) {
 		}
 	}
 }
+
+func TestGoalAfter(t *testing.T) {
+	inRepo(t)
+	diatom(t, "", "goal", "new", "catalog", "-ws", "engine", "-active")
+	if code, stdout, stderr := diatom(t, "", "goal", "new", "sweep", "-ws", "engine", "-active",
+		"-after", "catalog"); code != 0 || !strings.Contains(stdout, "once catalog finish") {
+		t.Fatalf("goal new -after = %d %q %q", code, stdout, stderr)
+	}
+	if code, _, stderr := diatom(t, "", "goal", "new", "x", "-after", "nope"); code != 1 ||
+		!strings.Contains(stderr, "nope") {
+		t.Errorf("-after a missing goal = %d %q", code, stderr)
+	}
+	if _, stdout, _ := diatom(t, "", "goal", "list"); !strings.Contains(stdout, "after catalog") {
+		t.Errorf("list = %q", stdout)
+	}
+	if code, _, stderr := diatom(t, "", "goal", "after", "catalog", "sweep"); code != 1 ||
+		!strings.Contains(stderr, "loop") {
+		t.Errorf("a loop = %d %q", code, stderr)
+	}
+	if code, stdout, _ := diatom(t, "", "goal", "after", "sweep"); code != 0 ||
+		!strings.Contains(stdout, "waits for no other goal") {
+		t.Errorf("clearing = %d %q", code, stdout)
+	}
+	if _, stdout, _ := diatom(t, "", "goal", "list"); strings.Contains(stdout, "after") {
+		t.Errorf("list after clearing = %q", stdout)
+	}
+}
