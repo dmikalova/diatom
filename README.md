@@ -42,6 +42,9 @@ echo '.diatom/' >> ~/.config/git/ignore
 
 ## Use
 
+[`docs/walkthrough-vex.md`](docs/walkthrough-vex.md) walks through a whole run
+on vex, from goals to landing them.
+
 ```bash
 cd ~/Code/github.com/dmikalova/vex
 echo 'gate: mage ci:check' > .diatom/config.yaml
