@@ -12,6 +12,7 @@
 //	diatom task add -goal <goal> -ws <workstream> [-kind planned] [-profile name]
 //	                [-after id,id] [-priority n] <title> < body.md
 //	diatom questions
+//	diatom review [-goal <goal>] [-list]
 //	diatom answer <goal> <question> <answer>
 //	diatom version
 //
@@ -67,6 +68,8 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		err = cmdTask(ctx, rest, stdin, stdout)
 	case "questions":
 		err = cmdQuestions(ctx, stdout)
+	case "review":
+		err = cmdReview(ctx, rest, stdout)
 	case "answer":
 		err = cmdAnswer(ctx, rest)
 	case "hook":
@@ -98,6 +101,7 @@ const usage = `Usage:
   diatom task add -goal <goal> -ws <workstream> [-kind planned] [-profile name]
                   [-after id,id] [-priority n] <title> < body.md
   diatom questions                  list open questions
+  diatom review [-goal g] [-list]   review the agents' commits, hunk by hunk
   diatom answer <goal> <question> <answer>
   diatom version
 

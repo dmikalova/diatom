@@ -396,6 +396,42 @@ func (r Repo) CommitMerge(ctx context.Context) (string, error) {
 	return r.RevParse(ctx, "HEAD")
 }
 
+// WriteTree writes the index as a tree and returns it.
+func (r Repo) WriteTree(ctx context.Context) (string, error) {
+	return r.Run(ctx, "write-tree")
+}
+
+// Subject returns a commit's subject line.
+func (r Repo) Subject(ctx context.Context, rev string) (string, error) {
+	return r.Run(ctx, "show", "-s", "--format=%s", rev)
+}
+
+// CommitTree makes a commit of tree on top of HEAD, without the index or the
+// hooks, and moves the checked-out branch to it. The old value makes the move
+// fail rather than lose a commit made in the meantime.
+func (r Repo) CommitTree(ctx context.Context, tree, message string) (string, error) {
+	head, err := r.RevParse(ctx, "HEAD")
+	if err != nil {
+		return "", err
+	}
+	sha, err := r.run(
+		ctx,
+		nil,
+		strings.NewReader(message),
+		"commit-tree",
+		tree,
+		"-p",
+		head,
+		"-F",
+		"-",
+	)
+	if err != nil {
+		return "", err
+	}
+	_, err = r.Run(ctx, "update-ref", "HEAD", sha, head)
+	return sha, err
+}
+
 // Stash saves every change, untracked files included, and cleans the
 // worktree. The work stays reachable in the stash list.
 func (r Repo) Stash(ctx context.Context, message string) error {

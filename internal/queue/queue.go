@@ -141,6 +141,12 @@ type Task struct {
 	// Commits are the commits made by sessions that worked on the task. They
 	// turn a later rejection into a revision with the right context.
 	Commits []string `yaml:"commits,omitempty"`
+	// Revises is the commit a revision reworks; its work lands as a fixup of
+	// that commit (ADR 0003).
+	Revises string `yaml:"revises,omitempty"`
+	// Hunks are the rejections a revision carries, each as <hunk ID>@<seq>
+	// of the review record it came from.
+	Hunks []string `yaml:"hunks,omitempty"`
 	// Usage is the task's share of each session that worked on it.
 	Usage   []Usage   `yaml:"usage,omitempty"`
 	Created time.Time `yaml:"created"`

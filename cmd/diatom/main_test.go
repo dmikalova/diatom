@@ -219,3 +219,84 @@ func TestUsage(t *testing.T) {
 		t.Errorf("version = %q", stdout)
 	}
 }
+
+func TestReviewListAndGoalDone(t *testing.T) {
+	repo := inRepo(t)
+	ctx := context.Background()
+	diatom(t, "", "goal", "new", "set", "-ws", "engine", "-active")
+	r := git.Repo{Dir: repo}
+	if err := os.WriteFile(
+		filepath.Join(repo, "ward.go"),
+		[]byte("package ward\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.StageAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	sha, err := r.Commit(ctx, "feat: ward")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := queue.Open(repo).AddTask("set", &queue.Task{Title: "Add ward", Kind: queue.Planned,
+		Workstream: "engine", Commits: []string{sha}}); err != nil {
+		t.Fatal(err)
+	}
+
+	code, stdout, stderr := diatom(t, "", "review", "-list")
+	if code != 0 || !strings.Contains(stdout, sha[:7]+" ward.go#1 feat: ward (unreviewed)") {
+		t.Fatalf("review -list = %d %q %q", code, stdout, stderr)
+	}
+	if code, _, stderr := diatom(
+		t,
+		"",
+		"goal",
+		"done",
+		"set",
+	); code != 1 ||
+		!strings.Contains(stderr, "1 unreviewed") {
+		t.Errorf("goal done with an unreviewed hunk = %d %q", code, stderr)
+	}
+	if code, stdout, _ := diatom(
+		t,
+		"",
+		"goal",
+		"done",
+		"set",
+		"-force",
+	); code != 0 ||
+		!strings.Contains(stdout, "done") {
+		t.Errorf("goal done -force = %d %q", code, stdout)
+	}
+	if code, _, stderr := diatom(
+		t,
+		"",
+		"review",
+		"-list",
+	); code != 1 ||
+		!strings.Contains(stderr, "no open goal") {
+		t.Errorf("review with every goal done = %d %q", code, stderr)
+	}
+}
+
+func TestReviewGoalChoice(t *testing.T) {
+	inRepo(t)
+	diatom(t, "", "goal", "new", "one", "-ws", "a")
+	diatom(t, "", "goal", "new", "two", "-ws", "a")
+	if code, _, stderr := diatom(
+		t,
+		"",
+		"review",
+		"-list",
+	); code != 2 ||
+		!strings.Contains(stderr, "one, two") {
+		t.Errorf("review with two goals = %d %q", code, stderr)
+	}
+	if code, _, _ := diatom(t, "", "review", "-list", "-goal", "two"); code != 0 {
+		t.Error("review -goal two failed")
+	}
+	if code, _, _ := diatom(t, "", "review", "-list", "-goal", "nope"); code != 1 {
+		t.Error("review of a missing goal succeeded")
+	}
+}

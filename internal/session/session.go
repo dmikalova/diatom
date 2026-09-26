@@ -82,6 +82,9 @@ type Entry struct {
 	Type string `json:"type"`
 	Task string `json:"task"`
 	Text string `json:"text,omitempty"`
+	// Tree is the worktree's files when a revision was marked done, which
+	// splits a session's work into one fixup per revision.
+	Tree string `json:"tree,omitempty"`
 }
 
 // The entry types.
@@ -124,6 +127,8 @@ func Append(dir string, s Spec, e Entry) error {
 type Report struct {
 	// Done are the tasks the agent finished.
 	Done map[string]bool
+	// Finished are the done entries in the order the agent reported them.
+	Finished []Entry
 	// Questions are the questions the agent asked, in order.
 	Questions []Entry
 	// Notes are the notes the agent added, in order.
@@ -151,6 +156,7 @@ func ReadReport(dir string) (Report, error) {
 		switch e.Type {
 		case EntryDone:
 			r.Done[e.Task] = true
+			r.Finished = append(r.Finished, e)
 		case EntryAsk:
 			r.Questions = append(r.Questions, e)
 		case EntryNote:

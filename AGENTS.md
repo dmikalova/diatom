@@ -22,6 +22,8 @@ Run `mage ci:fix && mage ci:check` before calling work done. It must print
 | `internal/hook`          | The PreToolUse git block and the Stop gate (ADR 0005)    |
 | `internal/runner`        | The runner interface, and `claude/` its first backend    |
 | `internal/commitmsg`     | Commit messages on the cheapest profile (ADR 0005)       |
+| `internal/review`        | Hunks, review decisions and the review queue (ADR 0001)  |
+| `internal/reviewui`      | The native reviewer, a Bubble Tea app (ADR 0008)         |
 | `internal/config`        | The config walk-up (ADR 0007)                            |
 
 ## Rules

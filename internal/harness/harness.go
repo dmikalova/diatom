@@ -201,6 +201,9 @@ func (h *Harness) load(ctx context.Context, path string) (Repo, []*schedule.Goal
 		if err := h.applyAnswers(repo.Store, g.Name); err != nil {
 			return repo, nil, err
 		}
+		if err := h.applyReviews(ctx, repo.Store, g.Name); err != nil {
+			return repo, nil, err
+		}
 		tasks, err := repo.Store.Tasks(g.Name)
 		if err != nil {
 			return repo, nil, err

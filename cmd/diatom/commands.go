@@ -22,6 +22,7 @@ import (
 	"github.com/dmikalova/diatom/internal/hook"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/registry"
+	"github.com/dmikalova/diatom/internal/review"
 	"github.com/dmikalova/diatom/internal/runner/claude"
 	"github.com/dmikalova/diatom/internal/session"
 )
@@ -103,7 +104,9 @@ func cmdGoal(ctx context.Context, args []string, stdout io.Writer) error {
 			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", g.Name, g.State, pin, g.Title)
 		}
 		return w.Flush()
-	case "activate", "park", "pin", "unpin", "done":
+	case "done":
+		return goalDone(ctx, s, rest, stdout)
+	case "activate", "park", "pin", "unpin":
 		if len(rest) != 1 {
 			return fmt.Errorf("%w: goal %s takes a goal name", errUsage, sub)
 		}
@@ -116,14 +119,51 @@ func cmdGoal(ctx context.Context, args []string, stdout io.Writer) error {
 			g.State = queue.GoalActive
 		case "park":
 			g.State = queue.GoalParked
-		case "done":
-			g.State = queue.GoalDone
 		default:
 			g.Pinned = sub == "pin"
 		}
 		return s.SaveGoal(g)
 	}
 	return fmt.Errorf("%w: unknown goal subcommand %q", errUsage, args[0])
+}
+
+// goalDone finishes a goal, but first warns about hunks nobody has decided
+// on, deferred ones included (ADR 0001); -force finishes it anyway.
+func goalDone(ctx context.Context, s *queue.Store, args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("goal done", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	force := fs.Bool("force", false, "finish the goal with hunks still unreviewed or deferred")
+	name, err := parseInterspersed(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(name) != 1 {
+		return fmt.Errorf("%w: goal done takes a goal name", errUsage)
+	}
+	g, err := s.Goal(name[0])
+	if err != nil {
+		return err
+	}
+	items, err := review.Load(ctx, s, g.Name)
+	if err != nil {
+		return err
+	}
+	counts := review.Counts(items)
+	if left := counts[""] + counts[review.Defer]; left > 0 && !*force {
+		return fmt.Errorf(
+			"goal %s has %d unreviewed and %d deferred hunks: review them with `diatom review`, "+
+				"or finish it anyway with -force",
+			g.Name,
+			counts[""],
+			counts[review.Defer],
+		)
+	}
+	g.State = queue.GoalDone
+	if err := s.SaveGoal(g); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(stdout, "goal %s is done\n", g.Name)
+	return nil
 }
 
 // goalNew creates a goal on the current branch. Until grilling lands
@@ -230,7 +270,7 @@ func cmdTask(ctx context.Context, args []string, stdin io.Reader, stdout io.Writ
 	case "add":
 		return taskAdd(ctx, rest, stdin, stdout)
 	case session.EntryDone, session.EntryNote, session.EntryAsk:
-		return taskReport(sub, rest, stdout)
+		return taskReport(ctx, sub, rest, stdout)
 	}
 	return fmt.Errorf("%w: unknown task subcommand %q", errUsage, args[0])
 }
@@ -303,8 +343,10 @@ func readBody(stdin io.Reader) (string, error) {
 	return string(b), err
 }
 
-// taskReport is the agent's task tool.
-func taskReport(typ string, args []string, stdout io.Writer) error {
+// taskReport is the agent's task tool. In a revision session, marking a task
+// done also snapshots the worktree, so the harness can commit each revision
+// as its own fixup.
+func taskReport(ctx context.Context, typ string, args []string, stdout io.Writer) error {
 	if len(args) == 0 {
 		return fmt.Errorf("%w: task %s takes a task id", errUsage, typ)
 	}
@@ -316,6 +358,11 @@ func taskReport(typ string, args []string, stdout io.Writer) error {
 		return err
 	}
 	e := session.Entry{Type: typ, Task: args[0], Text: strings.Join(args[1:], " ")}
+	if typ == session.EntryDone && spec.Kind == queue.Revision {
+		if e.Tree, err = (git.Repo{Dir: spec.Worktree}).Fingerprint(ctx); err != nil {
+			return err
+		}
+	}
 	if err := session.Append(dir, spec, e); err != nil {
 		return err
 	}

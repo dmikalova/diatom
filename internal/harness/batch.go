@@ -417,13 +417,13 @@ func (h *Harness) finish(
 		return h.failed(ctx, repo, g, wt, tasks, asked, filepath.Base(dir), output)
 	}
 
-	sha, err := h.commit(ctx, repo, wt, tasks, report.Done)
+	shas, err := h.commit(ctx, repo, wt, b.Kind, g.Base, tasks, report)
 	if err != nil {
 		return h.requeue(s, g.Name, tasks, asked, err)
 	}
 	share := usageShare(filepath.Base(dir), res.Usage, len(tasks))
 	for _, t := range tasks {
-		if sha != "" {
+		if sha := shas[t.ID]; sha != "" {
 			t.Commits = append(t.Commits, sha)
 		}
 		t.Usage = append(t.Usage, share)
@@ -512,26 +512,56 @@ func (h *Harness) failed(
 	return nil
 }
 
-// commit commits the worktree's changes and returns the commit, or "" when
-// there was nothing to commit.
+// commit commits the worktree's changes and returns the commit each task's
+// work landed in: one commit for the batch, or one fixup per revision. A task
+// missing from the map has no commit.
 func (h *Harness) commit(
+	ctx context.Context,
+	repo Repo,
+	wt git.Repo,
+	kind queue.Kind,
+	base string,
+	tasks []*queue.Task,
+	report session.Report,
+) (map[string]string, error) {
+	merging := wt.MergeInProgress(ctx)
+	staged, err := wt.StageAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var sha string
+	switch {
+	case merging:
+		sha, err = wt.CommitMerge(ctx)
+	case !staged:
+	case kind == queue.Revision:
+		finished := make([]sessionDone, 0, len(report.Finished))
+		for _, e := range report.Finished {
+			finished = append(finished, sessionDone{task: e.Task, tree: e.Tree})
+		}
+		return h.commitFixups(ctx, wt, base, tasks, finished)
+	default:
+		sha, err = h.commitMessage(ctx, repo, wt, tasks, report.Done)
+	}
+	if err != nil || sha == "" {
+		return nil, err
+	}
+	shas := map[string]string{}
+	for _, t := range tasks {
+		shas[t.ID] = sha
+	}
+	return shas, nil
+}
+
+// commitMessage commits what is staged with a message from the
+// commit-message profile.
+func (h *Harness) commitMessage(
 	ctx context.Context,
 	repo Repo,
 	wt git.Repo,
 	tasks []*queue.Task,
 	done map[string]bool,
 ) (string, error) {
-	merging := wt.MergeInProgress(ctx)
-	staged, err := wt.StageAll(ctx)
-	if err != nil {
-		return "", err
-	}
-	if merging {
-		return wt.CommitMerge(ctx)
-	}
-	if !staged {
-		return "", nil
-	}
 	stat, diff, err := wt.StagedDiff(ctx)
 	if err != nil {
 		return "", err

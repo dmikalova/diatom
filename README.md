@@ -17,10 +17,10 @@ The scheduler core runs:
 - one scheduler per machine (ADR 0007)
 - questions that park tasks (ADR 0009)
 - sessions with only explicit context (ADR 0011)
+- the reviewer, with revisions landing as fixups (ADRs 0001 and 0008)
 
 Not built yet:
 
-- the reviewer and revisions (ADRs 0001 and 0008)
 - the zellij workspace and its panes (ADR 0007)
 - triage of intake (ADR 0009)
 - grilling and plan sign-off (ADR 0010)
@@ -52,9 +52,17 @@ diatom task add -goal new-set -ws cards -after 0001 "Implement Ward Keeper" < ke
 
 diatom run          # the scheduler; Ctrl-C finishes running sessions, twice stops them
 diatom status       # every goal in every known repo
+diatom review       # approve, reject or defer each hunk the agents committed
 diatom questions    # what the agents need decided
 diatom answer new-set 0001 "Ward does not stack."
+diatom goal done new-set   # refuses while hunks are unreviewed or deferred
 ```
+
+In the reviewer, `a`, `r` and `d` approve, reject and defer the hunk on screen,
+`c` comments on the line under the cursor, `u` steps back through earlier
+decisions, and `v` shows a fixup folded into the commit it revises. A
+rejection's comments become a revision task within seconds, and the agent's fix
+lands as a `fixup!` commit that comes back for review.
 
 Each workstream gets a worktree under `.diatom/goals/<goal>/worktrees/` on the
 branch `diatom/<goal>/ws/<workstream>`. Every commit that passes the gate merges

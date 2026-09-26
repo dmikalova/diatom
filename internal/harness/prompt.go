@@ -75,6 +75,15 @@ func Prompt(in PromptInput) string {
 	}
 
 	switch in.Batch.Kind {
+	case queue.Revision:
+		b.WriteString(
+			"## These are revisions\n\nThe human reviewed commits and rejected some hunks. Each task " +
+				"below carries the rejected hunks of one commit with the comments on them. Work the revisions one " +
+				"at a time, and run `diatom task done <id>` as soon as each is finished, before starting the next: " +
+				"diatom splits your work at those points and commits each revision as a fixup of the commit it " +
+				"revises. A comment may ask for no change once you look into it; say why with `diatom task note` " +
+				"and mark the task done.\n\n",
+		)
 	case queue.Conflict:
 		b.WriteString(
 			"## A merge is in progress\n\nThe integration branch is being merged into this workstream " +
