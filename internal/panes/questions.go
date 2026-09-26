@@ -150,16 +150,34 @@ func (m *Questions) updateAnswer(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.err = err
 			return m, nil
 		}
-		m.answering = false
 		m.area.Reset()
-		m.area.Blur()
 		m.flash = fmt.Sprintf("answered; task %s is ready again", row.q.Task)
-		m.reload()
+		m.next()
 		return m, nil
 	}
 	var cmd tea.Cmd
 	m.area, cmd = m.area.Update(msg)
 	return m, cmd
+}
+
+// next opens the question after the one just answered, which leaving the
+// list has moved into its place, or the first when it was the last. With
+// none left, it goes back to the list.
+func (m *Questions) next() {
+	last := m.sel
+	m.reload()
+	m.scroll = 0
+	if len(m.rows) == 0 {
+		m.answering = false
+		m.area.Blur()
+		m.flash = "answered; no questions left"
+		return
+	}
+	if last >= len(m.rows) {
+		m.sel = 0
+	} else {
+		m.sel = last
+	}
 }
 
 // View implements tea.Model. The count is in the title, which zellij shows

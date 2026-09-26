@@ -277,8 +277,43 @@ func TestQuestions(t *testing.T) {
 	if len(open) != 1 || open[0].Answer != "No, it never\nstacks." {
 		t.Fatalf("answer = %+v", open)
 	}
-	if q.View().WindowTitle != "questions · 0 open" {
-		t.Errorf("an answered question is still counted: %q", q.View().WindowTitle)
+	if q.View().WindowTitle != "questions · 0 open" || q.answering ||
+		!strings.Contains(q.render(), "no questions left") {
+		t.Errorf("after the last answer, titled %q:\n%s", q.View().WindowTitle, q.render())
+	}
+}
+
+func TestAnsweringMovesOn(t *testing.T) {
+	f := newFixture(t)
+	for _, text := range []string{"Second?", "Third?"} {
+		if err := f.store.AddQuestion(
+			"set",
+			&queue.Question{Task: "0001", Text: text},
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	q := NewQuestions(f.env)
+	key(q, "j", "enter") // the second
+	typeText(q, "Two.")
+	key(q, "enter")
+	if out := ansi.Strip(q.render()); !q.answering || !strings.Contains(out, "Third?") ||
+		!strings.Contains(out, "answered; task 0001") {
+		t.Fatalf("after answering, not on the next question:\n%s", out)
+	}
+	typeText(q, "Three.")
+	key(q, "enter") // the last: back round to the first still open
+	if out := ansi.Strip(q.render()); !q.answering || !strings.Contains(out, "Does ward stack?") {
+		t.Fatalf("after the last in the list, not on the first left:\n%s", out)
+	}
+	open, _ := f.store.Questions("set", queue.QuestionOpen)
+	answers := map[string]string{}
+	for _, o := range open {
+		answers[strings.TrimSpace(o.Text)] = o.Answer
+	}
+	if answers["Second?"] != "Two." || answers["Third?"] != "Three." ||
+		answers["Does ward stack?\nIt matters for poison."] != "" {
+		t.Errorf("answers = %v", answers)
 	}
 }
 
