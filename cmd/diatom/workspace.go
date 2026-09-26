@@ -111,7 +111,12 @@ func workspaceLayout(exe, root string) string {
 		for i, a := range args {
 			quoted[i] = q(a)
 		}
-		attrs := fmt.Sprintf("name=%s command=%s", q(name), q(exe))
+		// A pane without a name shows the title its program sets, such as the
+		// questions pane's count.
+		attrs := "command=" + q(exe)
+		if name != "" {
+			attrs = "name=" + q(name) + " " + attrs
+		}
 		if size != "" {
 			attrs += " size=" + q(size)
 		}
@@ -139,7 +144,7 @@ func workspaceLayout(exe, root string) string {
 		pane("            ", "review", "60%", true, "review", "-focus") +
 		"            pane split_direction=\"horizontal\" {\n" +
 		pane("                ", "status", "45%", false, "pane", "status") +
-		pane("                ", "questions", "35%", false, "pane", "questions") +
+		pane("                ", "", "35%", false, "pane", "questions") +
 		pane("                ", "intake", "20%", false, "pane", "intake") +
 		"            }\n" +
 		"        }\n" +

@@ -127,7 +127,8 @@ Each planning goal gets grilling rounds. These are read-only planning sessions
 on Opus that ask questions and then hand in a plan.
 
 1. **Answer questions** in the questions pane: `j`/`k` to move, `enter` to
-   answer, and `enter` again to send it. Each question comes with its context. The next
+   open a question with its full text, `enter` again to send your answer, and
+   `esc` to go back. Each question comes with its context. The next
    round starts only after every question in the current round is answered.
 2. **Review the plan.** When status shows **plan ready**, press `v` to see its
    workstreams and tasks in order (or run `diatom goal plan <goal>`).

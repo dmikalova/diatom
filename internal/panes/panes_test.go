@@ -2,6 +2,7 @@ package panes
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -252,13 +253,22 @@ func TestStatusShowsIntakeBeingSorted(t *testing.T) {
 func TestQuestions(t *testing.T) {
 	f := newFixture(t)
 	q := NewQuestions(f.env)
-	out := q.render()
-	if !strings.Contains(out, "1 open") || !strings.Contains(out, "Does ward stack?") ||
-		!strings.Contains(out, "Add ward") ||
-		!strings.Contains(out, "It matters for poison.") {
-		t.Fatalf("questions:\n%s", out)
+	out := ansi.Strip(q.render())
+	if q.View().WindowTitle != "questions · 1 open · enter answers" ||
+		!strings.Contains(out, "set\n› Does ward stack?") || strings.Contains(out, "questions") {
+		t.Fatalf("questions, titled %q:\n%s", q.View().WindowTitle, out)
 	}
 	key(q, "enter")
+	out = ansi.Strip(q.render())
+	if !strings.Contains(out, "set › task 0001 Add ward") ||
+		!strings.Contains(out, "It matters for poison.") ||
+		!strings.Contains(q.View().WindowTitle, "esc back") {
+		t.Fatalf("question opened:\n%s", out)
+	}
+	key(q, "enter") // nothing typed: nothing sent
+	if !q.answering {
+		t.Fatal("an empty answer closed the question")
+	}
 	typeText(q, "No, it never")
 	key(q, "shift+enter")
 	typeText(q, "stacks.")
@@ -267,10 +277,48 @@ func TestQuestions(t *testing.T) {
 	if len(open) != 1 || open[0].Answer != "No, it never\nstacks." {
 		t.Fatalf("answer = %+v", open)
 	}
-	if !strings.Contains(q.render(), "0 open") {
-		t.Errorf("an answered question is still listed:\n%s", q.render())
+	if q.View().WindowTitle != "questions · 0 open" {
+		t.Errorf("an answered question is still counted: %q", q.View().WindowTitle)
 	}
-	key(q, "enter", "esc")
+}
+
+func TestQuestionsScroll(t *testing.T) {
+	f := newFixture(t)
+	for i := range 20 {
+		if err := f.store.AddQuestion("set", &queue.Question{Task: "0001",
+			Text: fmt.Sprintf("Question %02d?", i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	q := NewQuestions(f.env)
+	q.Update(tea.WindowSizeMsg{Width: 60, Height: 8})
+	for range 15 {
+		key(q, "j")
+	}
+	out := ansi.Strip(q.render())
+	if !strings.Contains(out, "› Question 14?") || strings.Count(out, "\n") > 7 ||
+		strings.Contains(out, "Does ward stack?") {
+		t.Errorf("list after moving down 15, in 8 lines:\n%s", out)
+	}
+	for range 15 {
+		key(q, "k")
+	}
+	if out := ansi.Strip(q.render()); !strings.HasPrefix(out, "set\n› Does ward stack?") {
+		t.Errorf("list back at the top:\n%s", out)
+	}
+	// A long question scrolls above its answer.
+	long := strings.Repeat("A long line of question text. ", 40)
+	if err := f.store.AddQuestion("set", &queue.Question{Task: "0001", Text: long}); err != nil {
+		t.Fatal(err)
+	}
+	q.reload()
+	for range 21 {
+		key(q, "j")
+	}
+	key(q, "enter")
+	if out := ansi.Strip(q.render()); !strings.Contains(out, "pgdn for more") {
+		t.Errorf("a long question didn't offer to scroll:\n%s", out)
+	}
 }
 
 func TestIntake(t *testing.T) {
