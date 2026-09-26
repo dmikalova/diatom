@@ -87,6 +87,12 @@ func newFixture(t *testing.T) *fixture {
 		}
 	}
 	f := &fixture{t: t, repo: r, store: queue.Open(r.Dir)}
+	// diatom relies on .diatom/ being ignored, which a developer's global
+	// excludes do but CI's do not.
+	if err := os.MkdirAll(filepath.Join(r.Dir, ".git", "info"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.write(".git/info/exclude", ".diatom/\n")
 	f.write("ward.go", body("b", "u"))
 	f.commit("chore: start")
 	if err := f.store.CreateGoal(&queue.Goal{Name: "set", State: queue.GoalActive}); err != nil {
