@@ -10,6 +10,8 @@ A goal such as "implement the new set" splits into workstreams with dependencies
 
 **Each goal has an integration branch. Each workstream has a workstream branch off it, in its own worktree.**
 
+- **The branches are `diatom/<goal>/integration` and `diatom/<goal>/ws/<workstream>`.** The integration branch can't simply be `diatom/<goal>`, because git can't hold a branch and branches under the same name.
+
 - **Every commit that passes the gate is merged into the integration branch immediately**, without waiting for review.
 - **A workstream merges the integration branch in before each task**, so downstream work always sees current upstream work.
 - **Workstreams are scoped by purpose, not by path.** The card workstream may edit engine files. When two workstreams edit the same code, the harness creates a conflict-resolution task instead of blocking either one.

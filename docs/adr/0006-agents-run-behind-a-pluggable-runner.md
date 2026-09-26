@@ -23,7 +23,8 @@ Cost matters, but most of the savings come from batching (ADR 0004), model choic
   - return the result (the tasks completed, notes, questions raised, and token usage)
 
   A second backend, such as a direct API loop or tenzing if it gets a license, only has to implement this interface. The interface itself doesn't need to be more general than that.
-- **Each batch starts a fresh session**, so history never accumulates from one batch to the next. Prompts refer to files instead of pasting their contents. Each profile has its own list of allowed tools and a turn limit.
+- **Each batch starts a fresh session**, so history never accumulates from one batch to the next. Prompts refer to the repo's files instead of pasting their contents. A task's own text is the exception and is pasted into the prompt: it is the instruction itself, such as a revision's comments, and agents given only a task file's path worked from its title alone. Each profile has its own list of allowed tools and a turn limit.
+- **A session gets only the context diatom passes in** (ADR 0011).
 - **Every task has a profile**, which the config maps to a model, an effort level, a list of allowed tools and a turn limit:
   - **planning**: grilling, triage, planning, writing ADRs
   - **implementation**: planned work and revisions

@@ -13,7 +13,11 @@ Human feedback should get ahead of planned work, but stopping a session midway l
 1. **Gate repair**: a workstream branch fails its gate, for example after a merge.
 2. **Conflict resolution.**
 3. **Revisions**: rejections with comments.
-4. **Planned work**, in dependency order.
+4. **Triage** of intake (ADR 0009).
+5. **Grilling** rounds (ADR 0010).
+6. **Planned work**, in dependency order.
+
+Triage and grilling come after revisions because a revision corrects work that later tasks are already building on. They come before planned work because they are the human's own input and often change what the planned work should be.
 
 A task waiting on an answer from the human is not ready and is skipped (ADR 0009).
 
