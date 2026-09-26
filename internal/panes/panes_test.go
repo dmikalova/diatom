@@ -292,3 +292,71 @@ func TestStatusSignsOffAPlan(t *testing.T) {
 		t.Errorf("after two s, goal is %s: %v", got.State, s.err)
 	}
 }
+
+// press sends one key and runs the background job it starts, if any, to
+// its end.
+func press(t *testing.T, m tea.Model, k string) {
+	t.Helper()
+	r, _ := utf8.DecodeRuneInString(k)
+	_, cmd := m.Update(tea.KeyPressMsg{Code: r, Text: k})
+	if cmd == nil {
+		return
+	}
+	msg := cmd()
+	if _, ok := msg.(jobMsg); !ok {
+		t.Fatalf("%s started %T, not a job", k, msg)
+	}
+	m.Update(msg)
+}
+
+func TestStatusEndsAndLandsAGoal(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	r := git.Repo{Dir: f.repo}
+	if _, err := r.Run(ctx, "branch", "diatom/set/integration"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.CommitFiles(
+		ctx,
+		"diatom/set/integration",
+		map[string][]byte{"poison.go": []byte("package poison\n")},
+		"feat: poison",
+	); err != nil {
+		t.Fatal(err)
+	}
+	bare := git.Repo{Dir: t.TempDir()}
+	if _, err := bare.Run(ctx, "init", "--bare", "--initial-branch=main"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Run(ctx, "remote", "add", "origin", bare.Dir); err != nil {
+		t.Fatal(err)
+	}
+	s := NewStatus(ctx, f.env)
+
+	press(t, s, "F")
+	if !strings.Contains(s.render(), "isn't done") {
+		t.Error("F landed a goal that isn't done")
+	}
+	press(t, s, "d")
+	press(t, s, "d")
+	if s.err == nil || !strings.Contains(s.err.Error(), "1 unreviewed") {
+		t.Fatalf("d with a hunk unreviewed = %v", s.err)
+	}
+	press(t, s, "D")
+	if g, _ := f.store.Goal("set"); g.State != queue.GoalActive {
+		t.Fatal("one D marked the goal done")
+	}
+	press(t, s, "D")
+	out := s.render()
+	if g, _ := f.store.Goal("set"); g.State != queue.GoalDone ||
+		!strings.Contains(out, "laid out as 1 pull request, not landed yet · F open PRs · U push") {
+		t.Fatalf("after two D, goal is %s: %v\n%s", g.State, s.err, out)
+	}
+
+	press(t, s, "U")
+	press(t, s, "U")
+	if tip, err := bare.RevParse(ctx, "main"); err != nil || s.err != nil ||
+		!strings.Contains(s.render(), "pushed, waiting to show up on origin/main") {
+		t.Errorf("after two U: main upstream %s, %v, %v\n%s", tip, err, s.err, s.render())
+	}
+}

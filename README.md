@@ -70,6 +70,9 @@ base branch without the merges, fixups squashed into the commits they revise,
 and split into one pull request per workstream on `diatom/<goal>/pr/<ws>`, each
 stacked on the one before. `goal finish -prs` pushes those branches and opens
 the stack with `gh`; `-push` pushes the lot straight to the base branch.
+The goal stays in the status pane, which does the same with `d`, `F` and `U`,
+until it is finished: `diatom run` watches the base branch on the remote and
+finishes the goal once it holds all of the goal's changes and its checks pass.
 
 Each workstream gets a worktree under `.diatom/goals/<goal>/worktrees/` on the
 branch `diatom/<goal>/ws/<workstream>`. Every commit that passes the gate merges

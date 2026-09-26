@@ -60,7 +60,7 @@ func (m *Questions) reload() {
 			continue
 		}
 		for _, g := range goals {
-			if g.State == queue.GoalDone {
+			if g.State == queue.GoalDone || g.State == queue.GoalFinished {
 				continue
 			}
 			qs, err := store.Questions(g.Name, queue.QuestionOpen)

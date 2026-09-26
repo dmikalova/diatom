@@ -11,8 +11,12 @@ A unit of intent submitted by the human, such as "implement the new set". A goal
 _Avoid_: prompt, job, project
 
 **Parked**:
-A goal state in which none of the goal's tasks are started. The goal's branches, worktrees and queue are kept as they are, so resuming it loses nothing. The other goal states are planning, active and done.
+A goal state in which none of the goal's tasks are started. The goal's branches, worktrees and queue are kept as they are, so resuming it loses nothing. The other goal states are planning, active, done and finished.
 _Avoid_: paused, suspended, inactive
+
+**Finished**:
+The goal state after done, reached once the goal's work is merged into its base branch upstream and the checks there pass. A done goal's work is over, but it stays in view until it is finished.
+_Avoid_: closed, complete, merged
 
 **Intake**:
 Free-form input from the human, such as a new goal or a handful of playtest notes, waiting to be sorted into goals and tasks.

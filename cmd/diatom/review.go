@@ -85,7 +85,7 @@ func reviewGoal(s *queue.Store, name string) (string, error) {
 	}
 	var open []string
 	for _, g := range goals {
-		if g.State != queue.GoalDone {
+		if g.State != queue.GoalDone && g.State != queue.GoalFinished {
 			open = append(open, g.Name)
 		}
 	}

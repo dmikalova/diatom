@@ -72,6 +72,8 @@ type Result struct {
 	// changed.
 	Carried bool      `yaml:"carried,omitempty"`
 	Built   time.Time `yaml:"built"`
+	// Landing is how far the goal is on its way upstream.
+	Landing *Landing `yaml:"landing,omitempty"`
 }
 
 // Tip is the commit holding all of the goal's work.
@@ -189,6 +191,14 @@ func Build(ctx context.Context, s *queue.Store, g *queue.Goal, opts Options) (*R
 		return nil, err
 	}
 	res.Built = now(opts)
+	// Where and how the goal lands outlives laying it out again.
+	if old, err := Load(s.GoalDir(g.Name)); err == nil && old != nil && old.Landing != nil {
+		res.Landing = &Landing{
+			Remote: old.Landing.Remote,
+			How:    old.Landing.How,
+			PRs:    old.Landing.PRs,
+		}
+	}
 	return res, Save(s.GoalDir(g.Name), res)
 }
 

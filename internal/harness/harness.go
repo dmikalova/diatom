@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/dmikalova/diatom/internal/config"
+	"github.com/dmikalova/diatom/internal/finish"
 	"github.com/dmikalova/diatom/internal/gate"
 	"github.com/dmikalova/diatom/internal/hook"
 	"github.com/dmikalova/diatom/internal/queue"
@@ -38,6 +39,8 @@ type Harness struct {
 	Log  *slog.Logger
 	// Now is the clock; nil uses time.Now.
 	Now func() time.Time
+	// GH runs the GitHub CLI to watch done goals land; nil runs gh.
+	GH finish.GH
 
 	// gitMu holds a *sync.Mutex per repo, serializing the git operations
 	// batches share: creating branches and worktrees, and moving the
@@ -197,6 +200,7 @@ func (h *Harness) load(ctx context.Context, path string) (Repo, []*schedule.Goal
 		return repo, nil, err
 	}
 	var goals []*schedule.Goal
+	h.watchDone(ctx, repo.Store, all)
 	for _, g := range all {
 		if g.State != queue.GoalActive && g.State != queue.GoalPlanning {
 			continue
@@ -322,6 +326,42 @@ func (h *Harness) Recover(ctx context.Context) error {
 		}
 	}
 	return ctx.Err()
+}
+
+// watchTimeout bounds one check of a done goal's landing upstream.
+const watchTimeout = 30 * time.Second
+
+// watchDone watches each done goal land.
+func (h *Harness) watchDone(ctx context.Context, s *queue.Store, goals []*queue.Goal) {
+	for _, g := range goals {
+		if g.State == queue.GoalDone {
+			h.watchLanding(ctx, s, g)
+		}
+	}
+}
+
+// watchLanding finishes a done goal once it has landed upstream: merged into
+// its base branch there, with the checks passing (ADR 0003). A failed check
+// is kept on the goal's layout for the panes, and tried again later.
+func (h *Harness) watchLanding(ctx context.Context, s *queue.Store, g *queue.Goal) {
+	gh := h.GH
+	if gh == nil {
+		gh = finish.RunGH
+	}
+	ctx, cancel := context.WithTimeout(ctx, watchTimeout)
+	defer cancel()
+	finished, err := finish.Watch(ctx, s, g, gh, h.now())
+	if err != nil {
+		h.log().
+			Warn("checking a done goal upstream failed", "repo", s.Repo(), "goal", g.Name, "err", err)
+	}
+	if !finished {
+		return
+	}
+	h.log().Info("goal finished: merged upstream and passing", "repo", s.Repo(), "goal", g.Name)
+	if err := finish.RemoveWorktrees(ctx, s, g); err != nil {
+		h.log().Warn("removing a finished goal's worktrees failed", "goal", g.Name, "err", err)
+	}
 }
 
 func (h *Harness) poll() time.Duration {

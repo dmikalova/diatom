@@ -40,7 +40,11 @@ const (
 	GoalPlanning GoalState = "planning"
 	GoalActive   GoalState = "active"
 	GoalParked   GoalState = "parked"
-	GoalDone     GoalState = "done"
+	// GoalDone is a goal whose work is over, waiting to land upstream.
+	GoalDone GoalState = "done"
+	// GoalFinished is a done goal merged into its base branch upstream, with
+	// the checks there passing.
+	GoalFinished GoalState = "finished"
 )
 
 // Goal is a unit of intent submitted by the human.

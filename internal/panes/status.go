@@ -20,6 +20,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/dmikalova/diatom/internal/config"
+	"github.com/dmikalova/diatom/internal/finish"
 	"github.com/dmikalova/diatom/internal/focus"
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/plan"
@@ -58,6 +59,8 @@ type goalRow struct {
 	// task's state, for a goal in planning.
 	plan     *plan.Plan
 	grilling queue.State
+	// landing is a done goal's layout, nil when it has none.
+	landing *finish.Result
 }
 
 // Status shows every goal in every known repo and the sessions running now,
@@ -72,10 +75,13 @@ type Status struct {
 	// hunks caches each commit's hunk count; commits never change.
 	hunks map[string]int
 
-	// viewing shows the selected goal's plan; confirm names the goal a
-	// first s asked to sign off.
+	// viewing shows the selected goal's plan; confirm names the key and
+	// goal a first press asked to confirm, such as a sign-off.
 	viewing bool
 	confirm string
+	// busy says what a background job, such as laying a goal out, is
+	// doing; it takes no other job until that one ends.
+	busy string
 
 	picking bool
 	picker  textinput.Model
@@ -117,7 +123,7 @@ func (s *Status) reload() {
 			continue
 		}
 		for _, g := range goals {
-			if g.State == queue.GoalDone {
+			if g.State == queue.GoalFinished {
 				continue
 			}
 			row, err := s.row(store, g)
@@ -145,8 +151,13 @@ func (s *Status) row(store *queue.Store, g *queue.Goal) (goalRow, error) {
 		return row, err
 	}
 	var commits []string
-	if g.State == queue.GoalPlanning {
+	switch g.State {
+	case queue.GoalPlanning:
 		if row.plan, err = plan.Load(store.GoalDir(g.Name)); err != nil {
+			return row, err
+		}
+	case queue.GoalDone:
+		if row.landing, err = finish.Load(store.GoalDir(g.Name)); err != nil {
 			return row, err
 		}
 	}
@@ -231,6 +242,9 @@ func (s *Status) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			s.reload()
 		}
 		return s, tick()
+	case jobMsg:
+		s.reload()
+		s.busy, s.flash, s.err = "", msg.flash, msg.err
 	case tea.KeyPressMsg:
 		if s.picking {
 			return s.updatePicker(msg)
@@ -274,6 +288,11 @@ func (s *Status) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			s.signOff(row)
 		}
 		return s, nil
+	case "d", "D", "F", "U":
+		if row != nil {
+			return s, s.finishKey(row, msg.String())
+		}
+		return s, nil
 	case "o":
 		s.openPicker()
 		return s, s.picker.Focus()
@@ -291,17 +310,14 @@ func (s *Status) signOff(row *goalRow) {
 		s.flash, s.confirm = row.goal.Name+" has no plan to sign off", ""
 		return
 	}
-	if s.confirm != name {
-		s.confirm = name
-		s.flash = fmt.Sprintf(
-			"press s again to sign off %s: %d workstreams, %d tasks",
-			row.goal.Name,
-			len(row.plan.Workstreams),
-			len(row.plan.Tasks),
-		)
+	if !s.confirmed("s", name, fmt.Sprintf(
+		"press s again to sign off %s: %d workstreams, %d tasks",
+		row.goal.Name,
+		len(row.plan.Workstreams),
+		len(row.plan.Tasks),
+	)) {
 		return
 	}
-	s.confirm = ""
 	cfg, err := config.Load(row.repo, s.env.Paths)
 	if err == nil {
 		err = plan.Approve(s.ctx, queue.Open(row.repo), cfg, row.goal.Name, s.env.Now())
@@ -312,6 +328,110 @@ func (s *Status) signOff(row *goalRow) {
 	}
 	s.flash = row.goal.Name + " is signed off and active"
 	s.reload()
+}
+
+// confirmed reports whether this press of key confirms the one before it
+// on the same goal. A first press only shows prompt.
+func (s *Status) confirmed(key, name, prompt string) bool {
+	if s.confirm != key+" "+name {
+		s.confirm, s.flash = key+" "+name, prompt
+		return false
+	}
+	s.confirm = ""
+	return true
+}
+
+// jobMsg ends a background job.
+type jobMsg struct {
+	flash string
+	err   error
+}
+
+// finishKey handles the keys that end and land a goal (ADR 0003), each
+// confirmed with a second press: d marks it done and lays it out, D does so
+// with hunks unreviewed or tasks not done, F opens its pull requests, and U
+// pushes it straight to its base branch. Laying out runs the gate, so the
+// job runs in the background.
+func (s *Status) finishKey(row *goalRow, key string) tea.Cmd {
+	if s.busy != "" {
+		s.flash = "still " + s.busy
+		return nil
+	}
+	// The job gets its own copy: the rows are rendered while it runs.
+	goal := *row.goal
+	g, name := &goal, row.repo+"/"+row.goal.Name
+	var prompt string
+	switch key {
+	case "d", "D":
+		if g.State == queue.GoalDone {
+			s.flash = g.Name + " is done already: F opens its pull requests, U pushes it"
+			return nil
+		}
+		prompt = fmt.Sprintf(
+			"press %s again to mark %s done and lay it out for landing",
+			key,
+			g.Name,
+		)
+		if key == "D" {
+			prompt += ", unreviewed hunks and all"
+		}
+	default:
+		if g.State != queue.GoalDone {
+			s.flash = g.Name + " isn't done: press d to mark it done first"
+			return nil
+		}
+		prompt = fmt.Sprintf("press F again to push %s and open its pull requests", g.Name)
+		if key == "U" {
+			prompt = fmt.Sprintf("press U again to push %s straight to %s", g.Name, g.Base)
+		}
+	}
+	if !s.confirmed(key, name, prompt) {
+		return nil
+	}
+	s.busy = "laying " + g.Name + " out and running the gate"
+	store, paths, ctx := queue.Open(row.repo), s.env.Paths, s.ctx
+	return func() tea.Msg {
+		flash, err := runFinish(ctx, store, paths, g, key)
+		return jobMsg{flash: flash, err: err}
+	}
+}
+
+// runFinish does what finishKey confirmed.
+func runFinish(
+	ctx context.Context,
+	s *queue.Store,
+	paths config.Paths,
+	g *queue.Goal,
+	key string,
+) (string, error) {
+	if key == "d" || key == "D" {
+		if err := finish.MarkDone(ctx, s, g, key == "D"); err != nil {
+			return "", err
+		}
+	}
+	res, err := finish.Ready(ctx, s, g)
+	if err == nil && res == nil {
+		var cfg *config.Config
+		if cfg, err = config.Load(s.Repo(), paths); err == nil {
+			res, err = finish.Build(ctx, s, g, finish.Options{Gate: cfg.Gate})
+		}
+	}
+	if err != nil {
+		return "", err
+	}
+	remote := "origin"
+	if res.Landing != nil && res.Landing.Remote != "" {
+		remote = res.Landing.Remote
+	}
+	switch key {
+	case "F":
+		urls, err := finish.Land(ctx, s, g, res, finish.PRs, remote, false, finish.RunGH)
+		return fmt.Sprintf("opened %s", strings.Join(urls, " ")), err
+	case "U":
+		_, err := finish.Land(ctx, s, g, res, finish.Push, remote, false, nil)
+		return fmt.Sprintf("pushed %s to %s on %s", g.Name, g.Base, remote), err
+	}
+	return fmt.Sprintf("%s is done and laid out as %d pull requests", g.Name, len(res.Stack)), nil
 }
 
 // toggleParked parks an active goal or resumes a parked one. Parking stops
@@ -379,53 +499,7 @@ func (s *Status) render() string {
 		)
 	}
 	for i, r := range s.rows {
-		mark := "  "
-		if i == s.sel {
-			mark = tui.Color("› ", tui.Cyan)
-		}
-		focused := " "
-		if r.repo == s.focus.Repo && r.goal.Name == s.focus.Goal {
-			focused = tui.Color("●", tui.Cyan)
-		}
-		name := filepath.Base(r.repo) + "/" + r.goal.Name
-		if r.goal.Pinned {
-			name += " 📌"
-		}
-		fmt.Fprintf(&b, "%s%s %s %s\n", mark, focused, tui.Bold(name), stateColor(r.goal.State))
-		fmt.Fprintf(
-			&b,
-			"      %s",
-			tui.Dim(fmt.Sprintf(
-				"tasks %d pending · %d active · %d blocked · %d done",
-				r.counts[queue.Pending],
-				r.counts[queue.Active],
-				r.counts[queue.Blocked],
-				r.counts[queue.Done],
-			)),
-		)
-		if r.questions > 0 {
-			b.WriteString(" · " + tui.Color(fmt.Sprintf("%d questions", r.questions), tui.Magenta))
-		}
-		if r.toReview > 0 {
-			b.WriteString(" · " + tui.Color(fmt.Sprintf("%d to review", r.toReview), tui.Yellow))
-		}
-		b.WriteString("\n")
-		if r.goal.State == queue.GoalPlanning {
-			b.WriteString("      " + planningLine(r) + "\n")
-			if s.viewing && i == s.sel && r.plan != nil {
-				for l := range strings.SplitSeq(strings.TrimRight(plan.Describe(r.plan), "\n"), "\n") {
-					b.WriteString("      " + tui.Dim("│ ") + l + "\n")
-				}
-			}
-		}
-		for _, ws := range r.activeWork {
-			fmt.Fprintf(
-				&b,
-				"      %s %s\n",
-				tui.Color("▶ "+ws, tui.Green),
-				tui.Dim(lastEvent(r.repo, r.goal.Name, ws)),
-			)
-		}
+		s.renderRow(&b, i, r)
 	}
 	if s.err != nil {
 		b.WriteString("\n" + tui.Color(s.err.Error(), tui.Red) + "\n")
@@ -433,12 +507,84 @@ func (s *Status) render() string {
 	if s.flash != "" {
 		b.WriteString("\n" + tui.Color(s.flash, tui.Cyan) + "\n")
 	}
+	if s.busy != "" {
+		b.WriteString("\n" + tui.Color(s.busy+"…", tui.Yellow) + "\n")
+	}
 	b.WriteString(
 		"\n" + tui.Dim(
-			"enter focus · p park/resume · P pin · v view plan · s sign off · o open repo · q quit",
+			"enter focus · p park/resume · P pin · v view plan · s sign off · d done · "+
+				"F open PRs · U push · o open repo · q quit",
 		),
 	)
 	return b.String()
+}
+
+// renderRow renders one goal and what is running for it.
+func (s *Status) renderRow(b *strings.Builder, i int, r goalRow) {
+	mark := "  "
+	if i == s.sel {
+		mark = tui.Color("› ", tui.Cyan)
+	}
+	focused := " "
+	if r.repo == s.focus.Repo && r.goal.Name == s.focus.Goal {
+		focused = tui.Color("●", tui.Cyan)
+	}
+	name := filepath.Base(r.repo) + "/" + r.goal.Name
+	if r.goal.Pinned {
+		name += " 📌"
+	}
+	fmt.Fprintf(b, "%s%s %s %s\n", mark, focused, tui.Bold(name), stateColor(r.goal.State))
+	fmt.Fprintf(
+		b,
+		"      %s",
+		tui.Dim(fmt.Sprintf(
+			"tasks %d pending · %d active · %d blocked · %d done",
+			r.counts[queue.Pending],
+			r.counts[queue.Active],
+			r.counts[queue.Blocked],
+			r.counts[queue.Done],
+		)),
+	)
+	if r.questions > 0 {
+		b.WriteString(" · " + tui.Color(fmt.Sprintf("%d questions", r.questions), tui.Magenta))
+	}
+	if r.toReview > 0 {
+		b.WriteString(" · " + tui.Color(fmt.Sprintf("%d to review", r.toReview), tui.Yellow))
+	}
+	b.WriteString("\n")
+	if r.goal.State == queue.GoalDone {
+		b.WriteString("      " + landingLine(r) + "\n")
+	}
+	if r.goal.State == queue.GoalPlanning {
+		b.WriteString("      " + planningLine(r) + "\n")
+		if s.viewing && i == s.sel && r.plan != nil {
+			for l := range strings.SplitSeq(strings.TrimRight(plan.Describe(r.plan), "\n"), "\n") {
+				b.WriteString("      " + tui.Dim("│ ") + l + "\n")
+			}
+		}
+	}
+	for _, ws := range r.activeWork {
+		fmt.Fprintf(
+			b,
+			"      %s %s\n",
+			tui.Color("▶ "+ws, tui.Green),
+			tui.Dim(lastEvent(r.repo, r.goal.Name, ws)),
+		)
+	}
+}
+
+// landingLine says how far a done goal is on its way upstream.
+func landingLine(r goalRow) string {
+	line := finish.Summary(r.goal, r.landing)
+	switch l := r.landing; {
+	case l == nil:
+		return tui.Color(line, tui.Yellow)
+	case l.Landing == nil || l.Landing.How == "":
+		return tui.Color(line+" · F open PRs · U push", tui.Green)
+	case l.Landing.Checks == finish.ChecksFailed || l.Landing.Error != "":
+		return tui.Color(line, tui.Red)
+	}
+	return tui.Dim(line)
 }
 
 // planningLine says where a goal in planning stands.
@@ -458,6 +604,7 @@ func planningLine(r goalRow) string {
 func stateColor(st queue.GoalState) string {
 	c := map[queue.GoalState]int{
 		queue.GoalActive: tui.Green, queue.GoalParked: tui.Yellow, queue.GoalPlanning: tui.Blue,
+		queue.GoalDone: tui.Magenta,
 	}[st]
 	return tui.Color(string(st), c)
 }

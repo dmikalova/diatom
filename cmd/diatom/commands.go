@@ -24,7 +24,6 @@ import (
 	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/registry"
-	"github.com/dmikalova/diatom/internal/review"
 	"github.com/dmikalova/diatom/internal/runner/claude"
 	"github.com/dmikalova/diatom/internal/session"
 )
@@ -140,10 +139,8 @@ func cmdGoal(ctx context.Context, args []string, stdin io.Reader, stdout io.Writ
 	return fmt.Errorf("%w: unknown goal subcommand %q", errUsage, args[0])
 }
 
-// goalDone finishes a goal, but first warns about hunks nobody has decided
-// on, deferred ones included (ADR 0001), and tasks not done; -force finishes
-// it anyway. A goal a session is still working on is never finished. The
-// goal's commits are then laid out for landing (ADR 0003).
+// goalDone ends a goal's work (see finish.MarkDone), then lays its commits
+// out for landing (ADR 0003).
 func goalDone(ctx context.Context, s *queue.Store, args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("goal done", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -159,37 +156,7 @@ func goalDone(ctx context.Context, s *queue.Store, args []string, stdout io.Writ
 	if err != nil {
 		return err
 	}
-	tasks, err := s.Tasks(g.Name)
-	if err != nil {
-		return err
-	}
-	open := 0
-	for _, t := range tasks {
-		switch t.State {
-		case queue.Active:
-			return fmt.Errorf("a session is working on task %s of goal %s: park the goal "+
-				"with `diatom goal park %s` and let the session end first", t.ID, g.Name, g.Name)
-		case queue.Pending, queue.Blocked:
-			open++
-		}
-	}
-	items, err := review.Load(ctx, s, g.Name)
-	if err != nil {
-		return err
-	}
-	counts := review.Counts(items)
-	if left := counts[""] + counts[review.Defer]; (left > 0 || open > 0) && !*force {
-		return fmt.Errorf(
-			"goal %s has %d unreviewed and %d deferred hunks and %d tasks not done: review the hunks "+
-				"with `diatom review`, or finish it anyway with -force",
-			g.Name,
-			counts[""],
-			counts[review.Defer],
-			open,
-		)
-	}
-	g.State = queue.GoalDone
-	if err := s.SaveGoal(g); err != nil {
+	if err := finish.MarkDone(ctx, s, g, *force); err != nil {
 		return err
 	}
 	_, _ = fmt.Fprintf(stdout, "goal %s is done\n", g.Name)
@@ -206,7 +173,8 @@ func goalDone(ctx context.Context, s *queue.Store, args []string, stdout io.Writ
 // goalFinish lands a done goal: it shows the goal laid out for landing, or
 // with -push pushes it straight to the base branch, or with -prs opens its
 // stack of pull requests. A layout the goal's branches have moved past is
-// laid out again first.
+// laid out again first. The scheduler then watches the goal land, and
+// finishes it once it is merged upstream with the checks passing.
 func goalFinish(ctx context.Context, s *queue.Store, args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("goal finish", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -227,30 +195,37 @@ func goalFinish(ctx context.Context, s *queue.Store, args []string, stdout io.Wr
 	}
 	if g.State != queue.GoalDone {
 		return fmt.Errorf(
-			"goal %s is %s: finish it with `diatom goal done %s` first",
+			"goal %s is %s: only a done goal is finished, after `diatom goal done %s`",
 			g.Name,
 			g.State,
 			g.Name,
 		)
 	}
-	res, err := finish.Load(s.GoalDir(g.Name))
+	res, err := finish.Ready(ctx, s, g)
 	if err != nil {
 		return err
 	}
-	if res == nil || !finish.Current(ctx, s, g, res) {
+	if res == nil {
 		if res, err = layOut(ctx, s, g, stdout); err != nil {
 			return err
 		}
 	}
+	how := finish.Push
 	switch {
-	case *push:
-		if last := res.Stack[len(res.Stack)-1]; last.Gate != nil && !last.Gate.Passed && !*force {
-			return fmt.Errorf("goal %s fails the gate on %s: fix it, or push anyway with -force",
-				g.Name, res.Final)
-		}
-		if err := finish.Push(ctx, s, g, res, *remote); err != nil {
-			return err
-		}
+	case *prs:
+		how = finish.PRs
+	case !*push:
+		_, _ = fmt.Fprint(stdout, finish.Describe(g, res))
+		return nil
+	}
+	urls, err := finish.Land(ctx, s, g, res, how, *remote, *force, finish.RunGH)
+	for _, u := range urls {
+		_, _ = fmt.Fprintln(stdout, u)
+	}
+	if err != nil {
+		return err
+	}
+	if how == finish.Push {
 		_, _ = fmt.Fprintf(stdout, "pushed %s to %s on %s\n", res.Final, g.Base, *remote)
 		if local, err := (git.Repo{Dir: s.Repo()}).RevParse(
 			ctx,
@@ -263,15 +238,9 @@ func goalFinish(ctx context.Context, s *queue.Store, args []string, stdout io.Wr
 				g.Base,
 			)
 		}
-	case *prs:
-		urls, err := finish.OpenPRs(ctx, s, g, res, *remote, finish.RunGH)
-		for _, u := range urls {
-			_, _ = fmt.Fprintln(stdout, u)
-		}
-		return err
-	default:
-		_, _ = fmt.Fprint(stdout, finish.Describe(g, res))
 	}
+	_, _ = fmt.Fprintf(stdout, "The scheduler finishes goal %s once it is merged into %s on %s "+
+		"and the checks there pass.\n", g.Name, g.Base, *remote)
 	return nil
 }
 
@@ -660,7 +629,16 @@ func cmdStatus(ctx context.Context, stdout io.Writer) error {
 			return err
 		}
 		for _, g := range goals {
+			if g.State == queue.GoalFinished {
+				continue
+			}
 			if g.State == queue.GoalDone {
+				res, err := finish.Load(s.GoalDir(g.Name))
+				if err != nil {
+					return err
+				}
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", filepath.Base(repo), g.Name, g.State,
+					finish.Summary(g, res))
 				continue
 			}
 			tasks, err := s.Tasks(g.Name)

@@ -27,10 +27,10 @@ func RunGH(ctx context.Context, dir string, args ...string) (string, error) {
 	return string(bytes.TrimSpace(out)), err
 }
 
-// Push pushes the laid-out goal straight to the base branch on remote. It
+// push pushes the laid-out goal straight to the base branch on remote. It
 // never forces: when the remote's base has moved on, the push fails, and the
 // goal has to be laid out again on top of it.
-func Push(ctx context.Context, s *queue.Store, g *queue.Goal, res *Result, remote string) error {
+func push(ctx context.Context, s *queue.Store, g *queue.Goal, res *Result, remote string) error {
 	repo := git.Repo{Dir: s.Repo()}
 	_, err := repo.Run(ctx, "push", remote, res.Tip()+":refs/heads/"+g.Base)
 	if gitErr := (*git.Error)(nil); errors.As(err, &gitErr) &&
@@ -163,6 +163,9 @@ func Describe(g *queue.Goal, res *Result) string {
 	if res.Carried {
 		b.WriteString("The last commit carries what resolving the goal's merges changed.\n")
 	}
+	if res.Landing != nil && res.Landing.How != "" {
+		fmt.Fprintf(&b, "Landing: %s\n", Summary(g, res))
+	}
 	fmt.Fprintf(&b, "Land it with one of:\n"+
 		"  diatom goal finish %s -prs    push the branches and open %s\n"+
 		"  diatom goal finish %s -push   push %s straight to %s\n",
@@ -191,4 +194,63 @@ func plural(n int, one, many string) string {
 		return one
 	}
 	return many
+}
+
+// Summary says in one line how far a done goal is on its way upstream.
+func Summary(g *queue.Goal, res *Result) string {
+	if res == nil {
+		return "not laid out: `diatom goal finish " + g.Name + "` lays it out"
+	}
+	l := res.Landing
+	var line string
+	switch {
+	case l == nil || l.How == "":
+		line = fmt.Sprintf(
+			"laid out as %s, not landed yet",
+			plural(
+				len(res.Stack),
+				"1 pull request",
+				fmt.Sprintf("%d pull requests", len(res.Stack)),
+			),
+		)
+	case l.Merged != "":
+		line = "merged into " + l.Upstream(g) + " · " + checksNote(l)
+	case l.How == PRs:
+		prs := make([]string, 0, len(l.PRs))
+		for _, pr := range l.PRs {
+			prs = append(prs, fmt.Sprintf("%s %s%s", prName(pr.URL), strings.ToLower(pr.State),
+				checkMark(pr.Checks)))
+		}
+		line = "pull requests " + strings.Join(prs, ", ")
+	default:
+		line = "pushed, waiting to show up on " + l.Upstream(g)
+	}
+	if l != nil && l.Error != "" {
+		line += " · last check failed: " + l.Error
+	}
+	return line
+}
+
+func checksNote(l *Landing) string {
+	switch l.Checks {
+	case ChecksFailed:
+		return "checks failing: " + strings.Join(l.Failing, ", ")
+	case ChecksPending:
+		return "checks running"
+	case ChecksPassed:
+		return "checks pass"
+	}
+	return "waiting for checks"
+}
+
+func checkMark(checks string) string {
+	return map[string]string{ChecksPassed: " ✓", ChecksFailed: " ✗", ChecksPending: " …"}[checks]
+}
+
+// prName shortens a pull request's URL to its number.
+func prName(url string) string {
+	if i := strings.LastIndex(url, "/"); i >= 0 && i < len(url)-1 {
+		return "#" + url[i+1:]
+	}
+	return url
 }
