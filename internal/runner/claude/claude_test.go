@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -133,9 +134,25 @@ func TestStopIsGraceful(t *testing.T) {
 		t.Fatal(err)
 	}
 	n, _ := strconv.Atoi(string(bytes.TrimSpace(pid)))
-	if syscall.Kill(n, 0) == nil {
+	if !gone(n, 3*time.Second) {
 		t.Error("the agent's child outlived it")
 	}
+}
+
+// gone waits up to d for a process to die. A killed process whose parent has
+// already exited stays a zombie until init reaps it, which on some machines
+// takes a while, so a zombie counts as dead.
+func gone(pid int, d time.Duration) bool {
+	for deadline := time.Now().Add(d); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		if syscall.Kill(pid, 0) != nil {
+			return true
+		}
+		out, err := exec.Command("ps", "-o", "stat=", "-p", strconv.Itoa(pid)).Output()
+		if err != nil || bytes.HasPrefix(bytes.TrimSpace(out), []byte("Z")) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestArgs(t *testing.T) {
