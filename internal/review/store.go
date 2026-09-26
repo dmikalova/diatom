@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/dmikalova/diatom/internal/intake"
 )
 
 // Decision is the human's verdict on one hunk of one commit (ADR 0001).
@@ -164,18 +166,14 @@ func (s Store) History() ([]Event, error) {
 // intake writes a comment on an approved hunk as intake for triage.
 func (s Store) intake(h Hunk, comments []Comment, now time.Time) error {
 	var b strings.Builder
-	fmt.Fprintf(&b, "---\nsource: review\ncommit: %s\nhunk: %s\ncreated: %s\n---\n\n",
-		h.Commit, h.ID, now.UTC().Format(time.RFC3339))
 	fmt.Fprintf(&b, "Comments on an approved hunk of %s:\n\n```diff\n%s\n```\n\n", h.Path, h.Text())
 	for _, c := range comments {
 		fmt.Fprintf(&b, "- Line %d: %s\n", h.NewLine(c.Line), c.Text)
 	}
-	dir := filepath.Join(s.Dir, "intake")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	name := fmt.Sprintf("%s-%s.md", now.UTC().Format("20060102T150405.000000000Z"), short(h.Commit))
-	return writeAtomic(filepath.Join(dir, name), []byte(b.String()))
+	_, err := intake.Write(filepath.Join(s.Dir, "intake"), intake.Intake{
+		Source: "review", Created: now, Commit: h.Commit, Hunk: h.ID, Text: b.String(),
+	})
+	return err
 }
 
 // writeAtomic replaces path through a temp file in the same directory.

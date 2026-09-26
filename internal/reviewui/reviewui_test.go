@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/bluekeyes/go-gitdiff/gitdiff"
 
+	"github.com/dmikalova/diatom/internal/focus"
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/review"
@@ -351,4 +352,42 @@ func TestNothingToReview(t *testing.T) {
 		t.Error("the reviewer does not use the alternate screen")
 	}
 	m.Update(tickMsg{})
+}
+
+func TestFollowSwitchesWithFocus(t *testing.T) {
+	f := newFixture(t)
+	f.write("ward.go", body("ward", "u"))
+	sha := f.commit("feat: ward")
+	f.task(
+		&queue.Task{
+			Title:      "Add ward",
+			Kind:       queue.Planned,
+			Workstream: "engine",
+			Commits:    []string{sha},
+		},
+	)
+
+	file := focus.File{Path: filepath.Join(t.TempDir(), "focus.yaml")}
+	fl := NewFollow(context.Background(), file)
+	if fl.inner != nil || !strings.Contains(fl.View().Content, "No goal is focused") {
+		t.Fatal("reviewer without focus shows a hunk")
+	}
+	if err := file.Write(focus.Focus{Repo: f.repo.Dir, Goal: "set"}); err != nil {
+		t.Fatal(err)
+	}
+	fl.Update(tickMsg{})
+	if fl.inner == nil || !strings.Contains(fl.View().Content, "feat: ward") {
+		t.Fatalf("reviewer after focusing:\n%s", fl.View().Content)
+	}
+	fl.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	if rec, _ := fl.inner.rev.Load(sha); len(rec.Hunks) != 1 {
+		t.Error("a key in the follow pane did not reach the reviewer")
+	}
+	if err := file.Write(focus.Focus{Repo: f.repo.Dir}); err != nil {
+		t.Fatal(err)
+	}
+	fl.Update(tickMsg{})
+	if fl.inner != nil {
+		t.Error("the reviewer kept a goal after the focus left it")
+	}
 }

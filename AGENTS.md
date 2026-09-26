@@ -24,6 +24,10 @@ Run `mage ci:fix && mage ci:check` before calling work done. It must print
 | `internal/commitmsg`     | Commit messages on the cheapest profile (ADR 0005)       |
 | `internal/review`        | Hunks, review decisions and the review queue (ADR 0001)  |
 | `internal/reviewui`      | The native reviewer, a Bubble Tea app (ADR 0008)         |
+| `internal/panes`         | The workspace's status, questions and intake panes       |
+| `internal/focus`         | The goal the panes follow (ADR 0007)                     |
+| `internal/intake`        | Free-form input waiting for triage (ADR 0009)            |
+| `internal/tui`           | Styling in the terminal's own 16 colors                  |
 | `internal/config`        | The config walk-up (ADR 0007)                            |
 
 ## Rules

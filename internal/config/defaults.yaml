@@ -4,6 +4,7 @@ gateAttempts: 3
 maxSessions: 1
 maxBatch: 10
 machineSessions: 0
+searchRoots: [~/Code]
 instructions: [~/AGENTS.md]
 profiles:
   planning:

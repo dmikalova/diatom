@@ -38,6 +38,11 @@ func cmdRun(stop context.Context, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	unlock, err := reg.LockScheduler()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	exe, err := os.Executable()
 	if err != nil {
 		return err

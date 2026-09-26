@@ -9,6 +9,7 @@ import (
 	"github.com/bluekeyes/go-gitdiff/gitdiff"
 
 	"github.com/dmikalova/diatom/internal/review"
+	"github.com/dmikalova/diatom/internal/tui"
 )
 
 // headerLines and footerLines are the rows around the diff.
@@ -214,18 +215,8 @@ func (m *Model) footer() string {
 	return "\n" + dim(keys)
 }
 
-func dim(s string) string { return sgr(fgCode(gray)) + s + reset }
+func dim(s string) string { return tui.Dim(s) }
 
-func colored(s string, c int) string {
-	if c == noColor {
-		return s
-	}
-	return sgr(fgCode(c)) + s + reset
-}
+func colored(s string, c int) string { return tui.Color(s, c) }
 
-func short(sha string) string {
-	if len(sha) > 7 {
-		return sha[:7]
-	}
-	return sha
-}
+func short(sha string) string { return tui.Short(sha) }

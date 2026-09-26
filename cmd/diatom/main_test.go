@@ -300,3 +300,34 @@ func TestReviewGoalChoice(t *testing.T) {
 		t.Error("review of a missing goal succeeded")
 	}
 }
+
+func TestWorkspaceLayout(t *testing.T) {
+	layout := workspaceLayout(`/opt/my "tools"/diatom`)
+	for _, want := range []string{
+		`command="/opt/my \"tools\"/diatom"`,
+		`args "review" "-focus"`, `args "pane" "status"`, `args "pane" "questions"`, `args "pane" "intake"`,
+		`tab name="scheduler"`, `args "run"`,
+	} {
+		if !strings.Contains(layout, want) {
+			t.Errorf("layout lacks %s:\n%s", want, layout)
+		}
+	}
+	if strings.Count(layout, "{") != strings.Count(layout, "}") {
+		t.Error("layout braces don't balance")
+	}
+}
+
+func TestWorkspaceRefusesInsideZellij(t *testing.T) {
+	t.Setenv("ZELLIJ", "0")
+	if code, _, stderr := diatom(
+		t,
+		"",
+		"workspace",
+	); code != 1 ||
+		!strings.Contains(stderr, "inside zellij") {
+		t.Errorf("workspace inside zellij = %d %q", code, stderr)
+	}
+	if code, _, _ := diatom(t, "", "pane", "nope"); code != 2 {
+		t.Error("an unknown pane was accepted")
+	}
+}

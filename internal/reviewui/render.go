@@ -2,7 +2,6 @@ package reviewui
 
 import (
 	"slices"
-	"strconv"
 	"strings"
 	"unicode"
 
@@ -11,19 +10,26 @@ import (
 	"github.com/bluekeyes/go-gitdiff/gitdiff"
 
 	"github.com/dmikalova/diatom/internal/review"
+	"github.com/dmikalova/diatom/internal/tui"
 )
 
-// The reviewer colors with the terminal's own 16 ANSI colors rather than a
-// fixed palette, so it follows the terminal's theme.
+// The reviewer colors with the terminal's own 16 ANSI colors (package tui),
+// so it follows the terminal's theme.
 const (
-	noColor = -1
-	red     = 1
-	green   = 2
-	yellow  = 3
-	blue    = 4
-	magenta = 5
-	cyan    = 6
-	gray    = 8
+	noColor = tui.NoColor
+	red     = tui.Red
+	green   = tui.Green
+	yellow  = tui.Yellow
+	magenta = tui.Magenta
+	cyan    = tui.Cyan
+	gray    = tui.Gray
+	reset   = tui.Reset
+)
+
+var (
+	sgr    = tui.SGR
+	fgCode = tui.FG
+	bgCode = tui.BG
 )
 
 // tokenColor maps a syntax token to a color, after Monokai: red keywords,
@@ -262,33 +268,6 @@ func markAll(cells []cell) {
 	for k := range cells {
 		cells[k].changed = true
 	}
-}
-
-// sgr returns an ANSI select-graphic-rendition sequence.
-func sgr(codes ...int) string {
-	s := make([]string, len(codes))
-	for i, c := range codes {
-		s[i] = strconv.Itoa(c)
-	}
-	return "\x1b[" + strings.Join(s, ";") + "m"
-}
-
-const reset = "\x1b[0m"
-
-// fgCode is the SGR code for one of the 16 colors as foreground.
-func fgCode(c int) int {
-	if c >= 8 {
-		return 90 + c - 8
-	}
-	return 30 + c
-}
-
-// bgCode is the SGR code for one of the 16 colors as background.
-func bgCode(c int) int {
-	if c >= 8 {
-		return 100 + c - 8
-	}
-	return 40 + c
 }
 
 // tabWidth is how many columns a tab takes.

@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"errors"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -33,4 +34,21 @@ func TestDefault(t *testing.T) {
 	if err != nil || r.Path != "/state/diatom/repos" {
 		t.Errorf("Default = %+v, %v", r, err)
 	}
+}
+
+func TestLockScheduler(t *testing.T) {
+	r := Registry{Path: filepath.Join(t.TempDir(), "diatom", "repos")}
+	unlock, err := r.LockScheduler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.LockScheduler(); !errors.Is(err, ErrRunning) {
+		t.Errorf("second lock = %v, want ErrRunning", err)
+	}
+	unlock()
+	again, err := r.LockScheduler()
+	if err != nil {
+		t.Fatalf("lock after release = %v", err)
+	}
+	again()
 }

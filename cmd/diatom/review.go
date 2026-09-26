@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/dmikalova/diatom/internal/focus"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/review"
 	"github.com/dmikalova/diatom/internal/reviewui"
@@ -22,8 +23,16 @@ func cmdReview(ctx context.Context, args []string, stdout io.Writer) error {
 	fs.SetOutput(io.Discard)
 	goal := fs.String("goal", "", "the goal to review; defaults to the repo's only open goal")
 	list := fs.Bool("list", false, "print the hunks left to review instead of opening the reviewer")
+	follow := fs.Bool("focus", false, "review the focused goal, following the status pane")
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("%w: %w", errUsage, err)
+	}
+	if *follow {
+		fc, err := focus.Default()
+		if err != nil {
+			return err
+		}
+		return runProgram(ctx, reviewui.NewFollow(ctx, fc))
 	}
 	s, err := here(ctx)
 	if err != nil {
@@ -51,7 +60,12 @@ func cmdReview(ctx context.Context, args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	_, err = tea.NewProgram(m, tea.WithContext(ctx)).Run()
+	return runProgram(ctx, m)
+}
+
+// runProgram runs a terminal UI until it quits or ctx ends.
+func runProgram(ctx context.Context, m tea.Model) error {
+	_, err := tea.NewProgram(m, tea.WithContext(ctx)).Run()
 	if errors.Is(err, tea.ErrProgramKilled) {
 		return nil
 	}

@@ -231,7 +231,8 @@ func TestApprovedCommentBecomesIntake(t *testing.T) {
 	}
 	b, _ := os.ReadFile(filepath.Join(s.Dir, "intake", entries[0].Name()))
 	if !bytes.Contains(b, []byte("Line 2: later, rename B")) ||
-		!bytes.Contains(b, []byte("hunk: ward.go#1")) {
+		!bytes.Contains(b, []byte("hunk: ward.go#1")) ||
+		!bytes.Contains(b, []byte("source: review")) {
 		t.Errorf("intake = %s", b)
 	}
 }

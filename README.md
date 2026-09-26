@@ -18,10 +18,10 @@ The scheduler core runs:
 - questions that park tasks (ADR 0009)
 - sessions with only explicit context (ADR 0011)
 - the reviewer, with revisions landing as fixups (ADRs 0001 and 0008)
+- the zellij workspace and its panes (ADR 0007)
 
 Not built yet:
 
-- the zellij workspace and its panes (ADR 0007)
 - triage of intake (ADR 0009)
 - grilling and plan sign-off (ADR 0010)
 
@@ -50,6 +50,7 @@ diatom goal new new-set -title "Implement the new set" -ws engine,cards:engine -
 diatom task add -goal new-set -ws engine "Add the ward keyword" < ward.md
 diatom task add -goal new-set -ws cards -after 0001 "Implement Ward Keeper" < keeper.md
 
+diatom workspace    # everything below in one zellij session, scheduler included
 diatom run          # the scheduler; Ctrl-C finishes running sessions, twice stops them
 diatom status       # every goal in every known repo
 diatom review       # approve, reject or defer each hunk the agents committed
