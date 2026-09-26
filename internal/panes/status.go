@@ -741,3 +741,7 @@ func (s *Status) renderPicker() string {
 	b.WriteString("\n" + tui.Dim("enter open · esc cancel"))
 	return b.String()
 }
+
+// Editing reports whether a repo is being picked, or a job such as laying a
+// goal out is still running.
+func (s *Status) Editing() bool { return s.picking || s.busy != "" }

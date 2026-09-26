@@ -20,12 +20,18 @@ The scheduler core runs:
 - the reviewer, with revisions landing as fixups (ADRs 0001 and 0008)
 - the zellij workspace and its panes (ADR 0007)
 - triage of intake, and grilling with plan sign-off (ADRs 0009 and 0010)
+- landing done goals as a stack of pull requests (ADR 0003)
+- suspending and resuming sessions, and updating itself (ADR 0012)
 
 ## Install
 
 ```bash
 go install github.com/dmikalova/diatom/cmd/diatom@latest
 ```
+
+Installed this way, diatom can keep itself on the latest release: set
+`autoUpdate: true` in `~/.config/diatom/config.yaml`. A diatom built from a
+checkout never updates itself.
 
 diatom keeps its state in `.diatom/` inside each repo, which must be ignored
 through the global excludes file:
@@ -50,7 +56,8 @@ diatom goal new hotfix -ws engine -active
 diatom task add -goal hotfix -ws engine "Fix ward stacking" < fix.md
 
 diatom workspace    # everything below in one zellij session, scheduler included
-diatom run          # the scheduler; Ctrl-C finishes running sessions, twice stops them
+diatom run          # the scheduler; Ctrl-C suspends its sessions, which resume on the next run
+diatom stop         # the same from anywhere; -drain lets running sessions finish instead
 diatom status       # every goal in every known repo
 diatom review       # approve, reject or defer each hunk the agents committed
 diatom questions    # what the agents need decided
@@ -73,6 +80,11 @@ the stack with `gh`; `-push` pushes the lot straight to the base branch.
 The goal stays in the status pane, which does the same with `d`, `F` and `U`,
 until it is finished: `diatom run` watches the base branch on the remote and
 finishes the goal once it holds all of the goal's changes and its checks pass.
+
+Stopping the scheduler never loses work. Each agent stops within seconds with
+its files as they are, and the next `diatom run` carries its own Claude session
+on where it stopped. Replacing the diatom binary, by an update or a new build,
+restarts the scheduler and the panes on it the same way.
 
 Each workstream gets a worktree under `.diatom/goals/<goal>/worktrees/` on the
 branch `diatom/<goal>/ws/<workstream>`. Every commit that passes the gate merges
@@ -105,6 +117,7 @@ Only `~/.config/diatom/config.yaml` may set these:
 
 ```yaml
 machineSessions: 3
+autoUpdate: true                  # install new releases and restart on them
 profiles:
   implementation: { model: opus, effort: medium, maxTurns: 300 }
   planning: { skills: [grilling] }  # names in ~/.claude/skills, or paths

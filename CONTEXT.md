@@ -52,6 +52,10 @@ _Avoid_: chunk, bundle
 A task created from rejected hunks and their comments, asking the agent to rework code it already committed.
 _Avoid_: fix, feedback task, correction
 
+**Suspended**:
+A session the scheduler stopped midway, with its files left as they are, which the next scheduler carries on where it stopped. Stopping suspends sessions; draining lets them finish.
+_Avoid_: paused, killed, interrupted
+
 **Gate**:
 The check command every commit must pass before it lands, such as `mage check`.
 _Avoid_: CI, lint step, green check

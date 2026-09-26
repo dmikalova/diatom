@@ -21,6 +21,8 @@ type Runner interface {
 	// Run runs the session to its end, calling onEvent for each progress
 	// event. It returns an error only when the session could not run; a
 	// session that ran out of turns or ended in error is a Result.
+	// Cancelling ctx stops the agent gracefully, so the session can be
+	// resumed.
 	Run(ctx context.Context, spec Spec, onEvent func(Event)) (Result, error)
 }
 
@@ -48,6 +50,12 @@ type Spec struct {
 	// MCPServers are the MCP servers the agent may use, in Claude Code's
 	// mcpServers format. No others are loaded.
 	MCPServers map[string]any
+	// Resume is the ID of an earlier session to carry on, with Prompt as the
+	// next message in it; empty starts a new session.
+	Resume string
+	// Started, when set, is called with the session's ID as soon as the
+	// backend knows it, so a session stopped midway can be resumed.
+	Started func(sessionID string)
 }
 
 // Hooks are shell commands run at the agent's hook points.

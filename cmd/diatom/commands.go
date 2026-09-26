@@ -6,9 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -19,58 +17,12 @@ import (
 	"github.com/dmikalova/diatom/internal/finish"
 	"github.com/dmikalova/diatom/internal/gate"
 	"github.com/dmikalova/diatom/internal/git"
-	"github.com/dmikalova/diatom/internal/harness"
 	"github.com/dmikalova/diatom/internal/hook"
 	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/registry"
-	"github.com/dmikalova/diatom/internal/runner/claude"
 	"github.com/dmikalova/diatom/internal/session"
 )
-
-// cmdRun runs the scheduler. The first interrupt stops new sessions and waits
-// for the running ones; a second ends them too.
-func cmdRun(stop context.Context, stderr io.Writer) error {
-	paths, err := config.DefaultPaths()
-	if err != nil {
-		return err
-	}
-	reg, err := registry.Default()
-	if err != nil {
-		return err
-	}
-	unlock, err := reg.LockScheduler()
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	exe, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	if exe, err = filepath.EvalSymlinks(exe); err != nil {
-		return err
-	}
-	kill, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() {
-		<-stop.Done()
-		again := make(chan os.Signal, 1)
-		signal.Notify(again, os.Interrupt)
-		<-again
-		cancel()
-	}()
-	log := slog.New(slog.NewTextHandler(stderr, nil))
-	log.Info("diatom scheduler starting", "registry", reg.Path)
-	h := &harness.Harness{
-		Paths:  paths,
-		Repos:  reg.List,
-		Runner: claude.Runner{},
-		Exe:    exe,
-		Log:    log,
-	}
-	return h.Run(stop, kill)
-}
 
 // here opens the store of the repository the current directory is in.
 func here(ctx context.Context) (*queue.Store, error) {

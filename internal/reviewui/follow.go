@@ -98,3 +98,6 @@ func (f *Follow) View() tea.View {
 	v.AltScreen = true
 	return v
 }
+
+// Editing reports whether the goal's reviewer is writing a comment.
+func (f *Follow) Editing() bool { return f.inner != nil && f.inner.Editing() }

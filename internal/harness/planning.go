@@ -159,14 +159,7 @@ func (h *Harness) runPlanning(
 	if err != nil {
 		return h.requeue(s, g.Name, b.Tasks, nil, err)
 	}
-	res, runErr := h.runSession(ctx, repo, g, b, wt, dir, spec)
-	if err := session.WriteResult(
-		dir,
-		sessionResult{Result: res, Error: errString(runErr)},
-	); err != nil {
-		h.log().Warn("writing the session result failed", "session", spec.ID, "err", err)
-	}
-	return h.finishPlanning(ctx, repo, g, b, dir, res, runErr)
+	return h.runAgent(ctx, repo, g, b, wt, dir, spec, "")
 }
 
 // finishPlanning applies what a triage or grilling session handed in.

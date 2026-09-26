@@ -72,65 +72,49 @@ var runnable = map[queue.Kind]bool{
 }
 
 // Run runs the loop until stop is done, then waits for the running sessions
-// to finish: a new task never interrupts a running session (ADR 0004), and
-// neither does stopping. Cancelling kill ends the sessions too.
+// to finish: a new task never interrupts a running session (ADR 0004).
+// Cancelling kill suspends the running sessions instead of waiting for them;
+// the next Run resumes each where it stopped.
 func (h *Harness) Run(stop, kill context.Context) error {
-	if err := h.Recover(kill); err != nil {
+	resumes, err := h.Recover(kill)
+	if err != nil {
 		return err
 	}
-	var (
-		mu      sync.Mutex
-		running = map[schedule.Running]bool{}
-		// cooling holds workstreams whose last batch failed outright, such
-		// as when the agent could not start, until they may be tried again.
-		cooling = map[schedule.Running]time.Time{}
-		wg      sync.WaitGroup
-		wake    = make(chan struct{}, 1)
-	)
-	defer wg.Wait()
+	p := &slots{
+		running: map[schedule.Running]bool{},
+		cooling: map[schedule.Running]time.Time{},
+		wake:    make(chan struct{}, 1),
+		now:     h.now,
+	}
+	defer p.wg.Wait()
+	// Sessions stopped by the last scheduler carry on first, in the slots
+	// they had.
+	for _, r := range resumes {
+		key := schedule.Running{Repo: r.Repo, Goal: r.Spec.Goal, Workstream: r.Spec.Workstream}
+		p.start(key, func() error {
+			if err := h.Resume(kill, r); err != nil {
+				h.log().Error("resuming a session failed", "session", r.Spec.ID, "err", err)
+			}
+			return nil
+		})
+	}
 	tick := time.NewTicker(h.poll())
 	defer tick.Stop()
 	for {
-		mu.Lock()
-		busy := make([]schedule.Running, 0, len(running)+len(cooling))
-		for r := range running {
-			busy = append(busy, r)
-		}
-		for r, until := range cooling {
-			if h.now().Before(until) {
-				busy = append(busy, r)
-			} else {
-				delete(cooling, r)
-			}
-		}
-		mu.Unlock()
-
-		batches, repos, err := h.plan(kill, busy)
-		if err != nil {
+		batches, repos, err := h.plan(kill, p.busy())
+		if err != nil && kill.Err() == nil {
 			h.log().Error("planning failed", "err", err)
 		}
 		for _, b := range batches {
 			key := schedule.Running{Repo: b.Repo, Goal: b.Goal, Workstream: b.Workstream}
-			mu.Lock()
-			running[key] = true
-			mu.Unlock()
-			wg.Go(func() {
+			p.start(key, func() error {
 				err := h.RunBatch(kill, repos[b.Repo], b)
 				if err != nil {
 					h.log().
 						Error("batch failed", "repo", b.Repo, "goal", b.Goal, "workstream", b.Workstream,
 							"retryIn", cooldown, "err", err)
 				}
-				mu.Lock()
-				delete(running, key)
-				if err != nil {
-					cooling[key] = h.now().Add(cooldown)
-				}
-				mu.Unlock()
-				select {
-				case wake <- struct{}{}:
-				default:
-				}
+				return err
 			})
 		}
 
@@ -138,10 +122,61 @@ func (h *Harness) Run(stop, kill context.Context) error {
 		case <-stop.Done():
 			h.log().Info("stopping; waiting for running sessions")
 			return nil
-		case <-wake:
+		case <-p.wake:
 		case <-tick.C:
 		}
 	}
+}
+
+// slots tracks the workstreams with a session running, and those cooling
+// down after a batch that failed outright, such as when the agent could not
+// start, until they may be tried again.
+type slots struct {
+	mu      sync.Mutex
+	running map[schedule.Running]bool
+	cooling map[schedule.Running]time.Time
+	wg      sync.WaitGroup
+	// wake is signalled when a session ends, so its slot is filled at once.
+	wake chan struct{}
+	now  func() time.Time
+}
+
+// start runs fn in key's slot. An error puts the slot to cool down.
+func (p *slots) start(key schedule.Running, fn func() error) {
+	p.mu.Lock()
+	p.running[key] = true
+	p.mu.Unlock()
+	p.wg.Go(func() {
+		err := fn()
+		p.mu.Lock()
+		delete(p.running, key)
+		if err != nil {
+			p.cooling[key] = p.now().Add(cooldown)
+		}
+		p.mu.Unlock()
+		select {
+		case p.wake <- struct{}{}:
+		default:
+		}
+	})
+}
+
+// busy lists the slots no new batch may take.
+func (p *slots) busy() []schedule.Running {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	busy := make([]schedule.Running, 0, len(p.running)+len(p.cooling))
+	for r := range p.running {
+		busy = append(busy, r)
+	}
+	for r, until := range p.cooling {
+		if p.now().Before(until) {
+			busy = append(busy, r)
+		} else {
+			delete(p.cooling, r)
+		}
+	}
+	return busy
 }
 
 // Repo is one repo's store and merged config.
@@ -292,40 +327,6 @@ func stillBlocked(task, answered string, open []*queue.Question) bool {
 		}
 	}
 	return false
-}
-
-// Recover puts the tasks a crashed or killed scheduler left active back to
-// pending. Their worktrees keep whatever the session had written, and the
-// next session carries on from there.
-func (h *Harness) Recover(ctx context.Context) error {
-	paths, err := h.Repos()
-	if err != nil {
-		return err
-	}
-	for _, path := range paths {
-		s := queue.Open(path)
-		goals, err := s.Goals()
-		if err != nil {
-			return err
-		}
-		for _, g := range goals {
-			tasks, err := s.Tasks(g.Name)
-			if err != nil {
-				return err
-			}
-			for _, t := range tasks {
-				if t.State != queue.Active {
-					continue
-				}
-				h.log().
-					Warn("recovering task left active", "repo", path, "goal", g.Name, "task", t.ID)
-				if err := s.Move(g.Name, t, queue.Pending); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	return ctx.Err()
 }
 
 // watchTimeout bounds one check of a done goal's landing upstream.

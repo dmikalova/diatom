@@ -125,3 +125,6 @@ func (m *Intake) render() string {
 	}
 	return b.String()
 }
+
+// Editing reports whether anything is typed and not yet queued.
+func (m *Intake) Editing() bool { return strings.TrimSpace(m.area.Value()) != "" }

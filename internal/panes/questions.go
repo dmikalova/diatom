@@ -204,3 +204,6 @@ func (m *Questions) render() string {
 	}
 	return b.String()
 }
+
+// Editing reports whether an answer is being written.
+func (m *Questions) Editing() bool { return m.answering }

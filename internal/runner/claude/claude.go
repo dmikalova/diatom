@@ -18,6 +18,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/dmikalova/diatom/internal/gate"
 	"github.com/dmikalova/diatom/internal/runner"
@@ -55,20 +57,38 @@ func (r Runner) Run(
 	}
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = spec.Dir
-	cmd.Env = append(os.Environ(), spec.Env...)
+	cmd.Env = append(append(os.Environ(), unattended...), spec.Env...)
 	cmd.Stdin = strings.NewReader(spec.Prompt)
+	stopGracefully(cmd)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
-	stdout, err := cmd.StdoutPipe()
+	// A plain pipe rather than StdoutPipe, so the agent's exit can be waited
+	// for while its output is still being read: a command the agent left in
+	// the background holds the pipe open until it is killed.
+	stdout, w, err := os.Pipe()
 	if err != nil {
 		return runner.Result{}, err
 	}
-	if err := cmd.Start(); err != nil {
+	defer func() { _ = stdout.Close() }()
+	cmd.Stdout = w
+	err = cmd.Start()
+	_ = w.Close()
+	if err != nil {
 		return runner.Result{}, fmt.Errorf("start %s: %w", bin, err)
 	}
-	res, sawResult, perr := Parse(stdout, onEvent)
-	werr := cmd.Wait()
+	waited := make(chan error, 1)
+	go func() {
+		err := cmd.Wait()
+		// Whatever the agent left running goes with it.
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		waited <- err
+	}()
+	res, sawResult, perr := Parse(stdout, onEvent, spec.Started)
+	_ = stdout.Close()
+	werr := <-waited
 	switch {
+	case ctx.Err() != nil:
+		return res, fmt.Errorf("%s stopped: %w", bin, ctx.Err())
 	case perr != nil:
 		return res, perr
 	case sawResult:
@@ -80,6 +100,37 @@ func (r Runner) Run(
 	default:
 		return res, fmt.Errorf("%s ended without a result event", bin)
 	}
+}
+
+// unattended is the environment for an agent nobody watches. Its session
+// ends the moment it stops to wait, so a command it runs in the background
+// would report back to nobody: every command runs in the foreground, with
+// time for a slow gate.
+var unattended = []string{
+	"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1",
+	"BASH_DEFAULT_TIMEOUT_MS=1800000",
+	"BASH_MAX_TIMEOUT_MS=3600000",
+}
+
+// A stopped agent is interrupted, terminated after stopTerm if it hasn't
+// exited, and killed after stopWait.
+const (
+	stopTerm = 3 * time.Second
+	stopWait = 15 * time.Second
+)
+
+// stopGracefully runs cmd in its own process group, so an interrupt at the
+// terminal reaches diatom and not the agent, and makes cancelling its context
+// interrupt the whole group, as Ctrl-C would, before terminating and then
+// killing it. An agent started with interrupts ignored still stops quickly.
+func stopGracefully(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		pgid := -cmd.Process.Pid
+		time.AfterFunc(stopTerm, func() { _ = syscall.Kill(pgid, syscall.SIGTERM) })
+		return syscall.Kill(pgid, syscall.SIGINT)
+	}
+	cmd.WaitDelay = stopWait
 }
 
 // Args returns the command-line arguments for a session, whose instructions
@@ -99,6 +150,9 @@ func Args(spec runner.Spec, scratch string) ([]string, error) {
 		"--permission-mode", "dontAsk",
 		"--setting-sources", "project,local",
 		"--strict-mcp-config",
+	}
+	if spec.Resume != "" {
+		args = append(args, "--resume", spec.Resume)
 	}
 	if p.Model != "" {
 		args = append(args, "--model", p.Model)
@@ -252,9 +306,14 @@ type streamEvent struct {
 }
 
 // Parse reads claude's stream-json output, calling onEvent for the agent's
-// text and tool calls, and returns the session's result. sawResult is false
-// when the stream ended before its result event.
-func Parse(r io.Reader, onEvent func(runner.Event)) (res runner.Result, sawResult bool, err error) {
+// text and tool calls and started, when set, with the session's ID from its
+// first event, and returns the session's result. sawResult is false when the
+// stream ended before its result event.
+func Parse(
+	r io.Reader,
+	onEvent func(runner.Event),
+	started func(sessionID string),
+) (res runner.Result, sawResult bool, err error) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(nil, 64<<20)
 	for sc.Scan() {
@@ -269,6 +328,11 @@ func Parse(r io.Reader, onEvent func(runner.Event)) (res runner.Result, sawResul
 			continue
 		}
 		switch ev.Type {
+		case "system":
+			if ev.Subtype == "init" && ev.SessionID != "" && started != nil {
+				started(ev.SessionID)
+				started = nil
+			}
 		case "assistant":
 			for _, c := range ev.Message.Content {
 				switch c.Type {

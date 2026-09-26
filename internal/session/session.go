@@ -41,7 +41,9 @@ type Spec struct {
 	Worktree   string     `json:"worktree"`
 	Kind       queue.Kind `json:"kind"`
 	Profile    string     `json:"profile"`
-	Tasks      []string   `json:"tasks"`
+	// Effort overrides the profile's for a retry at more effort.
+	Effort string   `json:"effort,omitempty"`
+	Tasks  []string `json:"tasks"`
 	// Gate is the command the Stop hook runs, and GateAttempts how many
 	// failures it sends back to the agent before letting the session end.
 	Gate         string `json:"gate"`
@@ -216,9 +218,54 @@ func SaveGate(dir string, g GateState) error {
 	return writeJSON(filepath.Join(dir, "gate.json"), g)
 }
 
-// WriteResult records how the session ended, for the status pane.
+// WriteResult records how the agent's part of the session ended. A session
+// with a result and not yet settled was stopped after its agent, while the
+// harness gated and committed its work.
 func WriteResult(dir string, v any) error {
 	return writeJSON(filepath.Join(dir, "result.json"), v)
+}
+
+// ReadResult reads what WriteResult wrote, and reports whether there was
+// anything.
+func ReadResult(dir string, v any) (bool, error) {
+	err := readJSON(filepath.Join(dir, "result.json"), v)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// State is where a session stands, so one stopped midway can pick up where
+// it left off.
+type State struct {
+	// AgentSession is the backend's own ID for the agent's session, for
+	// resuming it.
+	AgentSession string `json:"agentSession,omitempty"`
+	// Settled is set once the session's tasks have moved on, so the session
+	// is over.
+	Settled bool `json:"settled,omitempty"`
+	// Resumes counts the times the session was resumed after a stop.
+	Resumes int `json:"resumes,omitempty"`
+}
+
+// LoadState reads a session's state; a session without one has just begun.
+func LoadState(dir string) (State, error) {
+	var st State
+	err := readJSON(filepath.Join(dir, "state.json"), &st)
+	if errors.Is(err, fs.ErrNotExist) {
+		return State{}, nil
+	}
+	return st, err
+}
+
+// UpdateState changes a session's state with fn.
+func UpdateState(dir string, fn func(*State)) error {
+	st, err := LoadState(dir)
+	if err != nil {
+		return err
+	}
+	fn(&st)
+	return writeJSON(filepath.Join(dir, "state.json"), st)
 }
 
 func readJSON(path string, v any) error {

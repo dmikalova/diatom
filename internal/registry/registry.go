@@ -79,6 +79,34 @@ func (r Registry) Add(repo string) error {
 	return os.Rename(tmp, r.Path)
 }
 
+// ErrNotRunning means no scheduler holds the lock.
+var ErrNotRunning = errors.New("no diatom scheduler is running on this machine")
+
+// Scheduler returns the process ID of the scheduler running on this machine.
+func (r Registry) Scheduler() (int, error) {
+	path := filepath.Join(filepath.Dir(r.Path), "run.lock")
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, ErrNotRunning
+	}
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = f.Close() }()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_SH|syscall.LOCK_NB); err == nil {
+		return 0, ErrNotRunning // nobody holds it
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	pid, err := strconv.Atoi(string(bytes.TrimSpace(b)))
+	if err != nil {
+		return 0, fmt.Errorf("the scheduler lock holds no process ID: %w", err)
+	}
+	return pid, nil
+}
+
 // ErrRunning means another scheduler holds the lock.
 var ErrRunning = errors.New("a diatom scheduler is already running on this machine")
 

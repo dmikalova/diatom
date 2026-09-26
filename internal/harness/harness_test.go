@@ -2,6 +2,7 @@ package harness
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -36,6 +37,9 @@ type agentSession struct {
 	dir  string
 	spec session.Spec
 	t    *testing.T
+	// ctx is the session's; run is what the runner was asked to run.
+	ctx context.Context
+	run runner.Spec
 }
 
 func (s agentSession) report(typ, task, text string) {
@@ -50,7 +54,7 @@ func (s agentSession) report(typ, task, text string) {
 }
 
 func (a *agent) Run(
-	_ context.Context,
+	ctx context.Context,
 	spec runner.Spec,
 	_ func(runner.Event),
 ) (runner.Result, error) {
@@ -63,8 +67,12 @@ func (a *agent) Run(
 	}
 	a.mu.Lock()
 	a.sessions++
+	n := a.sessions
 	a.last = spec
 	a.mu.Unlock()
+	if spec.Started != nil {
+		spec.Started(fmt.Sprintf("agent-%d", n))
+	}
 	var dir string
 	for _, e := range spec.Env {
 		if v, ok := strings.CutPrefix(e, session.EnvVar+"="); ok {
@@ -75,7 +83,10 @@ func (a *agent) Run(
 	if err != nil {
 		return runner.Result{}, err
 	}
-	a.act(a.t, spec.Dir, agentSession{dir: dir, spec: s, t: a.t})
+	a.act(a.t, spec.Dir, agentSession{dir: dir, spec: s, t: a.t, ctx: ctx, run: spec})
+	if ctx.Err() != nil {
+		return runner.Result{}, ctx.Err()
+	}
 	return runner.Result{
 		Outcome: runner.Completed,
 		Usage:   runner.Usage{InputTokens: 100, CostUSD: 1},
@@ -559,8 +570,8 @@ func TestRecover(t *testing.T) {
 	if err := f.store.Move("set", task, queue.Active); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.h.Recover(context.Background()); err != nil {
-		t.Fatal(err)
+	if resumes, err := f.h.Recover(context.Background()); err != nil || len(resumes) != 0 {
+		t.Fatalf("Recover = %v, %v", resumes, err)
 	}
 	if got := f.task(task.ID); got.State != queue.Pending {
 		t.Errorf("recovered task = %s", got.State)

@@ -5,6 +5,7 @@
 // Usage:
 //
 //	diatom run
+//	diatom stop [-drain]
 //	diatom status
 //	diatom goal new <name> [-title text] < description
 //	diatom goal new <name> [-title text] -ws engine,cards:engine -active
@@ -42,6 +43,8 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/dmikalova/diatom/internal/update"
 )
 
 // version is the release version, set by goreleaser with -ldflags.
@@ -65,7 +68,9 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	var err error
 	switch cmd, rest := args[0], args[1:]; cmd {
 	case "run":
-		err = cmdRun(ctx, stderr)
+		err = cmdRun(stderr)
+	case "stop":
+		err = cmdStop(rest, stdout)
 	case "status":
 		err = cmdStatus(ctx, stdout)
 	case "goal":
@@ -85,7 +90,11 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	case "hook":
 		err = cmdHook(ctx, rest, stdin, stdout)
 	case "version":
-		_, _ = fmt.Fprintln(stdout, version)
+		v := version
+		if v == "dev" {
+			v = update.Version()
+		}
+		_, _ = fmt.Fprintln(stdout, v)
 	case "help", "-h", "--help":
 		_, _ = fmt.Fprintln(stdout, usage)
 	default:
@@ -103,7 +112,8 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 }
 
 const usage = `Usage:
-  diatom run                        run the scheduler
+  diatom run                        run the scheduler; Ctrl-C suspends its sessions
+  diatom stop [-drain]              suspend the running scheduler, or let it drain
   diatom status                     show every goal in every known repo
   diatom goal new <name> [-title text] < description   grill a new goal
   diatom goal new <name> -ws engine,cards:engine -active   skip grilling

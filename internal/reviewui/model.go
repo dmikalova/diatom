@@ -370,3 +370,7 @@ func (m *Model) move(step int) {
 		m.scroll = m.cursor - h + 1
 	}
 }
+
+// Editing reports whether a comment is being written, which a restart would
+// lose.
+func (m *Model) Editing() bool { return m.editing }

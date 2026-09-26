@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"syscall"
+	"time"
 )
 
 // Result is one run of the gate.
@@ -23,6 +25,10 @@ type Result struct {
 // the output is where test runners and linters put their summary.
 const tailLines = 200
 
+// stopWait bounds how long a finished or stopped gate's leftovers may hold
+// its output open.
+const stopWait = 5 * time.Second
+
 // Run runs command with `sh -c` in dir. A failing command is a Result that
 // did not pass; the error is only for a gate that could not run at all.
 func Run(ctx context.Context, dir, command string) (Result, error) {
@@ -31,9 +37,17 @@ func Run(ctx context.Context, dir, command string) (Result, error) {
 	}
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	cmd.Dir = dir
+	// Its own process group, so stopping the gate stops everything it
+	// started, and nothing it left behind holds its output open.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = stopWait
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	err := cmd.Run()
+	if cmd.Process != nil {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
 	res := Result{Passed: err == nil, Output: Tail(out.String(), tailLines)}
 	if _, ok := errors.AsType[*exec.ExitError](err); err != nil && !ok {
 		return res, fmt.Errorf("gate %q: %w", command, err)

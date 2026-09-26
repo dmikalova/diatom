@@ -35,7 +35,25 @@ const maxIncomplete = 2
 //  4. Commit, with a message from the commit-message profile.
 //  5. Merge the workstream into the integration branch.
 //  6. Move each task to done, blocked on its question, or back to pending.
+//
+// Cancelling ctx suspends the batch: the agent stops within seconds and its
+// tasks stay active, so the next scheduler resumes the session where it
+// stopped. The gate stops too and runs again; a commit or merge under way
+// always finishes first.
 func (h *Harness) RunBatch(ctx context.Context, repo Repo, b schedule.Batch) error {
+	err := h.runBatch(ctx, repo, b)
+	if errors.Is(err, errSuspended) {
+		h.log().Info("session suspended; it resumes when diatom starts again",
+			"goal", b.Goal, "workstream", b.Workstream)
+		return nil
+	}
+	return err
+}
+
+// errSuspended is a batch stopped midway, to be resumed.
+var errSuspended = errors.New("suspended")
+
+func (h *Harness) runBatch(ctx context.Context, repo Repo, b schedule.Batch) error {
 	s := repo.Store
 	g, err := s.Goal(b.Goal)
 	if err != nil {
@@ -73,14 +91,57 @@ func (h *Harness) RunBatch(ctx context.Context, repo Repo, b schedule.Batch) err
 	if err != nil {
 		return h.requeue(s, g.Name, b.Tasks, nil, err)
 	}
-	res, runErr := h.runSession(ctx, repo, g, b, wt, dir, spec)
+	return h.runAgent(ctx, repo, g, b, wt, dir, spec, "")
+}
+
+// runAgent runs a session's agent, resuming its earlier session when resume
+// is set, then settles the session.
+func (h *Harness) runAgent(
+	ctx context.Context,
+	repo Repo,
+	g *queue.Goal,
+	b schedule.Batch,
+	wt git.Repo,
+	dir string,
+	spec session.Spec,
+	resume string,
+) error {
+	res, runErr := h.runSession(ctx, repo, g, b, wt, dir, spec, resume)
+	if ctx.Err() != nil {
+		return errSuspended
+	}
 	if err := session.WriteResult(
 		dir,
 		sessionResult{Result: res, Error: errString(runErr)},
 	); err != nil {
 		h.log().Warn("writing the session result failed", "session", spec.ID, "err", err)
 	}
-	return h.finish(ctx, repo, g, b, wt, dir, res, runErr)
+	return h.settleSession(ctx, repo, g, b, wt, dir, res, runErr)
+}
+
+// settleSession applies what a session's agent did and moves its tasks on,
+// then marks the session settled.
+func (h *Harness) settleSession(
+	ctx context.Context,
+	repo Repo,
+	g *queue.Goal,
+	b schedule.Batch,
+	wt git.Repo,
+	dir string,
+	res runner.Result,
+	runErr error,
+) error {
+	var err error
+	if planningKind(b.Kind) {
+		// Nothing slow is left, so a stop doesn't interrupt it.
+		err = h.finishPlanning(context.WithoutCancel(ctx), repo, g, b, dir, res, runErr)
+	} else {
+		err = h.finish(ctx, repo, g, b, wt, dir, res, runErr)
+	}
+	if errors.Is(err, errSuspended) {
+		return err
+	}
+	return errors.Join(err, session.UpdateState(dir, func(st *session.State) { st.Settled = true }))
 }
 
 type sessionResult struct {
@@ -133,6 +194,10 @@ func (h *Harness) prepare(
 		)
 	case git.Merged:
 		r, err := h.runGate(ctx, wt.Dir, repo.Config.Gate)
+		if ctx.Err() != nil {
+			// Stopped: undo the merge, which is made again next time.
+			return false, errors.Join(errSuspended, wt.AbortMerge(context.WithoutCancel(ctx)))
+		}
 		if err != nil {
 			return false, err
 		}
@@ -208,7 +273,8 @@ func (h *Harness) newSession(
 	}
 	spec := session.Spec{
 		ID: id, Repo: s.Repo(), Goal: g.Name, Workstream: b.Workstream, Worktree: wt.Dir,
-		Kind: b.Kind, Profile: b.Profile, Gate: cfg.Gate, GateAttempts: cfg.GateAttempts,
+		Kind: b.Kind, Profile: b.Profile, Effort: b.Effort,
+		Gate: cfg.Gate, GateAttempts: cfg.GateAttempts,
 	}
 	for _, t := range b.Tasks {
 		spec.Tasks = append(spec.Tasks, t.ID)
@@ -269,7 +335,14 @@ func (h *Harness) sessionDir(root, ws string) (id, dir string, err error) {
 	}
 }
 
-// runSession runs the agent, logging its events to events.jsonl.
+// resumeNote is the message that resumes a session the scheduler stopped.
+const resumeNote = `diatom stopped this session midway and has now restarted it: carry on where you
+left off. Your files are exactly as you left them; nothing was committed, reverted or stashed. A
+command that was running when the session stopped was killed, so run it again if you still need
+its result. Report each task with ` + "`diatom task`" + ` as before.`
+
+// runSession runs the agent, logging its events to events.jsonl. With resume
+// set, it carries on that earlier agent session instead of starting one.
 func (h *Harness) runSession(
 	ctx context.Context,
 	repo Repo,
@@ -278,6 +351,7 @@ func (h *Harness) runSession(
 	wt git.Repo,
 	dir string,
 	spec session.Spec,
+	resume string,
 ) (runner.Result, error) {
 	profile, err := repo.Config.Profile(b.Profile)
 	if err != nil {
@@ -294,11 +368,17 @@ func (h *Harness) runSession(
 	for _, sk := range profile.Skills {
 		skills = append(skills, h.Paths.SkillDir(sk))
 	}
-	prompt, err := os.ReadFile(filepath.Join(dir, "prompt.md"))
-	if err != nil {
-		return runner.Result{}, err
+	prompt := []byte(resumeNote)
+	if resume == "" {
+		if prompt, err = os.ReadFile(filepath.Join(dir, "prompt.md")); err != nil {
+			return runner.Result{}, err
+		}
 	}
-	events, err := os.Create(filepath.Join(dir, "events.jsonl"))
+	events, err := os.OpenFile(
+		filepath.Join(dir, "events.jsonl"),
+		os.O_WRONLY|os.O_CREATE|os.O_APPEND,
+		0o644,
+	)
 	if err != nil {
 		return runner.Result{}, err
 	}
@@ -323,7 +403,7 @@ func (h *Harness) runSession(
 		addDirs = append(addDirs, plan.DraftsDir(repo.Store.GoalDir(g.Name)))
 	}
 	h.log().Info("session starting", "session", spec.ID, "goal", g.Name, "workstream", b.Workstream,
-		"kind", b.Kind, "profile", b.Profile, "tasks", spec.Tasks)
+		"kind", b.Kind, "profile", b.Profile, "tasks", spec.Tasks, "resuming", resume != "")
 	res, err := h.Runner.Run(ctx, runner.Spec{
 		Dir:     wt.Dir,
 		AddDirs: addDirs,
@@ -337,6 +417,15 @@ func (h *Harness) runSession(
 		Instructions: instructions,
 		Skills:       skills,
 		MCPServers:   repo.Config.MCPServers,
+		Resume:       resume,
+		Started: func(id string) {
+			if err := session.UpdateState(
+				dir,
+				func(st *session.State) { st.AgentSession = id },
+			); err != nil {
+				h.log().Warn("recording the agent's session failed", "session", spec.ID, "err", err)
+			}
+		},
 	}, onEvent)
 	h.log().Info("session ended", "session", spec.ID, "outcome", res.Outcome, "turns", res.Turns,
 		"costUSD", res.Usage.CostUSD, "err", err)
@@ -398,6 +487,25 @@ func (h *Harness) finish(
 	runErr error,
 ) error {
 	s := repo.Store
+	// The gate comes first, before anything the session reported is
+	// applied: a stop during the gate leaves nothing half done, and the
+	// session settles from the start when it resumes.
+	var passed bool
+	var output string
+	var gateErr error
+	if runErr == nil {
+		st, err := session.LoadGate(dir)
+		if err != nil {
+			return err
+		}
+		passed, output, gateErr = h.check(ctx, repo, wt, st.Passed)
+		if ctx.Err() != nil {
+			return errSuspended
+		}
+	}
+	// From here on only git runs, which a stop never interrupts.
+	ctx = context.WithoutCancel(ctx)
+
 	report, err := session.ReadReport(dir)
 	if err != nil {
 		return err
@@ -421,16 +529,7 @@ func (h *Harness) finish(
 		}
 		asked[q.Task] = true
 	}
-	if runErr != nil {
-		return h.requeue(s, g.Name, tasks, asked, runErr)
-	}
-
-	st, err := session.LoadGate(dir)
-	if err != nil {
-		return err
-	}
-	passed, output, err := h.check(ctx, repo, wt, st.Passed)
-	if err != nil {
+	if err := errors.Join(runErr, gateErr); err != nil {
 		return h.requeue(s, g.Name, tasks, asked, err)
 	}
 	if !passed {

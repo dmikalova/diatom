@@ -8,8 +8,6 @@ import (
 	"io"
 	"strings"
 
-	tea "charm.land/bubbletea/v2"
-
 	"github.com/dmikalova/diatom/internal/focus"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/review"
@@ -61,15 +59,6 @@ func cmdReview(ctx context.Context, args []string, stdout io.Writer) error {
 		return err
 	}
 	return runProgram(ctx, m)
-}
-
-// runProgram runs a terminal UI until it quits or ctx ends.
-func runProgram(ctx context.Context, m tea.Model) error {
-	_, err := tea.NewProgram(m, tea.WithContext(ctx)).Run()
-	if errors.Is(err, tea.ErrProgramKilled) {
-		return nil
-	}
-	return err
 }
 
 // reviewGoal picks the goal to review: the named one, or the repo's only

@@ -7,8 +7,11 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/dmikalova/diatom/internal/config"
 	"github.com/dmikalova/diatom/internal/runner"
@@ -26,12 +29,17 @@ not json at all
 
 func TestParse(t *testing.T) {
 	var events []runner.Event
+	var started []string
 	res, saw, err := Parse(
 		strings.NewReader(stream),
 		func(e runner.Event) { events = append(events, e) },
+		func(id string) { started = append(started, id) },
 	)
 	if err != nil || !saw {
 		t.Fatalf("Parse = %v, saw result %v", err, saw)
+	}
+	if !slices.Equal(started, []string{"abc"}) {
+		t.Errorf("started with %v", started)
 	}
 	want := runner.Result{
 		SessionID: "abc",
@@ -65,13 +73,68 @@ func TestParseOutcomes(t *testing.T) {
 		`{"type":"result","subtype":"error_during_execution","is_error":true}`: runner.Failed,
 		`{"type":"result","subtype":"success","is_error":true}`:                runner.Failed,
 	} {
-		res, _, _ := Parse(strings.NewReader(line), func(runner.Event) {})
+		res, _, _ := Parse(strings.NewReader(line), func(runner.Event) {}, nil)
 		if res.Outcome != want {
 			t.Errorf("%s: outcome %s, want %s", line, res.Outcome, want)
 		}
 	}
-	if _, saw, _ := Parse(strings.NewReader(`{"type":"system"}`), func(runner.Event) {}); saw {
+	if _, saw, _ := Parse(strings.NewReader(`{"type":"system"}`), func(runner.Event) {}, nil); saw {
 		t.Error("Parse saw a result in a stream without one")
+	}
+}
+
+func TestArgsResume(t *testing.T) {
+	args, err := Args(runner.Spec{Resume: "abc"}, "/scratch")
+	if err != nil ||
+		!strings.Contains(strings.Join(args, " "), "--verbose --permission-mode dontAsk "+
+			"--setting-sources project,local --strict-mcp-config --resume abc") {
+		t.Errorf("args = %q, %v", args, err)
+	}
+}
+
+// TestStopIsGraceful runs a fake claude that starts a session, leaves a child
+// running, and exits on an interrupt as the real one does.
+func TestStopIsGraceful(t *testing.T) {
+	dir := t.TempDir()
+	child := filepath.Join(dir, "child.pid")
+	bin := filepath.Join(dir, "claude")
+	script := "#!/bin/sh\n" +
+		"trap 'exit 130' INT TERM\n" +
+		"sleep 600 & echo $! > " + child + "\n" +
+		`echo '{"type":"system","subtype":"init","session_id":"abc"}'` + "\n" +
+		"while :; do sleep 0.1; done\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan string, 1)
+	done := make(chan error, 1)
+	go func() {
+		_, err := Runner{Binary: bin}.Run(ctx, runner.Spec{
+			Dir:     dir,
+			Started: func(id string) { started <- id },
+		}, func(runner.Event) {})
+		done <- err
+	}()
+	if id := <-started; id != "abc" {
+		t.Fatalf("started %q", id)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "stopped") {
+			t.Errorf("Run after a stop = %v", err)
+		}
+	case <-time.After(stopWait / 2):
+		t.Fatal("the agent ignored the interrupt until it was killed")
+	}
+	pid, err := os.ReadFile(child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, _ := strconv.Atoi(string(bytes.TrimSpace(pid)))
+	if syscall.Kill(n, 0) == nil {
+		t.Error("the agent's child outlived it")
 	}
 }
 

@@ -82,6 +82,10 @@ type Home struct {
 	MachineSessions int `yaml:"machineSessions"`
 	// SearchRoots are the directories the status pane's repo picker searches.
 	SearchRoots []string `yaml:"searchRoots"`
+	// AutoUpdate installs each new release of diatom as it comes out and
+	// restarts the scheduler on it, resuming its sessions. A diatom built
+	// from a checkout never updates itself.
+	AutoUpdate bool `yaml:"autoUpdate"`
 }
 
 // Profile is the kind of agent a piece of work needs.
