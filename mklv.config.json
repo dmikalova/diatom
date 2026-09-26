@@ -4,6 +4,10 @@
   "entrypoint": "cmd/diatom/main.go",
   "kind": "cli",
   "ignore": {
-    "git": ["/bin/", "coverage.*"]
+    "git": [
+      "/bin/",
+      "coverage.*",
+      "/diatom"
+    ]
   }
 }
