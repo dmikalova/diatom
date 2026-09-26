@@ -6,7 +6,9 @@
 //
 //	diatom run
 //	diatom status
-//	diatom goal new <name> [-title text] [-ws engine,cards:engine] [-active]
+//	diatom goal new <name> [-title text] < description
+//	diatom goal new <name> [-title text] -ws engine,cards:engine -active
+//	diatom goal plan|approve <name>
 //	diatom goal list
 //	diatom goal activate|park|pin|unpin|done <name>
 //	diatom task add -goal <goal> -ws <workstream> [-kind planned] [-profile name]
@@ -65,7 +67,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	case "status":
 		err = cmdStatus(ctx, stdout)
 	case "goal":
-		err = cmdGoal(ctx, rest, stdout)
+		err = cmdGoal(ctx, rest, stdin, stdout)
 	case "task":
 		err = cmdTask(ctx, rest, stdin, stdout)
 	case "questions":
@@ -101,7 +103,9 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 const usage = `Usage:
   diatom run                        run the scheduler
   diatom status                     show every goal in every known repo
-  diatom goal new <name> [-title text] [-ws engine,cards:engine] [-active]
+  diatom goal new <name> [-title text] < description   grill a new goal
+  diatom goal new <name> -ws engine,cards:engine -active   skip grilling
+  diatom goal plan|approve <name>   show or sign off a goal's plan
   diatom goal list
   diatom goal activate|park|pin|unpin|done <name>
   diatom task add -goal <goal> -ws <workstream> [-kind planned] [-profile name]

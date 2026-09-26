@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/dmikalova/diatom/internal/focus"
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/intake"
+	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/registry"
 )
@@ -244,4 +246,49 @@ func TestIntake(t *testing.T) {
 		t.Errorf("repo intake = %+v", repoLevel)
 	}
 	in.Update(tickMsg{})
+}
+
+func TestStatusSignsOffAPlan(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	g, err := plan.NewGoal(ctx, f.store, "grim", "Grim Reminders", "", queue.Origin{}, f.env.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := NewStatus(ctx, f.env)
+	s.sel = slices.IndexFunc(s.rows, func(r goalRow) bool { return r.goal.Name == g.Name })
+	if !strings.Contains(s.render(), "grilling: the next round is queued") {
+		t.Errorf("planning goal without a plan:\n%s", s.render())
+	}
+	key(s, "s")
+	if !strings.Contains(s.render(), "no plan to sign off") {
+		t.Error("s signed off a goal without a plan")
+	}
+
+	p, _ := plan.Parse(
+		[]byte(
+			"summary: Do it.\nworkstreams: [{name: engine}]\ntasks: [{key: a, title: Add ward, workstream: engine}]\n",
+		),
+	)
+	if err := plan.Save(f.store.GoalDir(g.Name), p); err != nil {
+		t.Fatal(err)
+	}
+	s.reload()
+	key(s, "v")
+	out := s.render()
+	if !strings.Contains(out, "plan ready: 1 workstreams, 1 tasks") ||
+		!strings.Contains(out, "[engine] Add ward") {
+		t.Errorf("plan not shown:\n%s", out)
+	}
+	key(s, "s")
+	if got, _ := f.store.Goal(
+		g.Name,
+	); got.State != queue.GoalPlanning ||
+		!strings.Contains(s.render(), "press s again") {
+		t.Fatal("one s signed the plan off")
+	}
+	key(s, "s")
+	if got, _ := f.store.Goal(g.Name); got.State != queue.GoalActive {
+		t.Errorf("after two s, goal is %s: %v", got.State, s.err)
+	}
 }

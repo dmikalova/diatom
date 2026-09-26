@@ -19,13 +19,7 @@ The scheduler core runs:
 - sessions with only explicit context (ADR 0011)
 - the reviewer, with revisions landing as fixups (ADRs 0001 and 0008)
 - the zellij workspace and its panes (ADR 0007)
-
-Not built yet:
-
-- triage of intake (ADR 0009)
-- grilling and plan sign-off (ADR 0010)
-
-Until grilling lands, goals start active and tasks are written by hand.
+- triage of intake, and grilling with plan sign-off (ADRs 0009 and 0010)
 
 ## Install
 
@@ -46,9 +40,14 @@ echo '.diatom/' >> ~/.config/git/ignore
 cd ~/Code/github.com/dmikalova/vex
 echo 'gate: mage ci:check' > .diatom/config.yaml
 
-diatom goal new new-set -title "Implement the new set" -ws engine,cards:engine -active
-diatom task add -goal new-set -ws engine "Add the ward keyword" < ward.md
-diatom task add -goal new-set -ws cards -after 0001 "Implement Ward Keeper" < keeper.md
+# A new goal is grilled first: answer its questions, then sign off its plan.
+diatom goal new new-set -title "Implement the new set" < goal.md
+diatom goal plan new-set
+diatom goal approve new-set
+
+# Or skip grilling and write the tasks by hand.
+diatom goal new hotfix -ws engine -active
+diatom task add -goal hotfix -ws engine "Fix ward stacking" < fix.md
 
 diatom workspace    # everything below in one zellij session, scheduler included
 diatom run          # the scheduler; Ctrl-C finishes running sessions, twice stops them

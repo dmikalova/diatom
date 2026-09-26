@@ -85,6 +85,12 @@ type Entry struct {
 	// Tree is the worktree's files when a revision was marked done, which
 	// splits a session's work into one fixup per revision.
 	Tree string `json:"tree,omitempty"`
+	// Title, Workstream, After and Profile describe a task triage adds, or
+	// with Title alone a goal it starts.
+	Title      string   `json:"title,omitempty"`
+	Workstream string   `json:"workstream,omitempty"`
+	After      []string `json:"after,omitempty"`
+	Profile    string   `json:"profile,omitempty"`
 }
 
 // The entry types.
@@ -92,6 +98,12 @@ const (
 	EntryDone = "done"
 	EntryAsk  = "ask"
 	EntryNote = "note"
+	// EntryAdd is a task triage adds to one of the goal's workstreams.
+	EntryAdd = "add"
+	// EntryGoal is a new goal triage starts from part of an intake.
+	EntryGoal = "goal"
+	// EntryPlan is the plan grilling hands in, as YAML in Text.
+	EntryPlan = "plan"
 )
 
 // Append adds an entry to the session's report, after checking that it names
@@ -133,6 +145,8 @@ type Report struct {
 	Questions []Entry
 	// Notes are the notes the agent added, in order.
 	Notes []Entry
+	// Adds, Goals and Plans are what triage and grilling handed in, in order.
+	Adds, Goals, Plans []Entry
 }
 
 // ReadReport reads the session's report.
@@ -161,6 +175,12 @@ func ReadReport(dir string) (Report, error) {
 			r.Questions = append(r.Questions, e)
 		case EntryNote:
 			r.Notes = append(r.Notes, e)
+		case EntryAdd:
+			r.Adds = append(r.Adds, e)
+		case EntryGoal:
+			r.Goals = append(r.Goals, e)
+		case EntryPlan:
+			r.Plans = append(r.Plans, e)
 		}
 	}
 	return r, sc.Err()

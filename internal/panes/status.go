@@ -22,6 +22,7 @@ import (
 	"github.com/dmikalova/diatom/internal/config"
 	"github.com/dmikalova/diatom/internal/focus"
 	"github.com/dmikalova/diatom/internal/git"
+	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/registry"
 	"github.com/dmikalova/diatom/internal/review"
@@ -53,6 +54,10 @@ type goalRow struct {
 	questions  int
 	toReview   int
 	activeWork []string
+	// plan is the plan waiting for sign-off, and grilling the grilling
+	// task's state, for a goal in planning.
+	plan     *plan.Plan
+	grilling queue.State
 }
 
 // Status shows every goal in every known repo and the sessions running now,
@@ -66,6 +71,11 @@ type Status struct {
 
 	// hunks caches each commit's hunk count; commits never change.
 	hunks map[string]int
+
+	// viewing shows the selected goal's plan; confirm names the goal a
+	// first s asked to sign off.
+	viewing bool
+	confirm string
 
 	picking bool
 	picker  textinput.Model
@@ -135,7 +145,15 @@ func (s *Status) row(store *queue.Store, g *queue.Goal) (goalRow, error) {
 		return row, err
 	}
 	var commits []string
+	if g.State == queue.GoalPlanning {
+		if row.plan, err = plan.Load(store.GoalDir(g.Name)); err != nil {
+			return row, err
+		}
+	}
 	for _, t := range tasks {
+		if t.Kind == queue.Grilling {
+			row.grilling = t.State
+		}
 		row.counts[t.State]++
 		if t.State == queue.Active {
 			row.activeWork = append(row.activeWork, t.Workstream)
@@ -155,21 +173,32 @@ func (s *Status) row(store *queue.Store, g *queue.Goal) (goalRow, error) {
 			row.questions++
 		}
 	}
-	rev := review.Store{Dir: store.GoalDir(g.Name)}
+	if row.toReview, err = s.toReview(store, g.Name, commits); err != nil {
+		return row, err
+	}
+	slices.Sort(row.activeWork)
+	row.activeWork = slices.Compact(row.activeWork)
+	return row, nil
+}
+
+// toReview counts the hunks of commits nobody has approved or rejected.
+func (s *Status) toReview(store *queue.Store, goal string, commits []string) (int, error) {
+	rev := review.Store{Dir: store.GoalDir(goal)}
 	repo := git.Repo{Dir: store.Repo()}
+	total := 0
 	for _, sha := range commits {
 		n, ok := s.hunks[sha]
 		if !ok {
 			hunks, err := review.Hunks(s.ctx, repo, sha)
 			if err != nil {
-				return row, err
+				return 0, err
 			}
 			n = len(hunks)
 			s.hunks[sha] = n
 		}
 		rec, err := rev.Load(sha)
 		if err != nil {
-			return row, err
+			return 0, err
 		}
 		decided := 0
 		for _, r := range rec.Hunks {
@@ -177,11 +206,9 @@ func (s *Status) row(store *queue.Store, g *queue.Goal) (goalRow, error) {
 				decided++
 			}
 		}
-		row.toReview += max(n-decided, 0)
+		total += max(n-decided, 0)
 	}
-	slices.Sort(row.activeWork)
-	row.activeWork = slices.Compact(row.activeWork)
-	return row, nil
+	return total, nil
 }
 
 func (s *Status) selected() *goalRow {
@@ -240,13 +267,51 @@ func (s *Status) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			s.save(row, what)
 		}
+	case "v":
+		s.viewing = !s.viewing
+	case "s":
+		if row != nil {
+			s.signOff(row)
+		}
+		return s, nil
 	case "o":
 		s.openPicker()
 		return s, s.picker.Focus()
 	case "r":
 		s.reload()
 	}
+	s.confirm = ""
 	return s, nil
+}
+
+// signOff signs the selected goal's plan off on a second s (ADR 0010).
+func (s *Status) signOff(row *goalRow) {
+	name := row.repo + "/" + row.goal.Name
+	if row.plan == nil {
+		s.flash, s.confirm = row.goal.Name+" has no plan to sign off", ""
+		return
+	}
+	if s.confirm != name {
+		s.confirm = name
+		s.flash = fmt.Sprintf(
+			"press s again to sign off %s: %d workstreams, %d tasks",
+			row.goal.Name,
+			len(row.plan.Workstreams),
+			len(row.plan.Tasks),
+		)
+		return
+	}
+	s.confirm = ""
+	cfg, err := config.Load(row.repo, s.env.Paths)
+	if err == nil {
+		err = plan.Approve(s.ctx, queue.Open(row.repo), cfg, row.goal.Name, s.env.Now())
+	}
+	if err != nil {
+		s.err = err
+		return
+	}
+	s.flash = row.goal.Name + " is signed off and active"
+	s.reload()
 }
 
 // toggleParked parks an active goal or resumes a parked one. Parking stops
@@ -345,6 +410,14 @@ func (s *Status) render() string {
 			b.WriteString(" · " + tui.Color(fmt.Sprintf("%d to review", r.toReview), tui.Yellow))
 		}
 		b.WriteString("\n")
+		if r.goal.State == queue.GoalPlanning {
+			b.WriteString("      " + planningLine(r) + "\n")
+			if s.viewing && i == s.sel && r.plan != nil {
+				for l := range strings.SplitSeq(strings.TrimRight(plan.Describe(r.plan), "\n"), "\n") {
+					b.WriteString("      " + tui.Dim("│ ") + l + "\n")
+				}
+			}
+		}
 		for _, ws := range r.activeWork {
 			fmt.Fprintf(
 				&b,
@@ -361,9 +434,25 @@ func (s *Status) render() string {
 		b.WriteString("\n" + tui.Color(s.flash, tui.Cyan) + "\n")
 	}
 	b.WriteString(
-		"\n" + tui.Dim("enter focus · p park/resume · P pin · o open repo · r refresh · q quit"),
+		"\n" + tui.Dim(
+			"enter focus · p park/resume · P pin · v view plan · s sign off · o open repo · q quit",
+		),
 	)
 	return b.String()
+}
+
+// planningLine says where a goal in planning stands.
+func planningLine(r goalRow) string {
+	switch {
+	case r.plan != nil:
+		return tui.Color(fmt.Sprintf("plan ready: %d workstreams, %d tasks · v view · s sign off",
+			len(r.plan.Workstreams), len(r.plan.Tasks)), tui.Green)
+	case r.grilling == queue.Blocked:
+		return tui.Color("grilling: waiting on your answers", tui.Magenta)
+	case r.grilling == queue.Active:
+		return tui.Color("grilling: a round is running", tui.Blue)
+	}
+	return tui.Dim("grilling: the next round is queued")
 }
 
 func stateColor(st queue.GoalState) string {

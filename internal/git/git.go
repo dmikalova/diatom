@@ -432,6 +432,93 @@ func (r Repo) CommitTree(ctx context.Context, tree, message string) (string, err
 	return sha, err
 }
 
+// CommitFiles commits files, keyed by slash-separated path, on top of branch
+// without a worktree, and moves the branch to the new commit. Every other
+// file stays as the branch had it.
+func (r Repo) CommitFiles(
+	ctx context.Context,
+	branch string,
+	files map[string][]byte,
+	message string,
+) (string, error) {
+	parent, err := r.RevParse(ctx, branch)
+	if err != nil {
+		return "", err
+	}
+	tmp, err := os.CreateTemp("", "diatom-index-*")
+	if err != nil {
+		return "", err
+	}
+	_ = tmp.Close()
+	_ = os.Remove(tmp.Name()) // read-tree writes a fresh index here
+	defer func() { _ = os.Remove(tmp.Name()) }()
+	env := []string{"GIT_INDEX_FILE=" + tmp.Name()}
+	if _, err := r.run(ctx, env, nil, "read-tree", parent); err != nil {
+		return "", err
+	}
+	paths := make([]string, 0, len(files))
+	for p := range files {
+		paths = append(paths, p)
+	}
+	slices.Sort(paths)
+	for _, p := range paths {
+		blob, err := r.run(ctx, nil, bytes.NewReader(files[p]), "hash-object", "-w", "--stdin")
+		if err != nil {
+			return "", err
+		}
+		if _, err := r.run(
+			ctx,
+			env,
+			nil,
+			"update-index",
+			"--add",
+			"--cacheinfo",
+			"100644,"+blob+","+p,
+		); err != nil {
+			return "", err
+		}
+	}
+	tree, err := r.run(ctx, env, nil, "write-tree")
+	if err != nil {
+		return "", err
+	}
+	sha, err := r.run(
+		ctx,
+		nil,
+		strings.NewReader(message),
+		"commit-tree",
+		tree,
+		"-p",
+		parent,
+		"-F",
+		"-",
+	)
+	if err != nil {
+		return "", err
+	}
+	_, err = r.Run(ctx, "update-ref", "refs/heads/"+branch, sha, parent)
+	return sha, err
+}
+
+// EnsureDetached checks ref out, detached, at path, creating the worktree if
+// needed and discarding anything left in it. The planning worktree is read
+// only: nothing written there is kept.
+func (r Repo) EnsureDetached(ctx context.Context, path, ref string) error {
+	if _, err := os.Stat(filepath.Join(path, ".git")); err != nil {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		_, err := r.Run(ctx, "worktree", "add", "--detach", path, ref)
+		return err
+	}
+	wt := Repo{Dir: path}
+	if _, err := wt.Run(ctx, "checkout", "--detach", "--force", ref); err != nil {
+		return err
+	}
+	_, err := wt.Run(ctx, "clean", "-fdq")
+	return err
+}
+
 // Stash saves every change, untracked files included, and cleans the
 // worktree. The work stays reachable in the stash list.
 func (r Repo) Stash(ctx context.Context, message string) error {

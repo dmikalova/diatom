@@ -11,9 +11,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/dmikalova/diatom/internal/gate"
 	"github.com/dmikalova/diatom/internal/git"
+	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/session"
 )
 
@@ -147,4 +149,63 @@ func fail(
 		spec.GateAttempts,
 	)
 	return json.NewEncoder(out).Encode(map[string]string{"decision": "block", "reason": msg})
+}
+
+// maxReportPushes is how many times StopPlanning sends a session back to
+// report before letting it end.
+const maxReportPushes = 2
+
+// StopPlanning is the Stop hook of triage and grilling sessions, which have
+// no gate. It sends the agent back when a task has no report, because a
+// question or plan left in a reply reaches nobody: grilling must ask or hand
+// in a plan, and triage must ask or finish.
+func StopPlanning(dir string, spec session.Spec, out io.Writer) error {
+	report, err := session.ReadReport(dir)
+	if err != nil {
+		return err
+	}
+	asked := map[string]bool{}
+	for _, q := range report.Questions {
+		asked[q.Task] = true
+	}
+	planned := map[string]bool{}
+	for _, p := range report.Plans {
+		planned[p.Task] = true
+	}
+	var missing []string
+	for _, id := range spec.Tasks {
+		reported := asked[id] || report.Done[id]
+		if spec.Kind == queue.Grilling {
+			reported = asked[id] || planned[id]
+		}
+		if !reported {
+			missing = append(missing, id)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	st, err := session.LoadGate(dir)
+	if err != nil {
+		return err
+	}
+	if st.Attempts >= maxReportPushes {
+		return nil
+	}
+	st.Attempts++
+	if err := session.SaveGate(dir, st); err != nil {
+		return err
+	}
+	what := "mark it done with `diatom task done <id>` once it is sorted"
+	if spec.Kind == queue.Grilling {
+		what = "hand in the plan with `diatom task plan <id> < plan.yaml`"
+	}
+	reason := fmt.Sprintf(
+		"You are ending the session without reporting on task %s. Nobody reads your replies, "+
+			"so anything you wrote in one is lost. Put each question to the human with "+
+			"`diatom task ask <id> \"<question>\"`, one per call with your recommended answer, or %s.",
+		strings.Join(missing, ", "),
+		what,
+	)
+	return json.NewEncoder(out).Encode(map[string]string{"decision": "block", "reason": reason})
 }

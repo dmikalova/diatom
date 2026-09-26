@@ -117,7 +117,7 @@ func TestGoalAndTaskCommands(t *testing.T) {
 
 func TestQuestionsAndAnswer(t *testing.T) {
 	repo := inRepo(t)
-	diatom(t, "", "goal", "new", "set", "-ws", "engine")
+	diatom(t, "", "goal", "new", "set", "-ws", "engine", "-active")
 	s := queue.Open(repo)
 	if err := s.AddQuestion(
 		"set",
@@ -282,8 +282,8 @@ func TestReviewListAndGoalDone(t *testing.T) {
 
 func TestReviewGoalChoice(t *testing.T) {
 	inRepo(t)
-	diatom(t, "", "goal", "new", "one", "-ws", "a")
-	diatom(t, "", "goal", "new", "two", "-ws", "a")
+	diatom(t, "", "goal", "new", "one", "-ws", "a", "-active")
+	diatom(t, "", "goal", "new", "two", "-ws", "a", "-active")
 	if code, _, stderr := diatom(
 		t,
 		"",
@@ -329,5 +329,157 @@ func TestWorkspaceRefusesInsideZellij(t *testing.T) {
 	}
 	if code, _, _ := diatom(t, "", "pane", "nope"); code != 2 {
 		t.Error("an unknown pane was accepted")
+	}
+}
+
+func TestGoalGrillingCommands(t *testing.T) {
+	repo := inRepo(t)
+	code, stdout, stderr := diatom(
+		t,
+		"Implement the Grim Reminders set.\n",
+		"goal",
+		"new",
+		"grim",
+		"-title",
+		"Grim Reminders",
+	)
+	if code != 0 || !strings.Contains(stdout, "in planning") {
+		t.Fatalf("goal new = %d %q %q", code, stdout, stderr)
+	}
+	s := queue.Open(repo)
+	tasks, _ := s.Tasks("grim")
+	if len(tasks) != 1 || tasks[0].Kind != queue.Grilling ||
+		tasks[0].Body != "Implement the Grim Reminders set.\n" {
+		t.Fatalf("tasks = %+v", tasks)
+	}
+	if code, _, stderr := diatom(
+		t,
+		"",
+		"goal",
+		"new",
+		"x",
+		"-ws",
+		"a",
+	); code != 2 ||
+		!strings.Contains(stderr, "needs -active") {
+		t.Errorf("planning goal with -ws = %d %q", code, stderr)
+	}
+	if code, _, stderr := diatom(
+		t,
+		"",
+		"goal",
+		"plan",
+		"grim",
+	); code != 1 ||
+		!strings.Contains(stderr, "no plan yet") {
+		t.Errorf("goal plan without one = %d %q", code, stderr)
+	}
+	if err := os.WriteFile(filepath.Join(s.GoalDir("grim"), "plan.yaml"), []byte(
+		"summary: Do it.\nworkstreams: [{name: engine}]\ntasks: [{key: a, title: Add ward, workstream: engine}]\n",
+	),
+		0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, stdout, _ := diatom(
+		t,
+		"",
+		"goal",
+		"plan",
+		"grim",
+	); code != 0 ||
+		!strings.Contains(stdout, "[engine] Add ward") {
+		t.Errorf("goal plan = %d %q", code, stdout)
+	}
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if code, stdout, stderr := diatom(
+		t,
+		"",
+		"goal",
+		"approve",
+		"grim",
+	); code != 0 ||
+		!strings.Contains(stdout, "signed off") {
+		t.Fatalf("goal approve = %d %q %q", code, stdout, stderr)
+	}
+	if g, _ := s.Goal("grim"); g.State != queue.GoalActive {
+		t.Errorf("goal after approve = %s", g.State)
+	}
+}
+
+func TestPlanningToolCommands(t *testing.T) {
+	dir := t.TempDir()
+	triage := session.Spec{ID: "s", Kind: queue.Triage, Tasks: []string{"0001"}}
+	if err := session.Create(dir, triage); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(session.EnvVar, dir)
+	if code, _, stderr := diatom(
+		t,
+		"Ward stops 1.",
+		"task",
+		"add-task",
+		"0001",
+		"-ws",
+		"engine",
+		"-title",
+		"Weaken ward",
+		"-after",
+		"0003, 0004",
+	); code != 0 {
+		t.Fatalf("add-task: %s", stderr)
+	}
+	if code, _, stderr := diatom(t, "", "task", "new-goal", "0001", "-title", "Web UI"); code != 0 {
+		t.Fatalf("new-goal: %s", stderr)
+	}
+	if code, _, _ := diatom(t, "", "task", "add-task", "0001", "-title", "x"); code != 2 {
+		t.Error("add-task without -ws was accepted")
+	}
+	if code, _, stderr := diatom(
+		t,
+		"summary: x\n",
+		"task",
+		"plan",
+		"0001",
+	); code != 1 ||
+		!strings.Contains(stderr, "only for grilling") {
+		t.Errorf("plan in a triage session = %d %q", code, stderr)
+	}
+	r, _ := session.ReadReport(dir)
+	if len(r.Adds) != 1 || r.Adds[0].Title != "Weaken ward" ||
+		strings.Join(r.Adds[0].After, ",") != "0003,0004" ||
+		r.Adds[0].Text != "Ward stops 1." ||
+		len(r.Goals) != 1 {
+		t.Errorf("report = %+v", r)
+	}
+
+	grill := session.Spec{ID: "g", Kind: queue.Grilling, Tasks: []string{"0002"}}
+	gdir := t.TempDir()
+	if err := session.Create(gdir, grill); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(session.EnvVar, gdir)
+	if code, _, stderr := diatom(
+		t,
+		"summary: x\n",
+		"task",
+		"plan",
+		"0002",
+	); code != 1 ||
+		!strings.Contains(stderr, "not accepted") {
+		t.Errorf("an invalid plan = %d %q", code, stderr)
+	}
+	good := "summary: x\nworkstreams: [{name: e}]\ntasks: [{key: a, title: A, workstream: e}]\n"
+	if code, stdout, _ := diatom(
+		t,
+		good,
+		"task",
+		"plan",
+		"0002",
+	); code != 0 ||
+		!strings.Contains(stdout, "accepted") {
+		t.Errorf("a valid plan = %d %q", code, stdout)
+	}
+	if code, _, _ := diatom(t, "", "task", "new-goal", "0002", "-title", "x"); code != 1 {
+		t.Error("new-goal was accepted in a grilling session")
 	}
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/dmikalova/diatom/internal/gate"
 	"github.com/dmikalova/diatom/internal/git"
+	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/session"
 )
 
@@ -249,5 +250,83 @@ func TestStopConflictMarkers(t *testing.T) {
 	}
 	if runs != 0 || !bytes.Contains(out.Bytes(), []byte("Conflict markers")) {
 		t.Errorf("markers: %d runs, output %q", runs, out.String())
+	}
+}
+
+func TestStopPlanning(t *testing.T) {
+	dir := t.TempDir()
+	spec := session.Spec{ID: "s", Kind: queue.Grilling, Tasks: []string{"0001"}}
+	if err := session.Create(dir, spec); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	for i := range 3 {
+		out.Reset()
+		if err := StopPlanning(dir, spec, &out); err != nil {
+			t.Fatal(err)
+		}
+		if blocked := bytes.Contains(out.Bytes(), []byte(`"block"`)); blocked != (i < 2) {
+			t.Fatalf(
+				"stop %d blocked = %v, want the first two pushed back: %q",
+				i,
+				blocked,
+				out.String(),
+			)
+		}
+	}
+	// A question, or a plan, is a report.
+	dir2 := t.TempDir()
+	if err := session.Create(dir2, spec); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.Append(
+		dir2,
+		spec,
+		session.Entry{Type: session.EntryAsk, Task: "0001", Text: "Which?"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := StopPlanning(dir2, spec, &out); err != nil || out.Len() != 0 {
+		t.Errorf("stop after a question = %q, %v", out.String(), err)
+	}
+
+	// Triage is reported by finishing, but a grilling task marked done
+	// without a plan is not.
+	triage := session.Spec{ID: "t", Kind: queue.Triage, Tasks: []string{"0002"}}
+	dir3 := t.TempDir()
+	if err := session.Create(dir3, triage); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.Append(
+		dir3,
+		triage,
+		session.Entry{Type: session.EntryDone, Task: "0002"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := StopPlanning(dir3, triage, &out); err != nil || out.Len() != 0 {
+		t.Errorf("stop after a finished triage = %q, %v", out.String(), err)
+	}
+	dir4 := t.TempDir()
+	if err := session.Create(dir4, spec); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.Append(
+		dir4,
+		spec,
+		session.Entry{Type: session.EntryDone, Task: "0001"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := StopPlanning(
+		dir4,
+		spec,
+		&out,
+	); err != nil ||
+		!bytes.Contains(out.Bytes(), []byte("diatom task plan")) {
+		t.Errorf("stop after grilling done without a plan = %q, %v", out.String(), err)
 	}
 }

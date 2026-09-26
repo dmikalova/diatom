@@ -310,3 +310,57 @@ func TestFingerprintSeesRacyEdit(t *testing.T) {
 		t.Fatal("a same-size edit in the index's second left the fingerprint at HEAD's tree")
 	}
 }
+
+func TestCommitFiles(t *testing.T) {
+	ctx := context.Background()
+	r := newRepo(t)
+	mustRun(t, r, "branch", "integration")
+	sha, err := r.CommitFiles(
+		ctx,
+		"integration",
+		map[string][]byte{"docs/adr/0001-x.md": []byte("# X\n")},
+		"docs: x\n",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := r.RevParse(ctx, "integration"); got != sha {
+		t.Errorf("integration = %s, want %s", got, sha)
+	}
+	if files := mustRun(
+		t,
+		r,
+		"ls-tree",
+		"-r",
+		"--name-only",
+		"integration",
+	); files != "a.txt\ndocs/adr/0001-x.md" {
+		t.Errorf("tree = %q, want the old file kept and the new one added", files)
+	}
+	if status := mustRun(t, r, "status", "--porcelain"); status != "" {
+		t.Errorf("CommitFiles touched the worktree: %q", status)
+	}
+}
+
+func TestEnsureDetached(t *testing.T) {
+	ctx := context.Background()
+	r := newRepo(t)
+	path := filepath.Join(t.TempDir(), "planning")
+	if err := r.EnsureDetached(ctx, path, "main"); err != nil {
+		t.Fatal(err)
+	}
+	w := Repo{Dir: path}
+	writeFile(t, w, "a.txt", "scribbled\n")
+	writeFile(t, w, "junk.txt", "junk\n")
+	writeFile(t, r, "a.txt", "two\n")
+	next := commitAll(t, r, "feat: two")
+	if err := r.EnsureDetached(ctx, path, "main"); err != nil {
+		t.Fatal(err)
+	}
+	if head, _ := w.RevParse(ctx, "HEAD"); head != next {
+		t.Errorf("planning worktree at %s, want %s", head, next)
+	}
+	if dirty, _ := w.Dirty(ctx); dirty {
+		t.Error("the planning worktree kept what was written in it")
+	}
+}

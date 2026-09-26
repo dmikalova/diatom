@@ -3,8 +3,10 @@ package harness
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
+	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/schedule"
 )
@@ -34,6 +36,10 @@ func Prompt(in PromptInput) string {
 		plural(len(in.Batch.Tasks), "task"), in.Batch.Workstream, in.Goal.Title)
 
 	b.WriteString("## How diatom works\n\n")
+	b.WriteString(
+		"- **Nobody reads your replies.** The session runs unattended: the human sees only what you " +
+			"report with the task tool below. A question or result left in a reply is lost.\n",
+	)
 	b.WriteString(
 		"- **Only edit files.** diatom does every git operation, and git commands that change the " +
 			"repository are blocked. Read-only ones such as `git status`, `git diff` and `git log` are fine.\n",
@@ -130,4 +136,153 @@ func plural(n int, word string) string {
 		return "1 " + word
 	}
 	return fmt.Sprintf("%d %ss", n, word)
+}
+
+// planningPrompt builds the instructions of a triage or grilling session.
+func (h *Harness) planningPrompt(repo Repo, g *queue.Goal, in PromptInput) (string, error) {
+	tasks, err := repo.Store.Tasks(g.Name)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	fmt.Fprintf(
+		&b,
+		"You are %s the goal %q. Your working directory is a read-only checkout of the goal's "+
+			"integration branch: read the code freely, but anything you write in it is thrown away.\n\n",
+		map[queue.Kind]string{queue.Triage: "triaging new input for", queue.Grilling: "grilling"}[in.Batch.Kind],
+		g.Title,
+	)
+	b.WriteString("## How diatom works\n\n")
+	b.WriteString(
+		"- **Nobody reads your replies.** The session runs unattended: the human sees only what you " +
+			"report with the task tool below. A question or result left in a reply is lost.\n",
+	)
+	b.WriteString(
+		"- You don't change code in this session. Report through the task tool, a shell command:\n",
+	)
+	b.WriteString(
+		"  - `diatom task ask <id> \"<question>\"` asks the human something. The task waits for the " +
+			"answer, which comes back in the task text.\n",
+	)
+	b.WriteString("  - `diatom task note <id> \"<text>\"` records something worth keeping.\n")
+	b.WriteString("  - `diatom task done <id>` marks the task done.\n")
+	if in.Batch.Kind == queue.Triage {
+		writeTriage(&b, g, tasks)
+	} else {
+		writeGrilling(&b, repo, in)
+	}
+	if len(in.Guides) > 0 {
+		b.WriteString("\n## Directory instructions\n\n")
+		for _, gd := range in.Guides {
+			fmt.Fprintf(&b, "- `%s`\n", gd)
+		}
+	}
+	b.WriteString("\n## Tasks\n")
+	for _, t := range in.Batch.Tasks {
+		fmt.Fprintf(
+			&b,
+			"\n### Task %s: %s\n\n`%s`\n\n",
+			t.ID,
+			t.Title,
+			filepath.Join(in.TaskDir, t.ID+".md"),
+		)
+		if body := strings.TrimSpace(t.Body); body != "" {
+			b.WriteString(body + "\n")
+		}
+	}
+	return b.String(), nil
+}
+
+func writeTriage(b *strings.Builder, g *queue.Goal, tasks []*queue.Task) {
+	b.WriteString(
+		"  - `diatom task add-task <id> -ws <workstream> -title \"<title>\" [-after <ids>] < body` " +
+			"adds a task to one of the goal's workstreams, with its details on stdin.\n",
+	)
+	b.WriteString(
+		"  - `diatom task new-goal <id> -title \"<title>\" < description` starts a new goal, for " +
+			"input that doesn't belong to this one.\n\n",
+	)
+	b.WriteString(
+		"## Triage\n\nEach task below is one intake: free-form input from the human, such as a new " +
+			"goal or a handful of playtest notes. Sort it into small, clear-cut tasks on the goal's workstreams, a " +
+			"new goal, or questions back to the human when something is unclear. Anything that needs a design " +
+			"decision is a question, not a task. You can't add a workstream: ask instead. Mark each intake done " +
+			"once it is sorted.\n\n",
+	)
+	b.WriteString("The goal's workstreams:\n\n")
+	for _, w := range g.Workstreams {
+		deps := ""
+		if len(w.DependsOn) > 0 {
+			deps = " (after " + strings.Join(w.DependsOn, ", ") + ")"
+		}
+		fmt.Fprintf(b, "- %s%s\n", w.Name, deps)
+	}
+	b.WriteString("\nIts tasks, for placing new work and naming what it comes after:\n\n")
+	for _, t := range tasks {
+		if t.Kind == queue.Triage || t.Kind == queue.Grilling {
+			continue
+		}
+		fmt.Fprintf(b, "- %s [%s, %s] %s\n", t.ID, t.Workstream, t.State, t.Title)
+	}
+}
+
+func writeGrilling(b *strings.Builder, repo Repo, in PromptInput) {
+	b.WriteString(
+		"  - `diatom task plan <id> < plan.yaml` hands in the plan. It is checked straight away; " +
+			"fix what it reports and hand it in again.\n\n",
+	)
+	b.WriteString(
+		"## Grilling\n\nThe goal below hides decisions you can't make alone: what is new, how it " +
+			"fits the code, what order the work goes in. Find them before any work starts. If you have the " +
+			"`diatom:grilling` skill, use its method to find them, but put every question to the human with " +
+			"`diatom task ask`, one question per call with your recommended answer in it, never in a reply. " +
+			"Grilling works in rounds, one per session:\n\n",
+	)
+	b.WriteString(
+		"- **Ask a round.** Put every question you need answered now with `diatom task ask`, then " +
+			"end the session. The answers come back in the task text, and the next round starts from them.\n",
+	)
+	b.WriteString(
+		"- **Or hand in the plan** once nothing is left to decide, then mark the task done. The human " +
+			"signs it off before work starts.\n\n",
+	)
+	b.WriteString(
+		"The plan is YAML: workstreams, scoped by purpose rather than path, with the order between " +
+			"them, and small tasks, each one session's work for an agent.\n\n",
+	)
+	b.WriteString(
+		"```yaml\nsummary: What the goal does and how, in a few sentences.\nworkstreams:\n" +
+			"  - name: engine\n  - name: cards\n    dependsOn: [engine]\ntasks:\n  - key: ward\n" +
+			"    title: Add the ward keyword\n    workstream: engine\n    body: |\n      What to do and how to " +
+			"know it's done.\n  - key: warden\n    title: Implement Warden\n    workstream: cards\n" +
+			"    after: [ward]\n    profile: implementation\n```\n\n",
+	)
+	names := make([]string, 0, len(repo.Config.Profiles))
+	for n := range repo.Config.Profiles {
+		names = append(names, n)
+	}
+	slices.Sort(names)
+	fmt.Fprintf(b, "A task's profile is optional and one of: %s.\n\n", strings.Join(names, ", "))
+	drafts := plan.DraftsDir(repo.Store.GoalDir(in.Goal.Name))
+	if dir := repo.Config.ADR.Dir; dir != "" {
+		fmt.Fprintf(
+			b,
+			"Where a decision warrants an ADR, write it as a Markdown file in `%s`, named and "+
+				"numbered to follow the repo's ADRs in `%s`. They are committed there when the plan is signed "+
+				"off, and reviewed like code.",
+			drafts,
+			dir,
+		)
+	} else {
+		fmt.Fprintf(
+			b,
+			"Where a decision warrants an ADR, write it as a Markdown file in `%s`; it stays with "+
+				"the goal.",
+			drafts,
+		)
+	}
+	if f := repo.Config.ADR.Format; f != "" {
+		b.WriteString(" Write them this way: " + f)
+	}
+	b.WriteString("\n")
 }

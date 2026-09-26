@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -53,8 +54,11 @@ func (a *agent) Run(
 	spec runner.Spec,
 	_ func(runner.Event),
 ) (runner.Result, error) {
-	if spec.Hooks.Stop == "" {
-		// The commit-message call.
+	if !slices.ContainsFunc(
+		spec.Env,
+		func(e string) bool { return strings.HasPrefix(e, session.EnvVar+"=") },
+	) {
+		// The commit-message call, the only one outside a session.
 		return runner.Result{Text: "Sure! Here it is:\nfeat: do the work\n"}, nil
 	}
 	a.mu.Lock()

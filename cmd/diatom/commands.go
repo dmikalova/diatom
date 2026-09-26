@@ -20,6 +20,7 @@ import (
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/harness"
 	"github.com/dmikalova/diatom/internal/hook"
+	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/registry"
 	"github.com/dmikalova/diatom/internal/review"
@@ -84,7 +85,7 @@ func here(ctx context.Context) (*queue.Store, error) {
 	return queue.Open(root), nil
 }
 
-func cmdGoal(ctx context.Context, args []string, stdout io.Writer) error {
+func cmdGoal(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
 	if len(args) == 0 {
 		return fmt.Errorf("%w: goal needs a subcommand", errUsage)
 	}
@@ -94,7 +95,11 @@ func cmdGoal(ctx context.Context, args []string, stdout io.Writer) error {
 	}
 	switch sub, rest := args[0], args[1:]; sub {
 	case "new":
-		return goalNew(ctx, s, rest, stdout)
+		return goalNew(ctx, s, rest, stdin, stdout)
+	case "approve":
+		return goalApprove(ctx, s, rest, stdout)
+	case "plan":
+		return goalPlan(s, rest, stdout)
 	case "list":
 		goals, err := s.Goals()
 		if err != nil {
@@ -171,9 +176,16 @@ func goalDone(ctx context.Context, s *queue.Store, args []string, stdout io.Writ
 	return nil
 }
 
-// goalNew creates a goal on the current branch. Until grilling lands
-// (ADR 0010), -active starts it straight away with hand-written tasks.
-func goalNew(ctx context.Context, s *queue.Store, args []string, stdout io.Writer) error {
+// goalNew creates a goal on the current branch. It starts in planning with a
+// grilling task holding the description from stdin (ADR 0010); -active skips
+// grilling for a goal whose workstreams and tasks are written by hand.
+func goalNew(
+	ctx context.Context,
+	s *queue.Store,
+	args []string,
+	stdin io.Reader,
+	stdout io.Writer,
+) error {
 	fs := flag.NewFlagSet("goal new", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	title := fs.String("title", "", "what the goal is for")
@@ -198,6 +210,44 @@ func goalNew(ctx context.Context, s *queue.Store, args []string, stdout io.Write
 	if err != nil {
 		return fmt.Errorf("the goal branches from the current branch, and there is none: %w", err)
 	}
+	if !*active {
+		if *ws != "" {
+			return fmt.Errorf(
+				"%w: a goal in planning gets its workstreams from its plan; -ws needs -active",
+				errUsage,
+			)
+		}
+		body, err := readBody(stdin)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(*title) == "" {
+			*title = name[0]
+		}
+		g, err := plan.NewGoal(
+			ctx,
+			s,
+			name[0],
+			*title,
+			body,
+			queue.Origin{Type: "human"},
+			time.Now(),
+		)
+		if err != nil {
+			return err
+		}
+		if err := registerRepo(s); err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(
+			stdout,
+			"goal %s created from %s, in planning: grilling starts once `diatom run` "+
+				"picks it up\n",
+			g.Name,
+			g.Base,
+		)
+		return nil
+	}
 	workstreams, err := parseWorkstreams(*ws)
 	if err != nil {
 		return err
@@ -209,20 +259,59 @@ func goalNew(ctx context.Context, s *queue.Store, args []string, stdout io.Write
 	if g.Title == "" {
 		g.Title = g.Name
 	}
-	if *active {
-		g.State = queue.GoalActive
-	}
+	g.State = queue.GoalActive
 	if err := s.CreateGoal(g); err != nil {
 		return err
 	}
+	if err := registerRepo(s); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(stdout, "goal %s created from %s, %s\n", g.Name, base, g.State)
+	return nil
+}
+
+// registerRepo makes the store's repo known to the scheduler.
+func registerRepo(s *queue.Store) error {
 	reg, err := registry.Default()
 	if err != nil {
 		return err
 	}
-	if err := reg.Add(s.Repo()); err != nil {
+	return reg.Add(s.Repo())
+}
+
+// goalApprove signs a goal's plan off (ADR 0010).
+func goalApprove(ctx context.Context, s *queue.Store, args []string, stdout io.Writer) error {
+	if len(args) != 1 {
+		return fmt.Errorf("%w: goal approve takes a goal name", errUsage)
+	}
+	paths, err := config.DefaultPaths()
+	if err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintf(stdout, "goal %s created from %s, %s\n", g.Name, base, g.State)
+	cfg, err := config.Load(s.Repo(), paths)
+	if err != nil {
+		return err
+	}
+	if err := plan.Approve(ctx, s, cfg, args[0], time.Now()); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(stdout, "goal %s is signed off and active\n", args[0])
+	return nil
+}
+
+// goalPlan prints a goal's plan.
+func goalPlan(s *queue.Store, args []string, stdout io.Writer) error {
+	if len(args) != 1 {
+		return fmt.Errorf("%w: goal plan takes a goal name", errUsage)
+	}
+	p, err := plan.Load(s.GoalDir(args[0]))
+	if err != nil {
+		return err
+	}
+	if p == nil {
+		return fmt.Errorf("goal %s has no plan yet", args[0])
+	}
+	_, _ = io.WriteString(stdout, plan.Describe(p))
 	return nil
 }
 
@@ -276,6 +365,8 @@ func cmdTask(ctx context.Context, args []string, stdin io.Reader, stdout io.Writ
 		return taskAdd(ctx, rest, stdin, stdout)
 	case session.EntryDone, session.EntryNote, session.EntryAsk:
 		return taskReport(ctx, sub, rest, stdout)
+	case "add-task", "new-goal", "plan":
+		return planningReport(sub, rest, stdin, stdout)
 	}
 	return fmt.Errorf("%w: unknown task subcommand %q", errUsage, args[0])
 }
@@ -488,6 +579,9 @@ func cmdHook(ctx context.Context, args []string, stdin io.Reader, stdout io.Writ
 		dir, spec, err := session.FromEnv()
 		if err != nil {
 			return err
+		}
+		if spec.Kind == queue.Triage || spec.Kind == queue.Grilling {
+			return hook.StopPlanning(dir, spec, stdout)
 		}
 		return hook.Stop(ctx, dir, spec, gate.Run, stdout)
 	}

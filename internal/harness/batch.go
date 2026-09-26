@@ -16,6 +16,7 @@ import (
 	"github.com/dmikalova/diatom/internal/commitmsg"
 	"github.com/dmikalova/diatom/internal/config"
 	"github.com/dmikalova/diatom/internal/git"
+	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/runner"
 	"github.com/dmikalova/diatom/internal/schedule"
@@ -39,6 +40,9 @@ func (h *Harness) RunBatch(ctx context.Context, repo Repo, b schedule.Batch) err
 	g, err := s.Goal(b.Goal)
 	if err != nil {
 		return err
+	}
+	if planningKind(b.Kind) {
+		return h.runPlanning(ctx, repo, g, b)
 	}
 	main := git.Repo{Dir: s.Repo()}
 	wt := git.Repo{Dir: s.WorktreeDir(g.Name, b.Workstream)}
@@ -224,12 +228,20 @@ func (h *Harness) newSession(
 	if err != nil {
 		return "", spec, err
 	}
-	prompt := Prompt(PromptInput{
+	in := PromptInput{
 		Goal: g, Batch: b, Gate: cfg.Gate,
 		TaskDir: filepath.Join(s.GoalDir(g.Name), "tasks", string(queue.Active)),
 		Merging: wt.MergeInProgress(ctx),
 		Guides:  guides,
-	})
+	}
+	var prompt string
+	if planningKind(b.Kind) {
+		if prompt, err = h.planningPrompt(repo, g, in); err != nil {
+			return "", spec, err
+		}
+	} else {
+		prompt = Prompt(in)
+	}
 	return dir, spec, os.WriteFile(filepath.Join(dir, "prompt.md"), []byte(prompt), 0o644)
 }
 
@@ -238,6 +250,9 @@ func (h *Harness) newSession(
 func (h *Harness) sessionDir(root, ws string) (id, dir string, err error) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return "", "", err
+	}
+	if ws == "" {
+		ws = "planning"
 	}
 	base := h.now().UTC().Format("20060102T150405Z") + "-" + ws
 	for n := 0; ; n++ {
@@ -299,21 +314,26 @@ func (h *Harness) runSession(
 		}{h.now(), e})
 	}
 	exe := shellQuote(h.Exe)
+	hooks := runner.Hooks{PreToolUse: exe + " hook pre-tool-use", Stop: exe + " hook stop"}
+	addDirs := []string{filepath.Join(repo.Store.GoalDir(g.Name), "tasks", string(queue.Active))}
+	if planningKind(b.Kind) {
+		// A planning session changes no code, so its Stop hook runs no gate;
+		// it only checks that every task was reported. Grilling may draft
+		// ADRs beside the goal.
+		addDirs = append(addDirs, plan.DraftsDir(repo.Store.GoalDir(g.Name)))
+	}
 	h.log().Info("session starting", "session", spec.ID, "goal", g.Name, "workstream", b.Workstream,
 		"kind", b.Kind, "profile", b.Profile, "tasks", spec.Tasks)
 	res, err := h.Runner.Run(ctx, runner.Spec{
 		Dir:     wt.Dir,
-		AddDirs: []string{filepath.Join(repo.Store.GoalDir(g.Name), "tasks", string(queue.Active))},
+		AddDirs: addDirs,
 		Prompt:  string(prompt),
 		Profile: profile,
 		Env: []string{
 			session.EnvVar + "=" + dir,
 			"PATH=" + filepath.Join(dir, "bin") + string(os.PathListSeparator) + os.Getenv("PATH"),
 		},
-		Hooks: runner.Hooks{
-			PreToolUse: exe + " hook pre-tool-use",
-			Stop:       exe + " hook stop",
-		},
+		Hooks:        hooks,
 		Instructions: instructions,
 		Skills:       skills,
 		MCPServers:   repo.Config.MCPServers,

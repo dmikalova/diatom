@@ -59,8 +59,8 @@ func (h *Harness) lockRepo(repo string) func() {
 // cooldown is how long a workstream waits after a batch that failed outright.
 const cooldown = time.Minute
 
-// runnable are the task kinds the loop runs so far. Triage and grilling need
-// a planning session outside any worktree, which comes later.
+// runnable are the task kinds that run in a workstream's worktree; triage and
+// grilling run as planning sessions instead.
 var runnable = map[queue.Kind]bool{
 	queue.GateRepair: true,
 	queue.Conflict:   true,
@@ -189,28 +189,48 @@ func (h *Harness) load(ctx context.Context, path string) (Repo, []*schedule.Goal
 		return Repo{}, nil, err
 	}
 	repo := Repo{Store: queue.Open(path), Config: cfg}
+	if err := h.applyRepoIntake(ctx, repo.Store); err != nil {
+		return repo, nil, err
+	}
 	all, err := repo.Store.Goals()
 	if err != nil {
 		return repo, nil, err
 	}
 	var goals []*schedule.Goal
 	for _, g := range all {
-		if g.State != queue.GoalActive {
+		if g.State != queue.GoalActive && g.State != queue.GoalPlanning {
 			continue
 		}
 		if err := h.applyAnswers(repo.Store, g.Name); err != nil {
-			return repo, nil, err
-		}
-		if err := h.applyReviews(ctx, repo.Store, g.Name); err != nil {
 			return repo, nil, err
 		}
 		tasks, err := repo.Store.Tasks(g.Name)
 		if err != nil {
 			return repo, nil, err
 		}
+		if g.State == queue.GoalActive {
+			err = errors.Join(
+				h.applyReviews(ctx, repo.Store, g.Name),
+				h.applyGoalIntake(repo.Store, g.Name, tasks),
+			)
+		} else {
+			err = h.applyPlanningIntake(repo.Store, g.Name, tasks)
+		}
+		if err != nil {
+			return repo, nil, err
+		}
+		if tasks, err = repo.Store.Tasks(g.Name); err != nil {
+			return repo, nil, err
+		}
 		var ready []*queue.Task
 		for _, t := range schedule.Ready(tasks) {
-			if runnable[t.Kind] && t.Workstream != "" {
+			switch {
+			case g.State == queue.GoalPlanning:
+				// Nothing but grilling runs before the plan is signed off.
+				if t.Kind == queue.Grilling {
+					ready = append(ready, t)
+				}
+			case planningKind(t.Kind) || runnable[t.Kind] && t.Workstream != "":
 				ready = append(ready, t)
 			}
 		}
