@@ -1,0 +1,46 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+#
+# Releases the diatom binary with goreleaser v2, the free
+# edition. The cicd workflow tags the release with svu first, then runs
+# `goreleaser release --clean`, so goreleaser takes the version from that tag
+# and computes none of its own. The notes come from `project-standards
+# changelog` (--release-notes), so every release reads the same.
+version: 2
+
+project_name: diatom
+
+builds:
+  - id: diatom
+    main: ./cmd/diatom
+    binary: diatom
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    # Reproducible builds: file times come from the commit, not the clock.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: diatom
+    ids:
+      - diatom
+    formats:
+      - tar.gz
+    # The binary sits at the archive root, next to the license and readme.
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    wrap_in_directory: false
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+  algorithm: sha256
+
+# No changelog section: --release-notes supplies the notes, and disabling the
+# changelog would drop them too.
