@@ -55,8 +55,11 @@ cd ~/Code/github.com/dmikalova/vex && diatom workspace
 
 - **Work tab:**
   - **Reviewer** on the left, 60% wide.
-  - **Status** lists every goal. `enter` focuses a goal, and `esc` focuses the
-    repo itself.
+  - **Status** lists the intake triage is sorting, then every goal. `enter`
+    opens one: its tasks, each running one with the agent's latest step.
+    `enter` on a task shows its session step by step as it runs, with its
+    questions and text. `esc` backs out, and at the top focuses the repo
+    itself. `f` focuses a goal without opening it.
   - **Questions** is where you answer the agents.
   - **Intake** is where you type new work or notes.
 - **Scheduler tab:** `diatom run` and its log. It starts sessions as soon as
@@ -95,8 +98,8 @@ Triage reads the file and starts the three goals. It hands in the ForgeKey
 plan with its goal, so that one skips grilling and waits for your sign-off; the
 effect catalog may too, if the section decides every task. The effect glyphs
 goal is grilled. The status pane shows the intake as "being sorted" until
-triage is done, and anything triage can't decide comes to the questions pane,
-filed under intake.
+triage is done: open it with `enter` to watch triage work. Anything triage
+can't decide comes to the questions pane, filed under intake.
 
 **Phase 2:** send the sweep only after `effect-catalog` and `forgekey-purge` are
 finished (step 7):

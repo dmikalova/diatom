@@ -19,6 +19,7 @@ import (
 	"github.com/dmikalova/diatom/internal/intake"
 	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
+	"github.com/dmikalova/diatom/internal/session"
 )
 
 type fixture struct {
@@ -134,12 +135,16 @@ func TestStatus(t *testing.T) {
 
 	key(s, "enter")
 	fc, _ := f.env.Focus.Read()
-	if fc.Goal != "set" || !strings.Contains(s.render(), "focus set") {
-		t.Errorf("focus = %+v", fc)
+	if fc.Goal != "set" || !strings.Contains(ansi.Strip(s.render()), "0001 [engine] Add ward") {
+		t.Errorf("focus = %+v, and the goal opened:\n%s", fc, s.render())
+	}
+	key(s, "esc")
+	if !strings.Contains(s.render(), "focus set") {
+		t.Errorf("esc didn't back out to the list:\n%s", s.render())
 	}
 	key(s, "esc")
 	if fc, _ := f.env.Focus.Read(); fc.Goal != "" {
-		t.Errorf("after esc, focus = %+v, want the repo", fc)
+		t.Errorf("after esc at the list, focus = %+v, want the repo", fc)
 	}
 
 	key(s, "p")
@@ -187,11 +192,60 @@ func TestStatusShowsIntakeBeingSorted(t *testing.T) {
 	if err := f.store.Move(queue.IntakeGoal, task, queue.Blocked); err != nil {
 		t.Fatal(err)
 	}
-	out := NewStatus(context.Background(), f.env).render()
-	if !strings.Contains(out, "1 being sorted") ||
+	s := NewStatus(context.Background(), f.env)
+	out := ansi.Strip(s.render())
+	if !strings.Contains(out, "intake 1 being sorted") ||
 		!strings.Contains(out, "1 waiting on your answers") ||
 		strings.Contains(out, queue.IntakeGoal) {
 		t.Errorf("status:\n%s", out)
+	}
+	key(s, "p")
+	if !strings.Contains(s.render(), "intake isn't a goal") {
+		t.Error("p parked the intake")
+	}
+
+	// A running triage session, opened from the intake row.
+	busy, _ := f.store.Task(queue.IntakeGoal, "0001")
+	if err := f.store.Move(queue.IntakeGoal, busy, queue.Active); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(f.store.SessionsDir(queue.IntakeGoal), "20260101T000000Z-planning")
+	if err := session.Create(
+		dir,
+		session.Spec{ID: "20260101T000000Z-planning", Tasks: []string{"0001"}},
+	); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(dir, "events.jsonl"),
+		`{"time":"2026-01-01T00:00:01Z","type":"tool","text":"Bash cat docs/todo.md"}`+"\n"+
+			`{"time":"2026-01-01T00:00:02Z","type":"text","text":"Two goals, then."}`+"\n")
+	s.reload()
+	key(s, "enter")
+	out = ansi.Strip(s.render())
+	if !strings.Contains(out, "‹ Intake") ||
+		!strings.Contains(out, "0001 Triage: notes · Two goals, then.") ||
+		!strings.Contains(out, "0002 Triage: web · waiting on your answer") {
+		t.Fatalf("intake opened:\n%s", out)
+	}
+	key(s, "enter")
+	out = ansi.Strip(s.render())
+	if !strings.Contains(out, "▶ running") || !strings.Contains(out, "Bash cat docs/todo.md") ||
+		!strings.Contains(out, "Two goals, then.") {
+		t.Fatalf("task opened:\n%s", out)
+	}
+	// It follows the session live.
+	write(
+		t,
+		filepath.Join(dir, "events.jsonl"),
+		`{"time":"2026-01-01T00:00:03Z","type":"tool","text":"Bash diatom task new-goal 0001"}`+"\n",
+	)
+	s.Update(tickMsg{})
+	if !strings.Contains(ansi.Strip(s.render()), "diatom task new-goal") {
+		t.Error("the open task didn't follow the session")
+	}
+	key(s, "esc", "esc")
+	if s.detail != nil || !strings.Contains(ansi.Strip(s.render()), "intake 1 being sorted") {
+		t.Errorf("esc twice didn't reach the list:\n%s", s.render())
 	}
 }
 

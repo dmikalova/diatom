@@ -59,6 +59,9 @@ type goalRow struct {
 	grilling queue.State
 	// landing is a done goal's layout, nil when it has none.
 	landing *finish.Result
+	// intake marks the row of the intake triage is sorting, which isn't a
+	// goal of the human's.
+	intake bool
 }
 
 // Status shows every goal in the repo, the intake triage is sorting, and the
@@ -81,9 +84,8 @@ type Status struct {
 	// doing; it takes no other job until that one ends.
 	busy string
 
-	// intake counts the repo's triage tasks by state: what the human sent
-	// that is still being sorted.
-	intake map[queue.State]int
+	// detail is the row opened with enter: its tasks, or one of them.
+	detail *detail
 
 	width, height int
 	flash         string
@@ -105,20 +107,21 @@ func (s *Status) reload() {
 	}
 	s.focus = fc
 	store := s.env.Store
-	s.intake = map[queue.State]int{}
-	triage, err := store.Tasks(queue.IntakeGoal)
-	if err != nil {
-		s.err = err
-	}
-	for _, t := range triage {
-		s.intake[t.State]++
-	}
 	goals, err := store.Goals()
 	if err != nil {
 		s.err = err
 		return
 	}
 	var rows []goalRow
+	// What the human sent comes first, while triage has any of it.
+	if g, err := store.Goal(queue.IntakeGoal); err == nil {
+		row, err := s.row(store, g)
+		if err != nil {
+			s.err = err
+		}
+		row.intake = true
+		rows = append(rows, row)
+	}
 	for _, g := range goals {
 		if g.State == queue.GoalFinished {
 			continue
@@ -138,6 +141,7 @@ func (s *Status) reload() {
 		}), 0)
 	}
 	s.sel = min(s.sel, max(len(rows)-1, 0))
+	s.reloadDetail()
 }
 
 func (s *Status) row(store *queue.Store, g *queue.Goal) (goalRow, error) {
@@ -245,17 +249,35 @@ func (s *Status) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return s, nil
 }
 
+// goalKeys act on a goal, so not on the intake row.
+var goalKeys = []string{"p", "P", "s", "d", "D", "F", "U", "f"}
+
 func (s *Status) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	s.flash = ""
+	if s.detail != nil {
+		return s.updateDetail(msg)
+	}
 	row := s.selected()
-	switch msg.String() {
+	key := msg.String()
+	if row != nil && row.intake && slices.Contains(goalKeys, key) {
+		s.flash = "intake isn't a goal: enter shows what triage is doing with it"
+		return s, nil
+	}
+	switch key {
 	case "q", "ctrl+c":
 		return s, tea.Quit
 	case "j", "down":
 		s.sel = min(s.sel+1, max(len(s.rows)-1, 0))
 	case "k", "up":
 		s.sel = max(s.sel-1, 0)
-	case "enter", "f":
+	case "enter", "right", "l":
+		if row != nil {
+			if !row.intake {
+				s.setFocus(focus.Focus{Goal: row.goal.Name})
+			}
+			s.openDetail(row)
+		}
+	case "f":
 		if row != nil {
 			s.setFocus(focus.Focus{Goal: row.goal.Name})
 		}
@@ -480,6 +502,9 @@ func (s *Status) View() tea.View {
 }
 
 func (s *Status) render() string {
+	if s.detail != nil {
+		return s.renderDetail()
+	}
 	var b strings.Builder
 	b.WriteString(
 		tui.Bold(
@@ -488,9 +513,6 @@ func (s *Status) render() string {
 			" · focus "+describe(s.focus),
 		) + "\n\n",
 	)
-	if line := s.intakeLine(); line != "" {
-		b.WriteString(line + "\n\n")
-	}
 	if len(s.rows) == 0 {
 		b.WriteString(
 			"No goals yet. Describe what you want in the intake pane, and triage turns it " +
@@ -511,7 +533,7 @@ func (s *Status) render() string {
 	}
 	b.WriteString(
 		"\n" + tui.Dim(
-			"enter focus · p park/resume · P pin · v view plan · s sign off · d done · "+
+			"enter open · f focus · p park/resume · P pin · v view plan · s sign off · d done · "+
 				"F open PRs · U push · esc focus the repo · q quit",
 		),
 	)
@@ -523,6 +545,11 @@ func (s *Status) renderRow(b *strings.Builder, i int, r goalRow) {
 	mark := "  "
 	if i == s.sel {
 		mark = tui.Color("› ", tui.Cyan)
+	}
+	if r.intake {
+		fmt.Fprintf(b, "%s  %s %s\n", mark, tui.Bold("intake"), intakeLine(r))
+		s.renderActive(b, r)
+		return
 	}
 	focused := " "
 	if r.goal.Name == s.focus.Goal {
@@ -562,11 +589,21 @@ func (s *Status) renderRow(b *strings.Builder, i int, r goalRow) {
 			}
 		}
 	}
+	s.renderActive(b, r)
+}
+
+// renderActive shows each running session's latest step.
+func (s *Status) renderActive(b *strings.Builder, r goalRow) {
 	for _, ws := range r.activeWork {
+		name := ws
+		if ws == "" {
+			// Triage and grilling run on no workstream, in planning sessions.
+			name, ws = "planning", "planning"
+		}
 		fmt.Fprintf(
 			b,
 			"      %s %s\n",
-			tui.Color("▶ "+ws, tui.Green),
+			tui.Color("▶ "+name, tui.Green),
 			tui.Dim(lastEvent(r.repo, r.goal.Name, ws)),
 		)
 	}
@@ -644,9 +681,9 @@ func lastEvent(repo, goal, ws string) string {
 func (s *Status) Editing() bool { return s.busy != "" }
 
 // intakeLine says what the human sent that triage is still sorting.
-func (s *Status) intakeLine() string {
-	sorting := s.intake[queue.Pending] + s.intake[queue.Active]
-	waiting := s.intake[queue.Blocked]
+func intakeLine(r goalRow) string {
+	sorting := r.counts[queue.Pending] + r.counts[queue.Active]
+	waiting := r.counts[queue.Blocked]
 	var parts []string
 	if sorting > 0 {
 		parts = append(parts, fmt.Sprintf("%d being sorted", sorting))
@@ -658,7 +695,7 @@ func (s *Status) intakeLine() string {
 		)
 	}
 	if len(parts) == 0 {
-		return ""
+		return tui.Dim("all sorted")
 	}
-	return tui.Dim("intake: ") + strings.Join(parts, tui.Dim(" · "))
+	return strings.Join(parts, tui.Dim(" · "))
 }
