@@ -31,5 +31,5 @@ Cost matters, but most of the savings come from batching (ADR 0004), model choic
   - **mechanical**: gate repair and conflict resolution
   - **commit message**
 
-  Each task kind has a default profile, the planner can choose a different one for a given task, and failed tasks move up one profile (ADR 0005). More profiles can be added as needed.
+  Each task kind has a default profile, the planner can choose a different one for a given task, and a failed task is retried on the same profile with more effort (ADR 0005). More profiles can be added as needed.
 - **Token usage is recorded per task.** That data decides whether a backend with more control over context trimming is worth its cost.

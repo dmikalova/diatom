@@ -1,0 +1,9 @@
+{
+  "$schema": "https://raw.githubusercontent.com/dmikalova/project-standards/main/schema/mklv.config.schema.json",
+  "name": "diatom",
+  "entrypoint": "cmd/diatom/main.go",
+  "kind": "cli",
+  "ignore": {
+    "git": ["/bin/", "coverage.*"]
+  }
+}

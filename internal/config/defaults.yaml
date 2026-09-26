@@ -1,0 +1,29 @@
+# diatom's built-in defaults, the lowest layer of every config merge. Override
+# any of them in ~/.config/diatom/config.yaml or a .diatom/config.yaml.
+gateAttempts: 3
+maxSessions: 1
+maxBatch: 10
+machineSessions: 0
+instructions: [~/AGENTS.md]
+profiles:
+  planning:
+    model: opus
+    effort: high
+    maxTurns: 200
+    skills: [grilling]
+    tools: [Read, Glob, Grep, Edit, Write, Bash, Skill, TodoWrite, WebFetch, WebSearch]
+  implementation:
+    model: opus
+    effort: medium
+    maxTurns: 300
+    tools: [Read, Glob, Grep, Edit, Write, Bash, Skill, TodoWrite]
+  mechanical:
+    model: sonnet
+    effort: medium
+    maxTurns: 150
+    tools: [Read, Glob, Grep, Edit, Write, Bash, TodoWrite]
+  commit-message:
+    model: haiku
+    effort: low
+    maxTurns: 1
+    tools: []
