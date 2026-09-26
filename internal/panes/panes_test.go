@@ -106,6 +106,10 @@ func key(m tea.Model, keys ...string) {
 		switch k {
 		case "enter":
 			msg = tea.KeyPressMsg{Code: tea.KeyEnter}
+		case "up":
+			msg = tea.KeyPressMsg{Code: tea.KeyUp}
+		case "down":
+			msg = tea.KeyPressMsg{Code: tea.KeyDown}
 		case "esc":
 			msg = tea.KeyPressMsg{Code: tea.KeyEscape}
 		case "shift+enter":
@@ -369,8 +373,24 @@ func TestQuestionsScroll(t *testing.T) {
 		key(q, "j")
 	}
 	key(q, "enter")
-	if out := ansi.Strip(q.render()); !strings.Contains(out, "pgdn for more") {
+	if out := ansi.Strip(q.render()); !strings.Contains(out, "↓ more below") {
 		t.Errorf("a long question didn't offer to scroll:\n%s", out)
+	}
+	key(q, "down", "down")
+	if out := ansi.Strip(q.render()); !strings.Contains(out, "↑ more above") || q.scroll != 2 {
+		t.Errorf("down didn't scroll the question (scroll %d):\n%s", q.scroll, out)
+	}
+	key(q, "up")
+	if q.scroll != 1 {
+		t.Errorf("up scrolled to %d", q.scroll)
+	}
+	// With a longer answer, the arrows are the answer's.
+	typeText(q, "one")
+	key(q, "shift+enter")
+	typeText(q, "two")
+	key(q, "up")
+	if q.scroll != 1 {
+		t.Errorf("up in a two-line answer scrolled the question to %d", q.scroll)
 	}
 }
 
@@ -543,5 +563,21 @@ func TestPasteAndCut(t *testing.T) {
 	key(in, "alt+a", "ctrl+x")
 	if in.area.Value() != "" {
 		t.Errorf("intake after select all and cut = %q", in.area.Value())
+	}
+}
+
+func TestIntakeHidesItsCursorWhenNotFocused(t *testing.T) {
+	f := newFixture(t)
+	in := NewIntake(f.env)
+	if !in.View().ReportFocus || !in.area.Focused() {
+		t.Fatal("the intake doesn't track focus, or starts unfocused")
+	}
+	in.Update(tea.BlurMsg{})
+	if in.area.Focused() {
+		t.Error("the intake kept its cursor with another pane focused")
+	}
+	in.Update(tea.FocusMsg{})
+	if !in.area.Focused() {
+		t.Error("the intake didn't take its cursor back")
 	}
 }

@@ -104,6 +104,14 @@ func (m *Questions) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.reload()
 		}
 		return m, tick()
+	case tea.BlurMsg:
+		m.area.Blur()
+		return m, nil
+	case tea.FocusMsg:
+		if m.answering {
+			return m, m.area.Focus()
+		}
+		return m, nil
 	case tea.KeyPressMsg:
 		if m.answering {
 			return m.updateAnswer(msg)
@@ -151,6 +159,17 @@ func (m *Questions) updateAnswer(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "pgup":
 		m.scroll = max(m.scroll-1, 0)
 		return m, nil
+	case "down", "up":
+		// While the answer is one line, the arrows, and a wheel sending
+		// them, scroll the question; with more, they move through the answer.
+		if m.area.LineCount() <= 1 {
+			if msg.String() == "down" {
+				m.scroll++
+			} else {
+				m.scroll = max(m.scroll-1, 0)
+			}
+			return m, nil
+		}
 	case "enter":
 		text := strings.TrimSpace(m.area.Value())
 		if text == "" || m.sel >= len(m.rows) {
@@ -197,6 +216,7 @@ func (m *Questions) View() tea.View {
 	v := tea.NewView(m.render())
 	v.AltScreen = true
 	v.WindowTitle = fmt.Sprintf("questions · %d open", len(m.rows))
+	v.ReportFocus = true
 	return v
 }
 
@@ -260,8 +280,11 @@ func (m *Questions) renderQuestion(r questionRow, room int) string {
 	fit := max(room-m.area.Height()-3, 1)
 	m.scroll = min(m.scroll, max(len(text)-fit, 0))
 	shown := text[m.scroll:min(m.scroll+fit, len(text))]
+	if m.scroll > 0 {
+		shown = append([]string{tui.Dim("↑ more above")}, shown[1:]...)
+	}
 	if m.scroll+fit < len(text) {
-		shown = append(shown[:len(shown)-1], tui.Dim("… pgdn for more"))
+		shown = append(shown[:len(shown)-1], tui.Dim("↓ more below"))
 	}
 	return head + "\n\n" + strings.Join(shown, "\n") + "\n\n" + m.area.View()
 }

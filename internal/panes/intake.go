@@ -139,6 +139,12 @@ func (m *Intake) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.reload()
 		return m, tick()
+	case tea.BlurMsg:
+		// Another pane has the keyboard: no cursor blinks here.
+		m.area.Blur()
+		return m, nil
+	case tea.FocusMsg:
+		return m, m.area.Focus()
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "ctrl+c":
@@ -189,6 +195,7 @@ func (m *Intake) submit() {
 func (m *Intake) View() tea.View {
 	v := tea.NewView(m.render())
 	v.AltScreen = true
+	v.ReportFocus = true
 	return v
 }
 
