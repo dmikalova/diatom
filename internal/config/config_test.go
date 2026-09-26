@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // tree lays out home/Code/org/repo with an XDG directory beside it.
@@ -187,5 +188,17 @@ func TestRetryEffort(t *testing.T) {
 		if got := RetryEffort(in); got != want {
 			t.Errorf("RetryEffort(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestCommandTimeout(t *testing.T) {
+	root, paths := tree(t)
+	cfg, err := Load(root, paths)
+	if err != nil || cfg.CommandTimeout != 30*time.Second {
+		t.Fatalf("default = %v, %v", cfg.CommandTimeout, err)
+	}
+	write(t, filepath.Join(root, DirName), "commandTimeout: 2m\n")
+	if cfg, err := Load(root, paths); err != nil || cfg.CommandTimeout != 2*time.Minute {
+		t.Errorf("repo override = %v, %v", cfg.CommandTimeout, err)
 	}
 }

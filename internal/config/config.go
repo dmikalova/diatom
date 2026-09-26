@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -43,6 +44,10 @@ type Repo struct {
 	// GateAttempts is how many times the Stop hook sends a failing gate back
 	// to the agent before the task is retried with more effort.
 	GateAttempts int `yaml:"gateAttempts"`
+	// CommandTimeout is how long the gate, or any command an agent runs, may
+	// take. A good gate run takes seconds, so one that runs this long is
+	// stuck: it is stopped and fails.
+	CommandTimeout time.Duration `yaml:"commandTimeout"`
 	// MaxSessions caps the agent sessions running in this repo at once.
 	MaxSessions int `yaml:"maxSessions"`
 	// MaxBatch caps the tasks one session takes (ADR 0004).

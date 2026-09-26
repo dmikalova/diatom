@@ -55,6 +55,29 @@ func Run(ctx context.Context, dir, command string) (Result, error) {
 	return res, ctx.Err()
 }
 
+// Runner runs a gate command in a directory.
+type Runner func(ctx context.Context, dir, command string) (Result, error)
+
+// Within makes run give up after d: a gate still running then is stuck, and
+// fails with a note saying so. A d of 0 never gives up.
+func Within(d time.Duration, run Runner) Runner {
+	if d <= 0 {
+		return run
+	}
+	return func(ctx context.Context, dir, command string) (Result, error) {
+		limited, cancel := context.WithTimeout(ctx, d)
+		defer cancel()
+		r, err := run(limited, dir, command)
+		if ctx.Err() == nil && errors.Is(limited.Err(), context.DeadlineExceeded) {
+			return Result{Output: strings.TrimSpace(r.Output + "\n\n" + fmt.Sprintf(
+				"The gate was stopped after %s. A good run takes far less, so something in it is "+
+					"stuck, such as a test waiting forever: find what hangs rather than running it again.",
+				d))}, nil
+		}
+		return r, err
+	}
+}
+
 // Tail returns the last n lines of s, noting how many were cut.
 func Tail(s string, n int) string {
 	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")

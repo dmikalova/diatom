@@ -57,7 +57,7 @@ func (r Runner) Run(
 	}
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = spec.Dir
-	cmd.Env = append(append(os.Environ(), unattended...), spec.Env...)
+	cmd.Env = append(append(os.Environ(), unattended(spec)...), spec.Env...)
 	cmd.Stdin = strings.NewReader(spec.Prompt)
 	stopGracefully(cmd)
 	var stderr bytes.Buffer
@@ -104,12 +104,17 @@ func (r Runner) Run(
 
 // unattended is the environment for an agent nobody watches. Its session
 // ends the moment it stops to wait, so a command it runs in the background
-// would report back to nobody: every command runs in the foreground, with
-// time for a slow gate.
-var unattended = []string{
-	"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1",
-	"BASH_DEFAULT_TIMEOUT_MS=1800000",
-	"BASH_MAX_TIMEOUT_MS=3600000",
+// would report back to nobody: every command runs in the foreground. A
+// command that outlasts the timeout is stuck, and the agent may not extend
+// it.
+func unattended(spec runner.Spec) []string {
+	env := []string{"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1"}
+	if ms := spec.CommandTimeout.Milliseconds(); ms > 0 {
+		env = append(env,
+			"BASH_DEFAULT_TIMEOUT_MS="+strconv.FormatInt(ms, 10),
+			"BASH_MAX_TIMEOUT_MS="+strconv.FormatInt(ms, 10))
+	}
+	return env
 }
 
 // A stopped agent is interrupted, terminated after stopTerm if it hasn't

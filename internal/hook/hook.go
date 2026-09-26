@@ -57,7 +57,7 @@ func PreToolUse(in io.Reader, out io.Writer) error {
 }
 
 // GateRunner runs a gate command in a directory.
-type GateRunner func(ctx context.Context, dir, command string) (gate.Result, error)
+type GateRunner = gate.Runner
 
 // Stop runs the gate for the session in dir and writes a block decision to
 // out when the agent has to keep fixing. It lets the session end when:

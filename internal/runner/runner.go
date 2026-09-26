@@ -12,6 +12,7 @@ package runner
 
 import (
 	"context"
+	"time"
 
 	"github.com/dmikalova/diatom/internal/config"
 )
@@ -50,6 +51,9 @@ type Spec struct {
 	// MCPServers are the MCP servers the agent may use, in Claude Code's
 	// mcpServers format. No others are loaded.
 	MCPServers map[string]any
+	// CommandTimeout is how long any command the agent runs may take; 0
+	// leaves the backend's own limit.
+	CommandTimeout time.Duration
 	// Resume is the ID of an earlier session to carry on, with Prompt as the
 	// next message in it; empty starts a new session.
 	Resume string

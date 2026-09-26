@@ -193,7 +193,7 @@ func (h *Harness) prepare(
 				"worktree: resolve every conflicted file, keeping the intent of both sides.",
 		)
 	case git.Merged:
-		r, err := h.runGate(ctx, wt.Dir, repo.Config.Gate)
+		r, err := h.runGate(ctx, wt.Dir, repo.Config)
 		if ctx.Err() != nil {
 			// Stopped: undo the merge, which is made again next time.
 			return false, errors.Join(errSuspended, wt.AbortMerge(context.WithoutCancel(ctx)))
@@ -274,7 +274,7 @@ func (h *Harness) newSession(
 	spec := session.Spec{
 		ID: id, Repo: s.Repo(), Goal: g.Name, Workstream: b.Workstream, Worktree: wt.Dir,
 		Kind: b.Kind, Profile: b.Profile, Effort: b.Effort,
-		Gate: cfg.Gate, GateAttempts: cfg.GateAttempts,
+		Gate: cfg.Gate, GateAttempts: cfg.GateAttempts, GateTimeout: cfg.CommandTimeout,
 	}
 	for _, t := range b.Tasks {
 		spec.Tasks = append(spec.Tasks, t.ID)
@@ -413,11 +413,12 @@ func (h *Harness) runSession(
 			session.EnvVar + "=" + dir,
 			"PATH=" + filepath.Join(dir, "bin") + string(os.PathListSeparator) + os.Getenv("PATH"),
 		},
-		Hooks:        hooks,
-		Instructions: instructions,
-		Skills:       skills,
-		MCPServers:   repo.Config.MCPServers,
-		Resume:       resume,
+		Hooks:          hooks,
+		Instructions:   instructions,
+		Skills:         skills,
+		MCPServers:     repo.Config.MCPServers,
+		Resume:         resume,
+		CommandTimeout: repo.Config.CommandTimeout,
 		Started: func(id string) {
 			if err := session.UpdateState(
 				dir,
@@ -592,7 +593,7 @@ func (h *Harness) check(
 	if fp, err := wt.Fingerprint(ctx); err != nil || fp == hookPassed {
 		return err == nil, "", err
 	}
-	r, err := h.runGate(ctx, wt.Dir, repo.Config.Gate)
+	r, err := h.runGate(ctx, wt.Dir, repo.Config)
 	return r.Passed, r.Output, err
 }
 

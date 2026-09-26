@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/dmikalova/diatom/internal/queue"
 )
@@ -48,6 +49,8 @@ type Spec struct {
 	// failures it sends back to the agent before letting the session end.
 	Gate         string `json:"gate"`
 	GateAttempts int    `json:"gateAttempts"`
+	// GateTimeout is how long the gate may run before it counts as stuck.
+	GateTimeout time.Duration `json:"gateTimeout,omitempty"`
 }
 
 // Create makes the session directory and writes its spec.

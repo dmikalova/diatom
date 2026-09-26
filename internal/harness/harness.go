@@ -386,9 +386,14 @@ func (h *Harness) now() time.Time {
 	return time.Now()
 }
 
-func (h *Harness) runGate(ctx context.Context, dir, command string) (gate.Result, error) {
-	if h.Gate != nil {
-		return h.Gate(ctx, dir, command)
+func (h *Harness) runGate(
+	ctx context.Context,
+	dir string,
+	cfg *config.Config,
+) (gate.Result, error) {
+	run := h.Gate
+	if run == nil {
+		run = gate.Run
 	}
-	return gate.Run(ctx, dir, command)
+	return gate.Within(cfg.CommandTimeout, run)(ctx, dir, cfg.Gate)
 }

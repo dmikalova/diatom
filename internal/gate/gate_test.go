@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRun(t *testing.T) {
@@ -32,5 +33,41 @@ func TestTail(t *testing.T) {
 	got := Tail("1\n2\n3\n4\n", 2)
 	if !strings.HasPrefix(got, "[2 earlier lines cut]") || !strings.HasSuffix(got, "3\n4") {
 		t.Errorf("Tail long = %q", got)
+	}
+}
+
+func TestWithinStopsAStuckGate(t *testing.T) {
+	start := time.Now()
+	r, err := Within(
+		200*time.Millisecond,
+		Run,
+	)(
+		context.Background(),
+		t.TempDir(),
+		"echo testing; sleep 30",
+	)
+	if err != nil || r.Passed || !strings.Contains(r.Output, "testing") ||
+		!strings.Contains(r.Output, "stopped after 200ms") {
+		t.Errorf("stuck gate = %+v, %v", r, err)
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Errorf("the stuck gate ran for %s", time.Since(start))
+	}
+	if r, err := Within(
+		time.Minute,
+		Run,
+	)(
+		context.Background(),
+		t.TempDir(),
+		"true",
+	); err != nil ||
+		!r.Passed {
+		t.Errorf("quick gate = %+v, %v", r, err)
+	}
+	// Stopped from outside, it is not stuck: the stop is the caller's.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := Within(time.Minute, Run)(ctx, t.TempDir(), "sleep 30"); err == nil {
+		t.Error("a stopped gate reported no error")
 	}
 }

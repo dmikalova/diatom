@@ -84,7 +84,10 @@ type Options struct {
 	// Gate is the command run on each pull request's tip; empty skips it.
 	Gate string
 	// RunGate runs the gate; nil uses gate.Run.
-	RunGate func(ctx context.Context, dir, command string) (gate.Result, error)
+	RunGate gate.Runner
+	// Timeout is how long the gate may run before it counts as stuck; 0
+	// never gives up.
+	Timeout time.Duration
 	Now     func() time.Time
 }
 
@@ -516,6 +519,7 @@ func runGates(ctx context.Context, wt git.Repo, res *Result, opts Options) error
 	if run == nil {
 		run = gate.Run
 	}
+	run = gate.Within(opts.Timeout, run)
 	for i := range res.Stack {
 		pr := &res.Stack[i]
 		if _, err := wt.Run(ctx, "checkout", "--detach", "--force", pr.Tip); err != nil {

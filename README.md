@@ -100,6 +100,7 @@ wins. The built-in defaults are in
 ```yaml
 gate: mage ci:check               # required; the check every commit must pass
 gateAttempts: 3                   # gate failures sent back before a retry at more effort
+commandTimeout: 30s               # a gate or agent command running longer is stuck
 maxSessions: 1                    # sessions at once in this repo
 maxBatch: 10                      # tasks per session
 commitCheck: project-standards commit-msg   # lints a commit message file

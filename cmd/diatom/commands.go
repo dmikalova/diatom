@@ -214,7 +214,7 @@ func layOut(
 	}
 	_, _ = fmt.Fprintf(stdout, "laying goal %s out on %s, running the gate on each pull request…\n",
 		g.Name, g.Base)
-	return finish.Build(ctx, s, g, finish.Options{Gate: cfg.Gate})
+	return finish.Build(ctx, s, g, finish.Options{Gate: cfg.Gate, Timeout: cfg.CommandTimeout})
 }
 
 // goalNew creates a goal on the current branch. It starts in planning with a
@@ -633,7 +633,7 @@ func cmdHook(ctx context.Context, args []string, stdin io.Reader, stdout io.Writ
 		if spec.Kind == queue.Triage || spec.Kind == queue.Grilling {
 			return hook.StopPlanning(dir, spec, stdout)
 		}
-		return hook.Stop(ctx, dir, spec, gate.Run, stdout)
+		return hook.Stop(ctx, dir, spec, gate.Within(spec.GateTimeout, gate.Run), stdout)
 	}
 	return errors.Join(errUsage, fmt.Errorf("unknown hook %q", args[0]))
 }

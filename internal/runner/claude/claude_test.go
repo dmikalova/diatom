@@ -313,3 +313,13 @@ func TestRunErrors(t *testing.T) {
 		t.Error("a missing binary returned no error")
 	}
 }
+
+func TestUnattended(t *testing.T) {
+	env := strings.Join(unattended(runner.Spec{CommandTimeout: 30 * time.Second}), " ")
+	if env != "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 BASH_DEFAULT_TIMEOUT_MS=30000 BASH_MAX_TIMEOUT_MS=30000" {
+		t.Errorf("env = %s", env)
+	}
+	if env := unattended(runner.Spec{}); len(env) != 1 {
+		t.Errorf("without a timeout, env = %v", env)
+	}
+}

@@ -413,7 +413,12 @@ func runFinish(
 	if err == nil && res == nil {
 		var cfg *config.Config
 		if cfg, err = config.Load(s.Repo(), paths); err == nil {
-			res, err = finish.Build(ctx, s, g, finish.Options{Gate: cfg.Gate})
+			res, err = finish.Build(
+				ctx,
+				s,
+				g,
+				finish.Options{Gate: cfg.Gate, Timeout: cfg.CommandTimeout},
+			)
 		}
 	}
 	if err != nil {

@@ -1,6 +1,7 @@
 # diatom's built-in defaults, the lowest layer of every config merge. Override
 # any of them in ~/.config/diatom/config.yaml or a .diatom/config.yaml.
 gateAttempts: 3
+commandTimeout: 30s
 maxSessions: 1
 maxBatch: 10
 machineSessions: 0
