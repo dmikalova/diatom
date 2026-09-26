@@ -85,3 +85,7 @@ _Avoid_: feature branch, main branch
 **Workstream branch**:
 A branch off the integration branch where one workstream commits. It merges the integration branch in before each task.
 _Avoid_: sub-branch, topic branch
+
+**Stack**:
+The pull requests a done goal lands as: one per workstream, in dependency order, each on top of the one before. A goal whose workstreams can't be put one after another lands as a stack of one.
+_Avoid_: chain, series, train

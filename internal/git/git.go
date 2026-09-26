@@ -233,14 +233,10 @@ func (r Repo) MergeInto(ctx context.Context, target, source string) (conflicted 
 	if ff, err := r.IsAncestor(ctx, targetSHA, sourceSHA); err != nil {
 		return false, err
 	} else if !ff {
-		tree, err := r.Run(ctx, "merge-tree", "--write-tree", "--no-messages", targetSHA, sourceSHA)
-		if exitCode(err) == 1 {
-			return true, nil
+		tree, conflicted, err := r.MergeTree(ctx, targetSHA, sourceSHA)
+		if err != nil || conflicted {
+			return conflicted, err
 		}
-		if err != nil {
-			return false, err
-		}
-		tree, _, _ = strings.Cut(tree, "\n")
 		msg := fmt.Sprintf("Merge branch '%s' into %s", source, target)
 		next, err = r.Run(ctx, "commit-tree", tree, "-p", targetSHA, "-p", sourceSHA, "-m", msg)
 		if err != nil {
@@ -251,6 +247,23 @@ func (r Repo) MergeInto(ctx context.Context, target, source string) (conflicted 
 	// landed on target in the meantime.
 	_, err = r.Run(ctx, "update-ref", "refs/heads/"+target, next, targetSHA)
 	return false, err
+}
+
+// MergeTree merges two commits without a worktree and returns the merged
+// tree, or reports that they conflict.
+func (r Repo) MergeTree(
+	ctx context.Context,
+	a, b string,
+) (tree string, conflicted bool, err error) {
+	out, err := r.Run(ctx, "merge-tree", "--write-tree", "--no-messages", a, b)
+	if exitCode(err) == 1 {
+		return "", true, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	tree, _, _ = strings.Cut(out, "\n")
+	return tree, false, nil
 }
 
 // Dirty reports whether the worktree has any change, untracked files

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/dmikalova/diatom/internal/config"
+	"github.com/dmikalova/diatom/internal/finish"
 	"github.com/dmikalova/diatom/internal/gate"
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/harness"
@@ -116,6 +117,8 @@ func cmdGoal(ctx context.Context, args []string, stdin io.Reader, stdout io.Writ
 		return w.Flush()
 	case "done":
 		return goalDone(ctx, s, rest, stdout)
+	case "finish":
+		return goalFinish(ctx, s, rest, stdout)
 	case "activate", "park", "pin", "unpin":
 		if len(rest) != 1 {
 			return fmt.Errorf("%w: goal %s takes a goal name", errUsage, sub)
@@ -138,11 +141,13 @@ func cmdGoal(ctx context.Context, args []string, stdin io.Reader, stdout io.Writ
 }
 
 // goalDone finishes a goal, but first warns about hunks nobody has decided
-// on, deferred ones included (ADR 0001); -force finishes it anyway.
+// on, deferred ones included (ADR 0001), and tasks not done; -force finishes
+// it anyway. A goal a session is still working on is never finished. The
+// goal's commits are then laid out for landing (ADR 0003).
 func goalDone(ctx context.Context, s *queue.Store, args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("goal done", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	force := fs.Bool("force", false, "finish the goal with hunks still unreviewed or deferred")
+	force := fs.Bool("force", false, "finish the goal with hunks unreviewed or tasks not done")
 	name, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
@@ -154,18 +159,33 @@ func goalDone(ctx context.Context, s *queue.Store, args []string, stdout io.Writ
 	if err != nil {
 		return err
 	}
+	tasks, err := s.Tasks(g.Name)
+	if err != nil {
+		return err
+	}
+	open := 0
+	for _, t := range tasks {
+		switch t.State {
+		case queue.Active:
+			return fmt.Errorf("a session is working on task %s of goal %s: park the goal "+
+				"with `diatom goal park %s` and let the session end first", t.ID, g.Name, g.Name)
+		case queue.Pending, queue.Blocked:
+			open++
+		}
+	}
 	items, err := review.Load(ctx, s, g.Name)
 	if err != nil {
 		return err
 	}
 	counts := review.Counts(items)
-	if left := counts[""] + counts[review.Defer]; left > 0 && !*force {
+	if left := counts[""] + counts[review.Defer]; (left > 0 || open > 0) && !*force {
 		return fmt.Errorf(
-			"goal %s has %d unreviewed and %d deferred hunks: review them with `diatom review`, "+
-				"or finish it anyway with -force",
+			"goal %s has %d unreviewed and %d deferred hunks and %d tasks not done: review the hunks "+
+				"with `diatom review`, or finish it anyway with -force",
 			g.Name,
 			counts[""],
 			counts[review.Defer],
+			open,
 		)
 	}
 	g.State = queue.GoalDone
@@ -173,7 +193,107 @@ func goalDone(ctx context.Context, s *queue.Store, args []string, stdout io.Writ
 		return err
 	}
 	_, _ = fmt.Fprintf(stdout, "goal %s is done\n", g.Name)
+	res, err := layOut(ctx, s, g, stdout)
+	if err != nil {
+		_, _ = fmt.Fprintf(stdout, "Its commits couldn't be laid out for landing: %v\n"+
+			"%s holds all of its work.\n", err, g.IntegrationBranch())
+		return nil
+	}
+	_, _ = fmt.Fprint(stdout, finish.Describe(g, res))
 	return nil
+}
+
+// goalFinish lands a done goal: it shows the goal laid out for landing, or
+// with -push pushes it straight to the base branch, or with -prs opens its
+// stack of pull requests. A layout the goal's branches have moved past is
+// laid out again first.
+func goalFinish(ctx context.Context, s *queue.Store, args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("goal finish", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	push := fs.Bool("push", false, "push the goal straight to its base branch")
+	prs := fs.Bool("prs", false, "push the goal's branches and open a pull request for each")
+	remote := fs.String("remote", "origin", "the remote to push to")
+	force := fs.Bool("force", false, "push even though the gate fails")
+	name, err := parseInterspersed(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(name) != 1 || *push && *prs {
+		return fmt.Errorf("%w: goal finish takes a goal name, and -push or -prs", errUsage)
+	}
+	g, err := s.Goal(name[0])
+	if err != nil {
+		return err
+	}
+	if g.State != queue.GoalDone {
+		return fmt.Errorf(
+			"goal %s is %s: finish it with `diatom goal done %s` first",
+			g.Name,
+			g.State,
+			g.Name,
+		)
+	}
+	res, err := finish.Load(s.GoalDir(g.Name))
+	if err != nil {
+		return err
+	}
+	if res == nil || !finish.Current(ctx, s, g, res) {
+		if res, err = layOut(ctx, s, g, stdout); err != nil {
+			return err
+		}
+	}
+	switch {
+	case *push:
+		if last := res.Stack[len(res.Stack)-1]; last.Gate != nil && !last.Gate.Passed && !*force {
+			return fmt.Errorf("goal %s fails the gate on %s: fix it, or push anyway with -force",
+				g.Name, res.Final)
+		}
+		if err := finish.Push(ctx, s, g, res, *remote); err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(stdout, "pushed %s to %s on %s\n", res.Final, g.Base, *remote)
+		if local, err := (git.Repo{Dir: s.Repo()}).RevParse(
+			ctx,
+			g.Base,
+		); err == nil &&
+			local != res.Tip() {
+			_, _ = fmt.Fprintf(
+				stdout,
+				"Your %s is behind it now: `git pull` brings it up to date.\n",
+				g.Base,
+			)
+		}
+	case *prs:
+		urls, err := finish.OpenPRs(ctx, s, g, res, *remote, finish.RunGH)
+		for _, u := range urls {
+			_, _ = fmt.Fprintln(stdout, u)
+		}
+		return err
+	default:
+		_, _ = fmt.Fprint(stdout, finish.Describe(g, res))
+	}
+	return nil
+}
+
+// layOut lays a done goal out for landing, running the gate on each pull
+// request.
+func layOut(
+	ctx context.Context,
+	s *queue.Store,
+	g *queue.Goal,
+	stdout io.Writer,
+) (*finish.Result, error) {
+	paths, err := config.DefaultPaths()
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := config.Load(s.Repo(), paths)
+	if err != nil {
+		return nil, err
+	}
+	_, _ = fmt.Fprintf(stdout, "laying goal %s out on %s, running the gate on each pull request…\n",
+		g.Name, g.Base)
+	return finish.Build(ctx, s, g, finish.Options{Gate: cfg.Gate})
 }
 
 // goalNew creates a goal on the current branch. It starts in planning with a

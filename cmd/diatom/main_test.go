@@ -280,6 +280,68 @@ func TestReviewListAndGoalDone(t *testing.T) {
 	}
 }
 
+func TestGoalFinish(t *testing.T) {
+	repo := inRepo(t)
+	ctx := context.Background()
+	diatom(t, "", "goal", "new", "set", "-ws", "engine", "-active")
+	r := git.Repo{Dir: repo}
+	if _, err := r.Run(ctx, "branch", "diatom/set/integration"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Run(ctx, "checkout", "--quiet", "-b", "diatom/set/ws/engine"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(repo, "ward.go"),
+		[]byte("package ward\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.StageAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Commit(ctx, "feat: ward"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Run(ctx, "checkout", "--quiet", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.MergeInto(ctx, "diatom/set/integration", "diatom/set/ws/engine"); err != nil {
+		t.Fatal(err)
+	}
+
+	if code, _, stderr := diatom(t, "", "goal", "finish", "set"); code != 1 ||
+		!strings.Contains(stderr, "goal done set") {
+		t.Errorf("goal finish on an active goal = %d %q", code, stderr)
+	}
+	code, stdout, stderr := diatom(t, "", "goal", "done", "set", "-force")
+	if code != 0 || !strings.Contains(stdout, "laid out on diatom/set/final: 1 commits on main") {
+		t.Fatalf("goal done = %d %q %q", code, stdout, stderr)
+	}
+	// The layout is still current, so it isn't made again.
+	code, stdout, _ = diatom(t, "", "goal", "finish", "set")
+	if code != 0 || strings.Contains(stdout, "laying") || !strings.Contains(stdout, "-push") {
+		t.Errorf("goal finish = %d %q", code, stdout)
+	}
+	if code, _, _ := diatom(t, "", "goal", "finish", "set", "-push", "-prs"); code != 2 {
+		t.Error("-push with -prs was accepted")
+	}
+	if code, _, stderr := diatom(
+		t,
+		"",
+		"goal",
+		"finish",
+		"set",
+		"-push",
+		"-remote",
+		"nowhere",
+	); code != 1 ||
+		!strings.Contains(stderr, "nowhere") {
+		t.Errorf("push to a missing remote = %d %q", code, stderr)
+	}
+}
+
 func TestReviewGoalChoice(t *testing.T) {
 	inRepo(t)
 	diatom(t, "", "goal", "new", "one", "-ws", "a", "-active")

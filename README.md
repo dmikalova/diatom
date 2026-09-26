@@ -56,6 +56,7 @@ diatom review       # approve, reject or defer each hunk the agents committed
 diatom questions    # what the agents need decided
 diatom answer new-set 0001 "Ward does not stack."
 diatom goal done new-set   # refuses while hunks are unreviewed or deferred
+diatom goal finish new-set -prs   # or -push, straight to the base branch
 ```
 
 In the reviewer, `a`, `r` and `d` approve, reject and defer the hunk on screen,
@@ -63,6 +64,12 @@ In the reviewer, `a`, `r` and `d` approve, reject and defer the hunk on screen,
 decisions, and `v` shows a fixup folded into the commit it revises. A
 rejection's comments become a revision task within seconds, and the agent's fix
 lands as a `fixup!` commit that comes back for review.
+
+A done goal is laid out on `diatom/<goal>/final`: its commits replayed onto the
+base branch without the merges, fixups squashed into the commits they revise,
+and split into one pull request per workstream on `diatom/<goal>/pr/<ws>`, each
+stacked on the one before. `goal finish -prs` pushes those branches and opens
+the stack with `gh`; `-push` pushes the lot straight to the base branch.
 
 Each workstream gets a worktree under `.diatom/goals/<goal>/worktrees/` on the
 branch `diatom/<goal>/ws/<workstream>`. Every commit that passes the gate merges

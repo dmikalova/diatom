@@ -10,7 +10,9 @@
 //	diatom goal new <name> [-title text] -ws engine,cards:engine -active
 //	diatom goal plan|approve <name>
 //	diatom goal list
-//	diatom goal activate|park|pin|unpin|done <name>
+//	diatom goal activate|park|pin|unpin <name>
+//	diatom goal done <name> [-force]
+//	diatom goal finish <name> [-push | -prs] [-remote origin] [-force]
 //	diatom task add -goal <goal> -ws <workstream> [-kind planned] [-profile name]
 //	                [-after id,id] [-priority n] <title> < body.md
 //	diatom questions
@@ -107,7 +109,9 @@ const usage = `Usage:
   diatom goal new <name> -ws engine,cards:engine -active   skip grilling
   diatom goal plan|approve <name>   show or sign off a goal's plan
   diatom goal list
-  diatom goal activate|park|pin|unpin|done <name>
+  diatom goal activate|park|pin|unpin <name>
+  diatom goal done <name> [-force]  finish a goal and lay it out for landing
+  diatom goal finish <name> [-push | -prs] [-remote origin]   land a done goal
   diatom task add -goal <goal> -ws <workstream> [-kind planned] [-profile name]
                   [-after id,id] [-priority n] <title> < body.md
   diatom questions                  list open questions
