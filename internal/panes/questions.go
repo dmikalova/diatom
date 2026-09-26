@@ -197,11 +197,6 @@ func (m *Questions) View() tea.View {
 	v := tea.NewView(m.render())
 	v.AltScreen = true
 	v.WindowTitle = fmt.Sprintf("questions · %d open", len(m.rows))
-	if m.answering {
-		v.WindowTitle += " · enter sends · shift+enter adds a line · esc back"
-	} else if len(m.rows) > 0 {
-		v.WindowTitle += " · enter answers"
-	}
 	return v
 }
 

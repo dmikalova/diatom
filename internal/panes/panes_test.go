@@ -272,7 +272,7 @@ func TestQuestions(t *testing.T) {
 	f := newFixture(t)
 	q := NewQuestions(f.env)
 	out := ansi.Strip(q.render())
-	if q.View().WindowTitle != "questions · 1 open · enter answers" ||
+	if q.View().WindowTitle != "questions · 1 open" ||
 		!strings.Contains(out, "set\n› Does ward stack?") || strings.Contains(out, "questions") {
 		t.Fatalf("questions, titled %q:\n%s", q.View().WindowTitle, out)
 	}
@@ -280,7 +280,7 @@ func TestQuestions(t *testing.T) {
 	out = ansi.Strip(q.render())
 	if !strings.Contains(out, "set › task 0001 Add ward") ||
 		!strings.Contains(out, "It matters for poison.") ||
-		!strings.Contains(q.View().WindowTitle, "esc back") {
+		q.View().WindowTitle != "questions · 1 open" {
 		t.Fatalf("question opened:\n%s", out)
 	}
 	key(q, "enter") // nothing typed: nothing sent
