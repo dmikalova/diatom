@@ -654,3 +654,15 @@ func TestOutsideARepo(t *testing.T) {
 		}
 	}
 }
+
+func TestSessionState(t *testing.T) {
+	list := "diatom-vex [Created 2m ago] \n" +
+		"diatom-dotfiles [Created 1h ago] (EXITED - attach to resurrect)\n"
+	for name, want := range map[string]int{
+		"diatom-vex": sessionRunning, "diatom-dotfiles": sessionExited, "diatom": sessionMissing,
+	} {
+		if got := sessionState(list, name); got != want {
+			t.Errorf("%s = %d, want %d", name, got, want)
+		}
+	}
+}

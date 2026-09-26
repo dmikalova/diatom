@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/dmikalova/diatom/internal/config"
 	"github.com/dmikalova/diatom/internal/focus"
@@ -105,8 +106,8 @@ func key(m tea.Model, keys ...string) {
 			msg = tea.KeyPressMsg{Code: tea.KeyEnter}
 		case "esc":
 			msg = tea.KeyPressMsg{Code: tea.KeyEscape}
-		case "ctrl+s":
-			msg = tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl}
+		case "shift+enter":
+			msg = tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift}
 		default:
 			r, _ := utf8.DecodeRuneInString(k)
 			msg = tea.KeyPressMsg{Code: r, Text: k}
@@ -204,10 +205,12 @@ func TestQuestions(t *testing.T) {
 		t.Fatalf("questions:\n%s", out)
 	}
 	key(q, "enter")
-	typeText(q, "No, it never stacks.")
-	key(q, "ctrl+s")
+	typeText(q, "No, it never")
+	key(q, "shift+enter")
+	typeText(q, "stacks.")
+	key(q, "enter")
 	open, _ := f.store.Questions("set", queue.QuestionOpen)
-	if len(open) != 1 || open[0].Answer != "No, it never stacks." {
+	if len(open) != 1 || open[0].Answer != "No, it never\nstacks." {
 		t.Fatalf("answer = %+v", open)
 	}
 	if !strings.Contains(q.render(), "0 open") {
@@ -220,9 +223,15 @@ func TestIntake(t *testing.T) {
 	f := newFixture(t)
 	in := NewIntake(f.env)
 	// With no goal focused, the intake goes to triage with no hint.
-	typeText(in, "new goal: implement the next set")
-	key(in, "ctrl+s")
-	if !strings.Contains(in.render(), "queued for triage") {
+	typeText(in, "new goal:")
+	key(in, "shift+enter")
+	typeText(in, "implement the next set")
+	if pending, _ := intake.Pending(intake.Dir(f.repo)); len(pending) != 0 {
+		t.Fatal("shift+enter sent the intake")
+	}
+	key(in, "enter")
+	if out := ansi.Strip(in.render()); !strings.Contains(out, "ent for triage.") ||
+		!strings.Contains(out, "Looking at the repo") {
 		t.Errorf("intake after queueing:\n%s", in.render())
 	}
 
@@ -231,14 +240,16 @@ func TestIntake(t *testing.T) {
 		t.Fatal(err)
 	}
 	typeText(in, "playtest: ward felt too strong")
-	key(in, "ctrl+s")
+	key(in, "enter")
 	pending, err := intake.Pending(intake.Dir(f.repo))
 	if err != nil || len(pending) != 2 || pending[0].Goal != "" ||
+		pending[0].Text != "new goal:\nimplement the next set" ||
 		pending[1].Text != "playtest: ward felt too strong" || pending[1].Goal != "set" ||
 		pending[1].Source != "pane" {
 		t.Fatalf("pending = %+v, %v", pending, err)
 	}
-	if !strings.Contains(in.render(), "2 waiting for triage") {
+	if out := ansi.Strip(in.render()); !strings.Contains(out, "2 waiting for triage") ||
+		!strings.Contains(out, "Looking at goal set") || strings.Contains(out, "intake") {
 		t.Errorf("intake after queueing twice:\n%s", in.render())
 	}
 	in.Update(tickMsg{})

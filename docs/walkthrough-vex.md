@@ -82,7 +82,7 @@ become one stacked PR each. Four goals:
 | `mass-mutation-sweep` | Post-Mass-Mutation cleanup sweep, all subsections | Large and heavily overlapping; grilling splits it into workstreams |
 
 **Phase 1:** with the repo focused (`esc` in status), type this into the intake
-pane and press `ctrl+s`:
+pane and press `enter` to send it. `shift+enter` starts a new line:
 
 ```text
 Turn docs/todo-agent.md into goals, one per ## section, but leave out the
@@ -124,7 +124,7 @@ Each planning goal gets grilling rounds. These are read-only planning sessions
 on Opus that ask questions and then hand in a plan.
 
 1. **Answer questions** in the questions pane: `j`/`k` to move, `enter` to
-   answer, `ctrl+s` to save. Each question comes with its context. The next
+   answer, and `enter` again to send it. Each question comes with its context. The next
    round starts only after every question in the current round is answered.
 2. **Review the plan.** When status shows **plan ready**, press `v` to see its
    workstreams and tasks in order (or run `diatom goal plan <goal>`).

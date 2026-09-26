@@ -36,8 +36,10 @@ type Questions struct {
 // NewQuestions loads the questions pane.
 func NewQuestions(env Env) *Questions {
 	area := textarea.New()
-	area.Placeholder = "your answer; ctrl+s or alt+enter saves, esc cancels"
+	area.Placeholder = "your answer · enter sends · shift+enter adds a line · esc cancels"
 	area.ShowLineNumbers = false
+	area.KeyMap.InsertNewline = newline
+	area.SetStyles(plainStyles())
 	q := &Questions{env: env, area: area, width: 80, height: 24}
 	q.reload()
 	return q
@@ -124,7 +126,7 @@ func (m *Questions) updateAnswer(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.answering = false
 		m.area.Blur()
 		return m, nil
-	case "ctrl+s", "alt+enter":
+	case "enter":
 		text := strings.TrimSpace(m.area.Value())
 		if text == "" || m.sel >= len(m.rows) {
 			return m, nil

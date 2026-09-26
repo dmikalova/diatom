@@ -2,10 +2,13 @@ package panes
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
+	keybind "charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/dmikalova/diatom/internal/focus"
 	"github.com/dmikalova/diatom/internal/intake"
@@ -29,13 +32,38 @@ type Intake struct {
 // NewIntake loads the intake pane.
 func NewIntake(env Env) *Intake {
 	area := textarea.New()
-	area.Placeholder = "new work, notes, a new goal… ctrl+s or alt+enter queues it for triage"
 	area.ShowLineNumbers = false
+	area.Prompt = ""
+	area.KeyMap.InsertNewline = newline
+	area.SetStyles(plainStyles())
 	area.Focus()
 	m := &Intake{env: env, area: area, width: 80, height: 12}
 	m.reload()
+	m.resize()
 	return m
 }
+
+// plainStyles styles a text box in the terminal's own colors, as the rest of
+// the panes are, rather than for a dark background: plain text, and the
+// placeholder in the panes' gray.
+func plainStyles() textarea.Styles {
+	s := textarea.DefaultDarkStyles()
+	plain := textarea.StyleState{
+		Base:        lipgloss.NewStyle(),
+		Text:        lipgloss.NewStyle(),
+		CursorLine:  lipgloss.NewStyle(),
+		EndOfBuffer: lipgloss.NewStyle(),
+		Prompt:      lipgloss.NewStyle(),
+		Placeholder: lipgloss.NewStyle().Foreground(lipgloss.Color(strconv.Itoa(tui.Gray))),
+		Selection:   lipgloss.NewStyle().Reverse(true),
+	}
+	s.Focused, s.Blurred = plain, plain
+	return s
+}
+
+// newline adds a line to the text instead of sending it. shift+enter needs a
+// terminal that tells it apart from enter; alt+enter and ctrl+j work in any.
+var newline = keybind.NewBinding(keybind.WithKeys("shift+enter", "alt+enter", "ctrl+j"))
 
 func (m *Intake) reload() {
 	fc, err := m.env.Focus.Read()
@@ -46,6 +74,29 @@ func (m *Intake) reload() {
 		m.err = err
 	}
 	m.pending = len(items)
+	m.area.Placeholder = m.placeholder()
+}
+
+// placeholder is what the empty pane says: what just happened, then how to
+// use it. The pane is nothing but the text, so this is where hints go.
+func (m *Intake) placeholder() string {
+	var lines []string
+	if m.flash != "" {
+		lines = append(lines, m.flash, "")
+	}
+	lines = append(
+		lines,
+		"Tell the agents anything: a new goal, notes, a change of plan. Triage sorts it into the goals.",
+	)
+	about := "the repo"
+	if m.focus.Goal != "" {
+		about = "goal " + m.focus.Goal
+	}
+	lines = append(lines, "", "Looking at "+about+" · enter sends · shift+enter adds a line")
+	if m.pending > 0 {
+		lines = append(lines, fmt.Sprintf("%d waiting for triage", m.pending))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // Init implements tea.Model.
@@ -56,8 +107,7 @@ func (m *Intake) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.area.SetWidth(max(msg.Width-2, 10))
-		m.area.SetHeight(max(msg.Height-5, 2))
+		m.resize()
 	case tickMsg:
 		m.reload()
 		return m, tick()
@@ -65,7 +115,7 @@ func (m *Intake) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
-		case "ctrl+s", "alt+enter":
+		case "enter":
 			m.submit()
 			return m, nil
 		}
@@ -74,6 +124,16 @@ func (m *Intake) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.area, cmd = m.area.Update(msg)
 	return m, cmd
+}
+
+// resize fills the pane with the text, less a line for an error.
+func (m *Intake) resize() {
+	h := m.height
+	if m.err != nil {
+		h--
+	}
+	m.area.SetWidth(max(m.width, 10))
+	m.area.SetHeight(max(h, 2))
 }
 
 func (m *Intake) submit() {
@@ -86,10 +146,11 @@ func (m *Intake) submit() {
 		Source: "pane", Created: m.env.Now(), Goal: m.focus.Goal, Text: text,
 	}); err != nil {
 		m.err = err
+		m.resize()
 		return
 	}
 	m.area.Reset()
-	m.flash = "queued for triage"
+	m.flash = "Sent for triage."
 	m.reload()
 }
 
@@ -101,21 +162,11 @@ func (m *Intake) View() tea.View {
 }
 
 func (m *Intake) render() string {
-	var b strings.Builder
-	b.WriteString(tui.Bold("intake") + tui.Dim(" · looking at "+describe(m.focus)))
-	if m.pending > 0 {
-		b.WriteString(tui.Dim(fmt.Sprintf(" · %d waiting for triage", m.pending)))
+	out := m.area.View()
+	if m.err != nil {
+		out += "\n" + tui.Color(m.err.Error(), tui.Red)
 	}
-	b.WriteString("\n" + m.area.View() + "\n")
-	switch {
-	case m.err != nil:
-		b.WriteString(tui.Color(m.err.Error(), tui.Red))
-	case m.flash != "":
-		b.WriteString(tui.Color(m.flash, tui.Cyan))
-	default:
-		b.WriteString(tui.Dim("ctrl+s queue · ctrl+c quit"))
-	}
-	return b.String()
+	return out
 }
 
 // Editing reports whether anything is typed and not yet queued.
