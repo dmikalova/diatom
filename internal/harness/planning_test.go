@@ -414,8 +414,9 @@ func TestPlanningPromptsSayOnlyTheToolReachesTheHuman(t *testing.T) {
 		if !strings.Contains(p, "Nobody reads your replies") {
 			t.Errorf("%s prompt lacks the unattended rule", kind)
 		}
-		if !strings.Contains(p, askGuide) {
-			t.Errorf("%s prompt lacks how to ask a question", kind)
+		if !strings.Contains(p, askGuide) || !strings.Contains(p, orderGuide) ||
+			strings.Contains(p, "what order the work goes in") {
+			t.Errorf("%s prompt lacks how to ask a question or to order work itself", kind)
 		}
 		if kind == queue.Grilling && !strings.Contains(p, "never in a reply") {
 			t.Error("grilling prompt doesn't route the skill's questions through the tool")

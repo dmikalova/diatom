@@ -141,11 +141,22 @@ func plural(n int, word string) string {
 
 // askGuide is how every agent writes a question: the human answers it in a
 // pane, without the code open, often long after it was asked.
-const askGuide = "    Write each question so the human can answer it without the code open: say what it " +
+const askGuide = "    Ask only what changes what gets built, how it is shaped or how good the code ends " +
+	"up: structure, architecture, behaviour, and anything unclear in what is wanted. Never ask about " +
+	"the order work is done in, and never ask the human to approve a choice you have reasoned through: " +
+	"the human wants the work done, done well and with the least effort, not to sequence it. Make those " +
+	"choices yourself and record the reasoning with `diatom task note`.\n" +
+	"    Write each question so the human can answer it without the code open: say what it " +
 	"decides and why it matters now, then give real examples from the repo for each option, such as " +
 	"the card, function, file, command output or case it is about, quoted briefly, so the choice is " +
 	"concrete rather than abstract. End with your recommended answer and why. Write plain sentences, " +
 	"with no headings and no capitals for emphasis.\n"
+
+// orderGuide is how planning orders work, which it never asks the human
+// about.
+const orderGuide = "Order the work yourself, and don't ask about it: dependencies first, so a shared " +
+	"piece lands before what uses it, then the simplest, lowest-risk change first within each step. Choose " +
+	"the order that keeps the code clean at every step and the total effort lowest.\n\n"
 
 // planningPrompt builds the instructions of a triage or grilling session.
 func (h *Harness) planningPrompt(repo Repo, g *queue.Goal, in PromptInput) (string, error) {
@@ -240,7 +251,8 @@ func writeTriage(b *strings.Builder, repo Repo) error {
 			"starts from everything it needs.\n" +
 			"- Anything unclear, or that needs a design decision, is a question to the human.\n" +
 			"- When goals would edit the same code, or the human orders them, make the later ones wait " +
-			"for the earlier: goals that run side by side only meet when they land.\n\n" +
+			"for the earlier: goals that run side by side only meet when they land. Decide that order " +
+			"yourself, as below; don't ask about it.\n\n" + orderGuide +
 			"The goal the human was looking at when they sent it is noted in the intake: a hint, not a rule. " +
 			"You can't add a workstream: ask instead. Mark each intake done once it is sorted.\n\n",
 	)
@@ -312,7 +324,7 @@ func writeGrilling(b *strings.Builder, repo Repo, in PromptInput) {
 	)
 	b.WriteString(
 		"## Grilling\n\nThe goal below hides decisions you can't make alone: what is new, how it " +
-			"fits the code, what order the work goes in. Find them before any work starts. If you have the " +
+			"fits the code, how it should be structured. Find them before any work starts. If you have the " +
 			"`diatom:grilling` skill, use its method to find them, but put every question to the human with " +
 			"`diatom task ask`, one question per call with your recommended answer in it, never in a reply. " +
 			"Grilling works in rounds, one per session:\n\n",
@@ -329,6 +341,7 @@ func writeGrilling(b *strings.Builder, repo Repo, in PromptInput) {
 		"The plan is YAML: workstreams, scoped by purpose rather than path, with the order between " +
 			"them, and small tasks, each one session's work for an agent.\n\n",
 	)
+	b.WriteString(orderGuide)
 	b.WriteString(
 		"```yaml\nsummary: What the goal does and how, in a few sentences.\nworkstreams:\n" +
 			"  - name: engine\n  - name: cards\n    dependsOn: [engine]\ntasks:\n  - key: ward\n" +
