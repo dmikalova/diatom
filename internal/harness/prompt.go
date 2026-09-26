@@ -61,6 +61,7 @@ func Prompt(in PromptInput) string {
 			"The task is parked until they answer; don't guess, and move on to the other tasks. Leave the files " +
 			"passing the gate.\n",
 	)
+	b.WriteString(askGuide)
 	b.WriteString(
 		"- A task you don't mark done goes back in the queue, and a later session continues from " +
 			"the files you leave.\n",
@@ -138,6 +139,14 @@ func plural(n int, word string) string {
 	return fmt.Sprintf("%d %ss", n, word)
 }
 
+// askGuide is how every agent writes a question: the human answers it in a
+// pane, without the code open, often long after it was asked.
+const askGuide = "    Write each question so the human can answer it without the code open: say what it " +
+	"decides and why it matters now, then give real examples from the repo for each option, such as " +
+	"the card, function, file, command output or case it is about, quoted briefly, so the choice is " +
+	"concrete rather than abstract. End with your recommended answer and why. Write plain sentences, " +
+	"with no headings and no capitals for emphasis.\n"
+
 // planningPrompt builds the instructions of a triage or grilling session.
 func (h *Harness) planningPrompt(repo Repo, g *queue.Goal, in PromptInput) (string, error) {
 	var b strings.Builder
@@ -169,6 +178,7 @@ func (h *Harness) planningPrompt(repo Repo, g *queue.Goal, in PromptInput) (stri
 		"  - `diatom task ask <id> \"<question>\"` asks the human something. The task waits for the " +
 			"answer, which comes back in the task text.\n",
 	)
+	b.WriteString(askGuide)
 	b.WriteString("  - `diatom task note <id> \"<text>\"` records something worth keeping.\n")
 	b.WriteString("  - `diatom task done <id>` marks the task done.\n")
 	if in.Batch.Kind == queue.Triage {

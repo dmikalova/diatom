@@ -414,6 +414,9 @@ func TestPlanningPromptsSayOnlyTheToolReachesTheHuman(t *testing.T) {
 		if !strings.Contains(p, "Nobody reads your replies") {
 			t.Errorf("%s prompt lacks the unattended rule", kind)
 		}
+		if !strings.Contains(p, askGuide) {
+			t.Errorf("%s prompt lacks how to ask a question", kind)
+		}
 		if kind == queue.Grilling && !strings.Contains(p, "never in a reply") {
 			t.Error("grilling prompt doesn't route the skill's questions through the tool")
 		}
@@ -422,10 +425,8 @@ func TestPlanningPromptsSayOnlyTheToolReachesTheHuman(t *testing.T) {
 			t.Errorf("triage prompt lacks the repo's goals or its tools:\n%s", p)
 		}
 	}
-	if !strings.Contains(
-		Prompt(PromptInput{Goal: g, Batch: schedule.Batch{}}),
-		"Nobody reads your replies",
-	) {
-		t.Error("the work prompt lacks the unattended rule")
+	if work := Prompt(PromptInput{Goal: g, Batch: schedule.Batch{}}); !strings.Contains(work,
+		"Nobody reads your replies") || !strings.Contains(work, askGuide) {
+		t.Error("the work prompt lacks the unattended rule or how to ask a question")
 	}
 }
