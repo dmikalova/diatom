@@ -140,18 +140,23 @@ func plural(n int, word string) string {
 
 // planningPrompt builds the instructions of a triage or grilling session.
 func (h *Harness) planningPrompt(repo Repo, g *queue.Goal, in PromptInput) (string, error) {
-	tasks, err := repo.Store.Tasks(g.Name)
-	if err != nil {
-		return "", err
-	}
 	var b strings.Builder
-	fmt.Fprintf(
-		&b,
-		"You are %s the goal %q. Your working directory is a read-only checkout of the goal's "+
-			"integration branch: read the code freely, but anything you write in it is thrown away.\n\n",
-		map[queue.Kind]string{queue.Triage: "triaging new input for", queue.Grilling: "grilling"}[in.Batch.Kind],
-		g.Title,
-	)
+	if in.Batch.Kind == queue.Triage {
+		fmt.Fprintf(
+			&b,
+			"You are triaging what the human sent to this repo. Your working directory is a "+
+				"read-only checkout of %s: read the code freely, but anything you write in it is thrown away.\n\n",
+			g.Base,
+		)
+	} else {
+		fmt.Fprintf(
+			&b,
+			"You are grilling the goal %q. Your working directory is a read-only checkout of "+
+				"the goal's integration branch: read the code freely, but anything you write in it is thrown "+
+				"away.\n\n",
+			g.Title,
+		)
+	}
 	b.WriteString("## How diatom works\n\n")
 	b.WriteString(
 		"- **Nobody reads your replies.** The session runs unattended: the human sees only what you " +
@@ -167,7 +172,9 @@ func (h *Harness) planningPrompt(repo Repo, g *queue.Goal, in PromptInput) (stri
 	b.WriteString("  - `diatom task note <id> \"<text>\"` records something worth keeping.\n")
 	b.WriteString("  - `diatom task done <id>` marks the task done.\n")
 	if in.Batch.Kind == queue.Triage {
-		writeTriage(&b, g, tasks)
+		if err := writeTriage(&b, repo); err != nil {
+			return "", err
+		}
 	} else {
 		writeGrilling(&b, repo, in)
 	}
@@ -193,37 +200,89 @@ func (h *Harness) planningPrompt(repo Repo, g *queue.Goal, in PromptInput) (stri
 	return b.String(), nil
 }
 
-func writeTriage(b *strings.Builder, g *queue.Goal, tasks []*queue.Task) {
+func writeTriage(b *strings.Builder, repo Repo) error {
 	b.WriteString(
-		"  - `diatom task add-task <id> -ws <workstream> -title \"<title>\" [-after <ids>] < body` " +
-			"adds a task to one of the goal's workstreams, with its details on stdin.\n",
+		"  - `diatom task add-task <id> -goal <goal> -ws <workstream> -title \"<title>\" " +
+			"[-after <ids>] [-profile <profile>] < body` adds a task to one of a goal's workstreams, with its " +
+			"details on stdin. For a goal still being planned, it goes to the goal's grilling instead.\n",
 	)
 	b.WriteString(
-		"  - `diatom task new-goal <id> -title \"<title>\" < description` starts a new goal, for " +
-			"input that doesn't belong to this one.\n\n",
+		"  - `diatom task feedback <id> -goal <goal> < text` passes feedback to a goal being " +
+			"planned: its grilling starts another round with it.\n",
 	)
 	b.WriteString(
-		"## Triage\n\nEach task below is one intake: free-form input from the human, such as a new " +
-			"goal or a handful of playtest notes. Sort it into small, clear-cut tasks on the goal's workstreams, a " +
-			"new goal, or questions back to the human when something is unclear. Anything that needs a design " +
-			"decision is a question, not a task. You can't add a workstream: ask instead. Mark each intake done " +
-			"once it is sorted.\n\n",
+		"  - `diatom task new-goal <id> -title \"<title>\" [-plan <plan.yaml>] < description` " +
+			"starts a new goal, which is grilled before any work starts. Pass -plan only when the input already " +
+			"decides everything, workstreams and tasks: the goal then skips grilling and waits for the human " +
+			"to sign the plan off. The plan's format is below.\n\n",
 	)
-	b.WriteString("The goal's workstreams:\n\n")
-	for _, w := range g.Workstreams {
-		deps := ""
-		if len(w.DependsOn) > 0 {
-			deps = " (after " + strings.Join(w.DependsOn, ", ") + ")"
-		}
-		fmt.Fprintf(b, "- %s%s\n", w.Name, deps)
+	b.WriteString(
+		"## Triage\n\nEach task below is one intake: whatever the human sent, from a new goal " +
+			"to a handful of playtest notes or a comment from review. Sort it into the repo's goals:\n\n" +
+			"- Small, clear-cut work for an existing goal becomes tasks on its workstreams.\n" +
+			"- New intent becomes a new goal, or several when the input covers separate things that land " +
+			"apart. Draw each goal's description from the input and the files it points at, so grilling " +
+			"starts from everything it needs.\n" +
+			"- Anything unclear, or that needs a design decision, is a question to the human.\n\n" +
+			"The goal the human was looking at when they sent it is noted in the intake: a hint, not a rule. " +
+			"You can't add a workstream: ask instead. Mark each intake done once it is sorted.\n\n",
+	)
+	b.WriteString(
+		"The plan -plan takes is YAML:\n\n```yaml\nsummary: What the goal does and how.\n" +
+			"workstreams:\n  - name: engine\n  - name: cards\n    dependsOn: [engine]\ntasks:\n" +
+			"  - key: ward\n    title: Add the ward keyword\n    workstream: engine\n    body: |\n" +
+			"      What to do and how to know it's done.\n  - key: warden\n    title: Implement Warden\n" +
+			"    workstream: cards\n    after: [ward]\n```\n\n",
+	)
+	goals, err := repo.Store.Goals()
+	if err != nil {
+		return err
 	}
-	b.WriteString("\nIts tasks, for placing new work and naming what it comes after:\n\n")
-	for _, t := range tasks {
-		if t.Kind == queue.Triage || t.Kind == queue.Grilling {
+	b.WriteString("## The repo's goals\n\n")
+	if len(goals) == 0 {
+		b.WriteString("None yet.\n\n")
+	}
+	for _, g := range goals {
+		if g.State == queue.GoalFinished {
 			continue
 		}
+		if err := writeGoal(b, repo.Store, g); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeGoal describes a goal for triage: its workstreams, and the tasks new
+// work can be placed after.
+func writeGoal(b *strings.Builder, s *queue.Store, g *queue.Goal) error {
+	fmt.Fprintf(b, "### %s: %s (%s)\n\n", g.Name, g.Title, g.State)
+	if len(g.Workstreams) > 0 {
+		b.WriteString("Workstreams:")
+		for _, w := range g.Workstreams {
+			fmt.Fprintf(b, " %s", w.Name)
+			if len(w.DependsOn) > 0 {
+				fmt.Fprintf(b, " (after %s)", strings.Join(w.DependsOn, ", "))
+			}
+		}
+		b.WriteString("\n\n")
+	}
+	tasks, err := s.Tasks(g.Name)
+	if err != nil {
+		return err
+	}
+	open := 0
+	for _, t := range tasks {
+		if t.State == queue.Done || planningKind(t.Kind) {
+			continue
+		}
+		open++
 		fmt.Fprintf(b, "- %s [%s, %s] %s\n", t.ID, t.Workstream, t.State, t.Title)
 	}
+	if open > 0 {
+		b.WriteString("\n")
+	}
+	return nil
 }
 
 func writeGrilling(b *strings.Builder, repo Repo, in PromptInput) {

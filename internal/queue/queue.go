@@ -47,6 +47,12 @@ const (
 	GoalFinished GoalState = "finished"
 )
 
+// IntakeGoal holds the repo's triage tasks and their questions: triage
+// sorts intake for the whole repo, not for one goal (ADR 0009). It is never
+// listed with the goals, and no goal can take its name, which isn't a valid
+// one.
+const IntakeGoal = "_intake"
+
 // Goal is a unit of intent submitted by the human.
 type Goal struct {
 	// Name is the goal's directory name and branch prefix. It is not stored
@@ -241,7 +247,7 @@ func ValidName(name string) error {
 
 // CreateGoal writes a new goal. It fails if the goal already exists.
 func (s *Store) CreateGoal(g *Goal) error {
-	if err := ValidName(g.Name); err != nil {
+	if err := ValidName(g.Name); err != nil && g.Name != IntakeGoal {
 		return err
 	}
 	for _, w := range g.Workstreams {
@@ -298,7 +304,7 @@ func (s *Store) Goals() ([]*Goal, error) {
 	}
 	var goals []*Goal
 	for _, e := range entries {
-		if !e.IsDir() {
+		if !e.IsDir() || e.Name() == IntakeGoal {
 			continue
 		}
 		g, err := s.Goal(e.Name())

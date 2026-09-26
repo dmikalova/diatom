@@ -18,17 +18,31 @@ import (
 	"github.com/dmikalova/diatom/internal/config"
 	"github.com/dmikalova/diatom/internal/focus"
 	"github.com/dmikalova/diatom/internal/panes"
-	"github.com/dmikalova/diatom/internal/registry"
 )
 
-// sessionName is the zellij session the workspace lives in.
-const sessionName = "diatom"
+// sessionName is the zellij session of the repo's workspace. Each repo has
+// its own, so the workspaces of two repos can be open at once.
+func sessionName(root string) string {
+	name := strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' ||
+			r == '_' {
+			return r
+		}
+		return '-'
+	}, filepath.Base(root))
+	return "diatom-" + name
+}
 
-// cmdWorkspace opens the workspace (ADR 0007): a zellij session you can
-// detach from and reattach to, with the reviewer, status, questions and intake
-// panes, and the scheduler in a tab of its own. An existing session is
+// cmdWorkspace opens the repo's workspace (ADR 0007): a zellij session you
+// can detach from and reattach to, with the reviewer, status, questions and
+// intake panes, and the scheduler in a tab of its own. An existing session is
 // reattached.
 func cmdWorkspace(ctx context.Context) error {
+	s, err := here(ctx)
+	if err != nil {
+		return err
+	}
+	sessionName := sessionName(s.Repo())
 	if os.Getenv("ZELLIJ") != "" {
 		return errors.New(
 			"already inside zellij: detach first, or run `zellij attach " + sessionName + "`",
@@ -43,22 +57,15 @@ func cmdWorkspace(ctx context.Context) error {
 	if err == nil && slices.Contains(strings.Fields(string(out)), sessionName) {
 		return syscall.Exec(zellij, []string{"zellij", "attach", sessionName}, os.Environ())
 	}
-	exe, err := os.Executable()
+	exe, err := self()
 	if err != nil {
 		return err
 	}
-	if exe, err = filepath.EvalSymlinks(exe); err != nil {
-		return err
-	}
-	reg, err := registry.Default()
-	if err != nil {
-		return err
-	}
-	path := filepath.Join(filepath.Dir(reg.Path), "workspace.kdl")
+	path := filepath.Join(s.Root, "workspace.kdl")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, []byte(workspaceLayout(exe)), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(workspaceLayout(exe, s.Repo())), 0o644); err != nil {
 		return err
 	}
 	return syscall.Exec(
@@ -68,8 +75,9 @@ func cmdWorkspace(ctx context.Context) error {
 	)
 }
 
-// workspaceLayout is the zellij layout of the workspace, running exe.
-func workspaceLayout(exe string) string {
+// workspaceLayout is the zellij layout of the workspace of the repo at root,
+// running exe. Every pane starts in the repo, which is how it finds it.
+func workspaceLayout(exe, root string) string {
 	q := func(s string) string { return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"` }
 	pane := func(indent, name, size string, focus bool, args ...string) string {
 		quoted := make([]string, len(args))
@@ -93,6 +101,7 @@ func workspaceLayout(exe string) string {
 		)
 	}
 	return "layout {\n" +
+		"    cwd " + q(root) + "\n" +
 		"    default_tab_template {\n" +
 		"        pane size=1 borderless=true {\n            plugin location=\"zellij:tab-bar\"\n        }\n" +
 		"        children\n" +
@@ -114,13 +123,9 @@ func workspaceLayout(exe string) string {
 		"}\n"
 }
 
-// paneEnv is what the workspace panes share.
-func paneEnv() (panes.Env, error) {
-	reg, err := registry.Default()
-	if err != nil {
-		return panes.Env{}, err
-	}
-	fc, err := focus.Default()
+// paneEnv is what the workspace panes of the repo share.
+func paneEnv(ctx context.Context) (panes.Env, error) {
+	s, err := here(ctx)
 	if err != nil {
 		return panes.Env{}, err
 	}
@@ -128,7 +133,7 @@ func paneEnv() (panes.Env, error) {
 	if err != nil {
 		return panes.Env{}, err
 	}
-	return panes.Env{Registry: reg, Focus: fc, Paths: paths, Now: time.Now}, nil
+	return panes.Env{Store: s, Focus: focus.In(s.Repo()), Paths: paths, Now: time.Now}, nil
 }
 
 // cmdPane runs one of the workspace's panes.
@@ -136,7 +141,7 @@ func cmdPane(ctx context.Context, args []string, _ io.Writer) error {
 	if len(args) != 1 {
 		return fmt.Errorf("%w: pane takes status, questions or intake", errUsage)
 	}
-	env, err := paneEnv()
+	env, err := paneEnv(ctx)
 	if err != nil {
 		return err
 	}

@@ -12,9 +12,9 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// Focus names a repo and, once one is picked, a goal in it.
+// Focus names the goal the human is looking at; an empty goal is the repo
+// itself.
 type Focus struct {
-	Repo string `yaml:"repo"`
 	Goal string `yaml:"goal,omitempty"`
 }
 
@@ -23,17 +23,9 @@ type File struct {
 	Path string
 }
 
-// Default returns the focus file under XDG_STATE_HOME.
-func Default() (File, error) {
-	state := os.Getenv("XDG_STATE_HOME")
-	if state == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return File{}, err
-		}
-		state = filepath.Join(home, ".local", "state")
-	}
-	return File{Path: filepath.Join(state, "diatom", "focus.yaml")}, nil
+// In returns the focus file of the repo at root.
+func In(root string) File {
+	return File{Path: filepath.Join(root, ".diatom", "focus.yaml")}
 }
 
 // Read returns the focus, which is empty until one is set.

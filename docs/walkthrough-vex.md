@@ -55,7 +55,8 @@ cd ~/Code/github.com/dmikalova/vex && diatom workspace
 
 - **Work tab:**
   - **Reviewer** on the left, 60% wide.
-  - **Status** lists every goal. `enter` focuses a goal, and `o` picks a repo.
+  - **Status** lists every goal. `enter` focuses a goal, and `esc` focuses the
+    repo itself.
   - **Questions** is where you answer the agents.
   - **Intake** is where you type new work or notes.
 - **Scheduler tab:** `diatom run` and its log. It starts sessions as soon as
@@ -73,53 +74,49 @@ goal, because conflicts inside a goal are fixed as the work goes. Conflicts
 between goals only surface when the second one lands. Each goal's workstreams
 become one stacked PR each. Four goals:
 
-| Goal                  | Section                                               | Why on its own                                                     |
-| --------------------- | ----------------------------------------------------- | ------------------------------------------------------------------ |
-| `effect-catalog`      | Closed effect catalog + `RulesBearing` (ADR 0018)     | Already decided; rulebook and tests                                |
-| `forgekey-purge`      | `ForgeKey` bakes "purge self"                         | Already decided; small                                             |
-| `effect-glyphs`       | gocognit: the `effectGlyphs` exclusion                | The doc itself asks for a glyph-family grilling                    |
-| `mass-mutation-sweep` | Post-Mass-Mutation cleanup sweep, all subsections     | Large and heavily overlapping; grilling splits it into workstreams |
+| Goal                  | Section                                           | Why on its own                                                     |
+| --------------------- | ------------------------------------------------- | ------------------------------------------------------------------ |
+| `effect-catalog`      | Closed effect catalog + `RulesBearing` (ADR 0018) | Already decided; rulebook and tests                                |
+| `forgekey-purge`      | `ForgeKey` bakes "purge self"                     | Already decided; small                                             |
+| `effect-glyphs`       | gocognit: the `effectGlyphs` exclusion            | The doc itself asks for a glyph-family grilling                    |
+| `mass-mutation-sweep` | Post-Mass-Mutation cleanup sweep, all subsections | Large and heavily overlapping; grilling splits it into workstreams |
 
-Feed in **one section at a time, never the whole file.** The file's preamble
-tells agents to "ask in the reply itself, grill-me style". diatom agents can't
-do that, because nobody reads their replies, and only questions sent through
-diatom reach you. This shell helper prints one `##` section and nothing else:
+**Phase 1:** with the repo focused (`esc` in status), type this into the intake
+pane and press `ctrl+s`:
+
+```text
+Turn docs/todo-agent.md into goals, one per ## section, but leave out the
+Post-Mass-Mutation cleanup sweep for now. The ForgeKey and effect catalog
+sections are already decided. Ignore the file's preamble: it's for agents in
+chat, not for you.
+```
+
+Triage reads the file and starts the three goals. It hands in the ForgeKey
+plan with its goal, so that one skips grilling and waits for your sign-off; the
+effect catalog may too, if the section decides every task. The effect glyphs
+goal is grilled. The status pane shows the intake as "being sorted" until
+triage is done, and anything triage can't decide comes to the questions pane,
+filed under intake.
+
+**Phase 2:** send the sweep only after `effect-catalog` and `forgekey-purge` are
+finished (step 7):
+
+```text
+Turn the Post-Mass-Mutation cleanup sweep in docs/todo-agent.md into a goal.
+```
+
+A goal's branch starts from `main` as it is when the goal is created, and
+diatom doesn't yet pull `main` into a running goal. Created early, the sweep
+would overlap the other two, leaving you to merge by hand when it lands.
+
+The command line works too. `section` prints one `##` section of the file, and
+`diatom goal new` starts a goal from it without triage:
 
 ```sh
 cd ~/Code/github.com/dmikalova/vex
 section() { awk -v h="$1" '/^## /{p = index($0, h) > 0} p' docs/todo-agent.md; }
-section 'Closed effect catalog'   # look before you pipe it
+section 'gocognit gate' | diatom goal new effect-glyphs -title "Split effectGlyphs by glyph family"
 ```
-
-**Phase 1:** start the three small goals together. They touch different code
-(the effect catalog, `effect_forge.go` and cards, `web/icon.go`).
-
-```sh
-section 'Closed effect catalog' | diatom goal new effect-catalog -title "Closed effect catalog and a RulesBearing marker"
-section 'gocognit gate'         | diatom goal new effect-glyphs  -title "Split effectGlyphs by glyph family"
-```
-
-The ForgeKey section is fully decided, so it can skip grilling. You write the
-goal's workstream and task yourself:
-
-```sh
-diatom goal new forgekey-purge -title "Take the purge out of ForgeKey" -ws engine -active
-section 'ForgeKey' | diatom task add -goal forgekey-purge -ws engine "Strip the self-purge out of ForgeKey"
-```
-
-**Phase 2:** create `mass-mutation-sweep` only after `effect-catalog` and
-`forgekey-purge` are finished (step 7). A goal's branch starts from `main` as it
-is when the goal is created, and diatom doesn't yet pull `main` into a running
-goal. Create it early and it will overlap the other two, leaving you to merge by
-hand when it lands.
-
-```sh
-section 'Post-Mass-Mutation' | diatom goal new mass-mutation-sweep -title "Post-Mass-Mutation cleanup sweep"
-```
-
-You can also type a goal into the intake pane: pick vex with `o` so the repo is
-focused but no goal is. The first line becomes the goal's title, and `ctrl+s`
-queues it. For pasting a whole section, the CLI above is easier.
 
 ## 4. Grilling: answer questions, then sign off each plan
 

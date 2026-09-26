@@ -367,12 +367,12 @@ func TestFollowSwitchesWithFocus(t *testing.T) {
 		},
 	)
 
-	file := focus.File{Path: filepath.Join(t.TempDir(), "focus.yaml")}
-	fl := NewFollow(context.Background(), file)
+	file := focus.In(f.repo.Dir)
+	fl := NewFollow(context.Background(), f.store)
 	if fl.inner != nil || !strings.Contains(fl.View().Content, "No goal is focused") {
 		t.Fatal("reviewer without focus shows a hunk")
 	}
-	if err := file.Write(focus.Focus{Repo: f.repo.Dir, Goal: "set"}); err != nil {
+	if err := file.Write(focus.Focus{Goal: "set"}); err != nil {
 		t.Fatal(err)
 	}
 	fl.Update(tickMsg{})
@@ -383,7 +383,7 @@ func TestFollowSwitchesWithFocus(t *testing.T) {
 	if rec, _ := fl.inner.rev.Load(sha); len(rec.Hunks) != 1 {
 		t.Error("a key in the follow pane did not reach the reviewer")
 	}
-	if err := file.Write(focus.Focus{Repo: f.repo.Dir}); err != nil {
+	if err := file.Write(focus.Focus{}); err != nil {
 		t.Fatal(err)
 	}
 	fl.Update(tickMsg{})

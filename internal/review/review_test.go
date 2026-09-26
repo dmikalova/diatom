@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/dmikalova/diatom/internal/git"
+	"github.com/dmikalova/diatom/internal/intake"
 	"github.com/dmikalova/diatom/internal/queue"
 )
 
@@ -225,13 +226,15 @@ func TestApprovedCommentBecomesIntake(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	entries, err := os.ReadDir(filepath.Join(s.Dir, "intake"))
+	inbox := intake.Dir(f.store.Repo())
+	entries, err := os.ReadDir(inbox)
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("intake = %v, %v", entries, err)
 	}
-	b, _ := os.ReadFile(filepath.Join(s.Dir, "intake", entries[0].Name()))
+	b, _ := os.ReadFile(filepath.Join(inbox, entries[0].Name()))
 	if !bytes.Contains(b, []byte("Line 2: later, rename B")) ||
 		!bytes.Contains(b, []byte("hunk: ward.go#1")) ||
+		!bytes.Contains(b, []byte("goal: set")) ||
 		!bytes.Contains(b, []byte("source: review")) {
 		t.Errorf("intake = %s", b)
 	}

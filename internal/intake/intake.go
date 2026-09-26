@@ -25,6 +25,9 @@ type Intake struct {
 	// Source is where it came from: pane or review.
 	Source  string    `yaml:"source"`
 	Created time.Time `yaml:"created"`
+	// Goal is the goal the human was looking at, a hint to where the
+	// intake belongs; empty is the repo.
+	Goal string `yaml:"goal,omitempty"`
 	// Commit and Hunk name the approved hunk a review comment was on.
 	Commit string `yaml:"commit,omitempty"`
 	Hunk   string `yaml:"hunk,omitempty"`
@@ -35,12 +38,10 @@ type Intake struct {
 	Text string `yaml:"-"`
 }
 
-// Dir returns where a goal's intake goes, or the repo's when goal is empty.
-func Dir(repo, goal string) string {
-	if goal == "" {
-		return filepath.Join(repo, ".diatom", "intake")
-	}
-	return filepath.Join(repo, ".diatom", "goals", goal, "intake")
+// Dir returns the repo's intake, where everything the human sends waits for
+// triage (ADR 0009).
+func Dir(repo string) string {
+	return filepath.Join(repo, ".diatom", "intake")
 }
 
 // Write saves an intake in dir under a name sorted by time.
@@ -53,21 +54,33 @@ func Write(dir string, in Intake) (string, error) {
 		return "", err
 	}
 	body := "---\n" + string(front) + "---\n\n" + strings.TrimSpace(in.Text) + "\n"
-	name := in.Created.UTC().Format("20060102T150405.000000000Z") + ".md"
-	path := filepath.Join(dir, name)
-	f, err := os.CreateTemp(dir, "."+name+".*")
+	stamp := in.Created.UTC().Format("20060102T150405.000000000Z")
+	f, err := os.CreateTemp(dir, "."+stamp+".*")
 	if err != nil {
 		return "", err
 	}
+	defer func() { _ = os.Remove(f.Name()) }()
 	_, werr := f.WriteString(body)
 	if cerr := f.Close(); werr == nil {
 		werr = cerr
 	}
 	if werr != nil {
-		_ = os.Remove(f.Name())
 		return "", werr
 	}
-	return path, os.Rename(f.Name(), path)
+	// A link, unlike a rename, never replaces an intake sent at the same
+	// moment: that one keeps its name, and this one takes the next.
+	for n := 0; ; n++ {
+		name := stamp + ".md"
+		if n > 0 {
+			name = fmt.Sprintf("%s-%d.md", stamp, n)
+		}
+		path := filepath.Join(dir, name)
+		err := os.Link(f.Name(), path)
+		if errors.Is(err, fs.ErrExist) {
+			continue
+		}
+		return path, err
+	}
 }
 
 // Pending lists the intakes in dir not yet triaged, oldest first.
@@ -90,7 +103,17 @@ func Pending(dir string) ([]Intake, error) {
 		}
 		out = append(out, in)
 	}
-	slices.SortFunc(out, func(a, b Intake) int { return strings.Compare(a.Path, b.Path) })
+	// Oldest first. Intake sent at the same moment is numbered in the order
+	// it was sent, and the number makes the name longer.
+	slices.SortFunc(out, func(a, b Intake) int {
+		if c := a.Created.Compare(b.Created); c != 0 {
+			return c
+		}
+		if c := len(a.Path) - len(b.Path); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Path, b.Path)
+	})
 	return out, nil
 }
 

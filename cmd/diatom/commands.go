@@ -1,13 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"text/tabwriter"
@@ -18,13 +18,15 @@ import (
 	"github.com/dmikalova/diatom/internal/gate"
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/hook"
+	"github.com/dmikalova/diatom/internal/intake"
 	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
-	"github.com/dmikalova/diatom/internal/registry"
 	"github.com/dmikalova/diatom/internal/session"
 )
 
-// here opens the store of the repository the current directory is in.
+// here opens the store of the repository the current directory is in,
+// anywhere in it, a goal's worktree included. diatom works in one repo at a
+// time (ADR 0007), and only in a repo that ignores its state.
 func here(ctx context.Context) (*queue.Store, error) {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -32,7 +34,14 @@ func here(ctx context.Context) (*queue.Store, error) {
 	}
 	root, err := git.Root(ctx, wd)
 	if err != nil {
-		return nil, fmt.Errorf("not in a git repository: %w", err)
+		return nil, errors.New("not in a git repository: diatom works in the repo it runs in")
+	}
+	if !(git.Repo{Dir: root}).IsIgnored(ctx, config.DirName+"/") {
+		return nil, fmt.Errorf(
+			"%s/ is not ignored in %s: add it to the global excludes file (~/.config/git/ignore)",
+			config.DirName,
+			root,
+		)
 	}
 	return queue.Open(root), nil
 }
@@ -240,13 +249,6 @@ func goalNew(
 		return fmt.Errorf("%w: goal new takes one goal name", errUsage)
 	}
 	repo := git.Repo{Dir: s.Repo()}
-	if !repo.IsIgnored(ctx, config.DirName+"/") {
-		return fmt.Errorf(
-			"%s/ is not ignored in %s: add it to the global excludes file (~/.config/git/ignore)",
-			config.DirName,
-			s.Repo(),
-		)
-	}
 	base, err := repo.CurrentBranch(ctx)
 	if err != nil {
 		return fmt.Errorf("the goal branches from the current branch, and there is none: %w", err)
@@ -277,9 +279,6 @@ func goalNew(
 		if err != nil {
 			return err
 		}
-		if err := registerRepo(s); err != nil {
-			return err
-		}
 		_, _ = fmt.Fprintf(
 			stdout,
 			"goal %s created from %s, in planning: grilling starts once `diatom run` "+
@@ -304,20 +303,8 @@ func goalNew(
 	if err := s.CreateGoal(g); err != nil {
 		return err
 	}
-	if err := registerRepo(s); err != nil {
-		return err
-	}
 	_, _ = fmt.Fprintf(stdout, "goal %s created from %s, %s\n", g.Name, base, g.State)
 	return nil
-}
-
-// registerRepo makes the store's repo known to the scheduler.
-func registerRepo(s *queue.Store) error {
-	reg, err := registry.Default()
-	if err != nil {
-		return err
-	}
-	return reg.Add(s.Repo())
 }
 
 // goalApprove signs a goal's plan off (ADR 0010).
@@ -406,7 +393,7 @@ func cmdTask(ctx context.Context, args []string, stdin io.Reader, stdout io.Writ
 		return taskAdd(ctx, rest, stdin, stdout)
 	case session.EntryDone, session.EntryNote, session.EntryAsk:
 		return taskReport(ctx, sub, rest, stdout)
-	case "add-task", "new-goal", "plan":
+	case "add-task", "feedback", "new-goal", "plan":
 		return planningReport(sub, rest, stdin, stdout)
 	}
 	return fmt.Errorf("%w: unknown task subcommand %q", errUsage, args[0])
@@ -527,8 +514,12 @@ func cmdQuestions(ctx context.Context, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	names := []string{queue.IntakeGoal}
 	for _, g := range goals {
-		qs, err := s.Questions(g.Name, queue.QuestionOpen)
+		names = append(names, g.Name)
+	}
+	for _, name := range names {
+		qs, err := s.Questions(name, queue.QuestionOpen)
 		if err != nil {
 			return err
 		}
@@ -539,7 +530,7 @@ func cmdQuestions(ctx context.Context, stdout io.Writer) error {
 			_, _ = fmt.Fprintf(
 				stdout,
 				"%s %s (task %s)\n%s\n",
-				g.Name,
+				questionGoal(name),
 				q.ID,
 				q.Task,
 				indent(q.Text),
@@ -547,6 +538,15 @@ func cmdQuestions(ctx context.Context, stdout io.Writer) error {
 		}
 	}
 	return nil
+}
+
+// questionGoal names the goal a question is filed under: triage's are under
+// intake.
+func questionGoal(goal string) string {
+	if goal == queue.IntakeGoal {
+		return "intake"
+	}
+	return goal
 }
 
 func indent(s string) string {
@@ -561,54 +561,59 @@ func cmdAnswer(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	return s.Answer(args[0], args[1], strings.Join(args[2:], " "), time.Now())
+	goal := args[0]
+	if goal == "intake" {
+		goal = queue.IntakeGoal
+	}
+	return s.Answer(goal, args[1], strings.Join(args[2:], " "), time.Now())
 }
 
 func cmdStatus(ctx context.Context, stdout io.Writer) error {
-	reg, err := registry.Default()
-	if err != nil {
-		return err
-	}
-	repos, err := reg.List()
+	s, err := here(ctx)
 	if err != nil {
 		return err
 	}
 	w := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-	for _, repo := range repos {
-		s := queue.Open(repo)
-		goals, err := s.Goals()
-		if err != nil {
-			return err
+	triage, err := s.Tasks(queue.IntakeGoal)
+	if err != nil {
+		return err
+	}
+	if n := len(
+		slices.DeleteFunc(triage, func(t *queue.Task) bool { return t.State == queue.Done }),
+	); n > 0 {
+		_, _ = fmt.Fprintf(w, "intake\t\t%d being sorted\n", n)
+	}
+	goals, err := s.Goals()
+	if err != nil {
+		return err
+	}
+	for _, g := range goals {
+		if g.State == queue.GoalFinished {
+			continue
 		}
-		for _, g := range goals {
-			if g.State == queue.GoalFinished {
-				continue
-			}
-			if g.State == queue.GoalDone {
-				res, err := finish.Load(s.GoalDir(g.Name))
-				if err != nil {
-					return err
-				}
-				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", filepath.Base(repo), g.Name, g.State,
-					finish.Summary(g, res))
-				continue
-			}
-			tasks, err := s.Tasks(g.Name)
+		if g.State == queue.GoalDone {
+			res, err := finish.Load(s.GoalDir(g.Name))
 			if err != nil {
 				return err
 			}
-			counts := map[queue.State]int{}
-			var active []string
-			for _, t := range tasks {
-				counts[t.State]++
-				if t.State == queue.Active {
-					active = append(active, t.Workstream+"/"+t.ID)
-				}
-			}
-			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\tpending %d\tactive %d\tblocked %d\tdone %d\t%s\n",
-				filepath.Base(repo), g.Name, g.State, counts[queue.Pending], counts[queue.Active],
-				counts[queue.Blocked], counts[queue.Done], strings.Join(active, " "))
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", g.Name, g.State, finish.Summary(g, res))
+			continue
 		}
+		tasks, err := s.Tasks(g.Name)
+		if err != nil {
+			return err
+		}
+		counts := map[queue.State]int{}
+		var active []string
+		for _, t := range tasks {
+			counts[t.State]++
+			if t.State == queue.Active {
+				active = append(active, t.Workstream+"/"+t.ID)
+			}
+		}
+		_, _ = fmt.Fprintf(w, "%s\t%s\tpending %d\tactive %d\tblocked %d\tdone %d\t%s\n",
+			g.Name, g.State, counts[queue.Pending], counts[queue.Active],
+			counts[queue.Blocked], counts[queue.Done], strings.Join(active, " "))
 	}
 	if err := w.Flush(); err != nil {
 		return err
@@ -636,4 +641,39 @@ func cmdHook(ctx context.Context, args []string, stdin io.Reader, stdout io.Writ
 		return hook.Stop(ctx, dir, spec, gate.Within(spec.GateTimeout, gate.Run), stdout)
 	}
 	return errors.Join(errUsage, fmt.Errorf("unknown hook %q", args[0]))
+}
+
+// cmdIntake sends text on stdin for triage to sort into the repo's goals
+// (ADR 0009), as the intake pane does. -goal says which goal it is about, as
+// a hint.
+func cmdIntake(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
+	fs := flag.NewFlagSet("intake", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	goal := fs.String("goal", "", "the goal it is about, as a hint to triage")
+	if err := fs.Parse(args); err != nil || fs.NArg() > 0 {
+		return fmt.Errorf("%w: intake takes only -goal, and the text on stdin", errUsage)
+	}
+	s, err := here(ctx)
+	if err != nil {
+		return err
+	}
+	if *goal != "" {
+		if _, err := s.Goal(*goal); err != nil {
+			return err
+		}
+	}
+	text, err := io.ReadAll(stdin)
+	if err != nil {
+		return err
+	}
+	if string(bytes.TrimSpace(text)) == "" {
+		return fmt.Errorf("%w: intake needs the text on stdin", errUsage)
+	}
+	if _, err := intake.Write(intake.Dir(s.Repo()), intake.Intake{
+		Source: "cli", Created: time.Now(), Goal: *goal, Text: string(text),
+	}); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintln(stdout, "queued for triage")
+	return nil
 }

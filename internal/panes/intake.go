@@ -12,9 +12,9 @@ import (
 	"github.com/dmikalova/diatom/internal/tui"
 )
 
-// Intake takes free text for new work (ADR 0009): a new goal, playtest notes,
-// anything. It goes to the focused goal, or to the focused repo when no goal
-// is focused, and waits there for triage.
+// Intake takes free text for the repo (ADR 0009): new goals, playtest notes,
+// anything. Triage sorts it into the repo's goals; the focused goal goes with
+// it as a hint to where it belongs.
 type Intake struct {
 	env     Env
 	area    textarea.Model
@@ -41,11 +41,7 @@ func (m *Intake) reload() {
 	fc, err := m.env.Focus.Read()
 	m.err = err
 	m.focus = fc
-	m.pending = 0
-	if fc.Repo == "" {
-		return
-	}
-	items, err := intake.Pending(intake.Dir(fc.Repo, fc.Goal))
+	items, err := intake.Pending(intake.Dir(m.env.Store.Repo()))
 	if err != nil {
 		m.err = err
 	}
@@ -86,18 +82,14 @@ func (m *Intake) submit() {
 		return
 	}
 	m.reload()
-	if m.focus.Repo == "" {
-		m.flash = "nothing is focused: pick a repo or goal in the status pane first"
-		return
-	}
-	if _, err := intake.Write(intake.Dir(m.focus.Repo, m.focus.Goal), intake.Intake{
-		Source: "pane", Created: m.env.Now(), Text: text,
+	if _, err := intake.Write(intake.Dir(m.env.Store.Repo()), intake.Intake{
+		Source: "pane", Created: m.env.Now(), Goal: m.focus.Goal, Text: text,
 	}); err != nil {
 		m.err = err
 		return
 	}
 	m.area.Reset()
-	m.flash = "queued for triage in " + describe(m.focus)
+	m.flash = "queued for triage"
 	m.reload()
 }
 
@@ -110,7 +102,7 @@ func (m *Intake) View() tea.View {
 
 func (m *Intake) render() string {
 	var b strings.Builder
-	b.WriteString(tui.Bold("intake") + tui.Dim(" → "+describe(m.focus)))
+	b.WriteString(tui.Bold("intake") + tui.Dim(" · looking at "+describe(m.focus)))
 	if m.pending > 0 {
 		b.WriteString(tui.Dim(fmt.Sprintf(" · %d waiting for triage", m.pending)))
 	}

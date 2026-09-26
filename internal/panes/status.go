@@ -9,14 +9,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/dmikalova/diatom/internal/config"
@@ -25,7 +23,6 @@ import (
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
-	"github.com/dmikalova/diatom/internal/registry"
 	"github.com/dmikalova/diatom/internal/review"
 	"github.com/dmikalova/diatom/internal/tui"
 )
@@ -35,10 +32,11 @@ const refreshEvery = 3 * time.Second
 
 // Env is what every pane reads and writes.
 type Env struct {
-	Registry registry.Registry
-	Focus    focus.File
-	Paths    config.Paths
-	Now      func() time.Time
+	// Store is the repo's; a workspace shows one repo (ADR 0007).
+	Store *queue.Store
+	Focus focus.File
+	Paths config.Paths
+	Now   func() time.Time
 }
 
 type tickMsg struct{}
@@ -63,8 +61,8 @@ type goalRow struct {
 	landing *finish.Result
 }
 
-// Status shows every goal in every known repo and the sessions running now,
-// and sets the focus the other panes follow.
+// Status shows every goal in the repo, the intake triage is sorting, and the
+// sessions running now, and sets the focus the other panes follow.
 type Status struct {
 	ctx   context.Context
 	env   Env
@@ -83,10 +81,9 @@ type Status struct {
 	// doing; it takes no other job until that one ends.
 	busy string
 
-	picking bool
-	picker  textinput.Model
-	repos   []string
-	pickSel int
+	// intake counts the repo's triage tasks by state: what the human sent
+	// that is still being sorted.
+	intake map[queue.State]int
 
 	width, height int
 	flash         string
@@ -95,9 +92,7 @@ type Status struct {
 
 // NewStatus loads the status pane.
 func NewStatus(ctx context.Context, env Env) *Status {
-	in := textinput.New()
-	in.Placeholder = "filter repos"
-	s := &Status{ctx: ctx, env: env, hunks: map[string]int{}, picker: in, width: 80, height: 24}
+	s := &Status{ctx: ctx, env: env, hunks: map[string]int{}, width: 80, height: 24}
 	s.reload()
 	return s
 }
@@ -109,36 +104,37 @@ func (s *Status) reload() {
 		s.err = err
 	}
 	s.focus = fc
-	repos, err := s.env.Registry.List()
+	store := s.env.Store
+	s.intake = map[queue.State]int{}
+	triage, err := store.Tasks(queue.IntakeGoal)
+	if err != nil {
+		s.err = err
+	}
+	for _, t := range triage {
+		s.intake[t.State]++
+	}
+	goals, err := store.Goals()
 	if err != nil {
 		s.err = err
 		return
 	}
 	var rows []goalRow
-	for _, repo := range repos {
-		store := queue.Open(repo)
-		goals, err := store.Goals()
+	for _, g := range goals {
+		if g.State == queue.GoalFinished {
+			continue
+		}
+		row, err := s.row(store, g)
 		if err != nil {
 			s.err = err
 			continue
 		}
-		for _, g := range goals {
-			if g.State == queue.GoalFinished {
-				continue
-			}
-			row, err := s.row(store, g)
-			if err != nil {
-				s.err = err
-				continue
-			}
-			rows = append(rows, row)
-		}
+		rows = append(rows, row)
 	}
 	keep := s.selected()
 	s.rows = rows
 	if keep != nil {
 		s.sel = max(slices.IndexFunc(rows, func(r goalRow) bool {
-			return r.repo == keep.repo && r.goal.Name == keep.goal.Name
+			return r.goal.Name == keep.goal.Name
 		}), 0)
 	}
 	s.sel = min(s.sel, max(len(rows)-1, 0))
@@ -238,17 +234,12 @@ func (s *Status) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		s.width, s.height = msg.Width, msg.Height
 	case tickMsg:
-		if !s.picking {
-			s.reload()
-		}
+		s.reload()
 		return s, tick()
 	case jobMsg:
 		s.reload()
 		s.busy, s.flash, s.err = "", msg.flash, msg.err
 	case tea.KeyPressMsg:
-		if s.picking {
-			return s.updatePicker(msg)
-		}
 		return s.updateKey(msg)
 	}
 	return s, nil
@@ -266,8 +257,10 @@ func (s *Status) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		s.sel = max(s.sel-1, 0)
 	case "enter", "f":
 		if row != nil {
-			s.setFocus(focus.Focus{Repo: row.repo, Goal: row.goal.Name})
+			s.setFocus(focus.Focus{Goal: row.goal.Name})
 		}
+	case "esc":
+		s.setFocus(focus.Focus{})
 	case "p":
 		if row != nil {
 			s.toggleParked(row)
@@ -293,9 +286,6 @@ func (s *Status) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return s, s.finishKey(row, msg.String())
 		}
 		return s, nil
-	case "o":
-		s.openPicker()
-		return s, s.picker.Focus()
 	case "r":
 		s.reload()
 	}
@@ -476,13 +466,10 @@ func (s *Status) setFocus(fc focus.Focus) {
 }
 
 func describe(fc focus.Focus) string {
-	if fc.Repo == "" {
-		return "nothing"
-	}
 	if fc.Goal == "" {
-		return filepath.Base(fc.Repo)
+		return "the repo"
 	}
-	return filepath.Base(fc.Repo) + "/" + fc.Goal
+	return fc.Goal
 }
 
 // View implements tea.Model.
@@ -493,14 +480,21 @@ func (s *Status) View() tea.View {
 }
 
 func (s *Status) render() string {
-	if s.picking {
-		return s.renderPicker()
-	}
 	var b strings.Builder
-	b.WriteString(tui.Bold("status") + tui.Dim(" · focus "+describe(s.focus)) + "\n\n")
+	b.WriteString(
+		tui.Bold(
+			filepath.Base(s.env.Store.Repo()),
+		) + tui.Dim(
+			" · focus "+describe(s.focus),
+		) + "\n\n",
+	)
+	if line := s.intakeLine(); line != "" {
+		b.WriteString(line + "\n\n")
+	}
 	if len(s.rows) == 0 {
 		b.WriteString(
-			"No goals yet. Press o to pick a repo, then describe the goal in the intake pane.\n",
+			"No goals yet. Describe what you want in the intake pane, and triage turns it " +
+				"into goals.\n",
 		)
 	}
 	for i, r := range s.rows {
@@ -518,7 +512,7 @@ func (s *Status) render() string {
 	b.WriteString(
 		"\n" + tui.Dim(
 			"enter focus · p park/resume · P pin · v view plan · s sign off · d done · "+
-				"F open PRs · U push · o open repo · q quit",
+				"F open PRs · U push · esc focus the repo · q quit",
 		),
 	)
 	return b.String()
@@ -531,10 +525,10 @@ func (s *Status) renderRow(b *strings.Builder, i int, r goalRow) {
 		mark = tui.Color("› ", tui.Cyan)
 	}
 	focused := " "
-	if r.repo == s.focus.Repo && r.goal.Name == s.focus.Goal {
+	if r.goal.Name == s.focus.Goal {
 		focused = tui.Color("●", tui.Cyan)
 	}
-	name := filepath.Base(r.repo) + "/" + r.goal.Name
+	name := r.goal.Name
 	if r.goal.Pinned {
 		name += " 📌"
 	}
@@ -645,108 +639,26 @@ func lastEvent(repo, goal, ws string) string {
 	return text
 }
 
-// openPicker lists the git repos under the search roots.
-func (s *Status) openPicker() {
-	home, err := config.LoadHome(s.env.Paths)
-	if err != nil {
-		s.err = err
-		return
-	}
-	s.repos = nil
-	for _, root := range home.SearchRoots {
-		s.repos = append(s.repos, findRepos(s.env.Paths.Expand(root), 4)...)
-	}
-	slices.Sort(s.repos)
-	s.picking, s.pickSel = true, 0
-	s.picker.Reset()
-}
+// Editing reports whether a job, such as laying a goal out, is still
+// running.
+func (s *Status) Editing() bool { return s.busy != "" }
 
-// findRepos returns the git repos under root, at most depth levels down.
-func findRepos(root string, depth int) []string {
-	var repos []string
-	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || !d.IsDir() {
-			return nil // an unreadable directory is skipped, not fatal
-		}
-		rel, _ := filepath.Rel(root, path)
-		if rel != "." && strings.Count(rel, string(filepath.Separator)) >= depth {
-			return filepath.SkipDir
-		}
-		switch d.Name() {
-		case "node_modules", "vendor", ".diatom":
-			return filepath.SkipDir
-		}
-		if _, err := os.Stat(filepath.Join(path, ".git")); err == nil {
-			repos = append(repos, path)
-			return filepath.SkipDir
-		}
-		return nil
-	})
-	return repos
-}
-
-func (s *Status) matches() []string {
-	filter := strings.ToLower(strings.TrimSpace(s.picker.Value()))
-	var out []string
-	for _, r := range s.repos {
-		if strings.Contains(strings.ToLower(r), filter) {
-			out = append(out, r)
-		}
+// intakeLine says what the human sent that triage is still sorting.
+func (s *Status) intakeLine() string {
+	sorting := s.intake[queue.Pending] + s.intake[queue.Active]
+	waiting := s.intake[queue.Blocked]
+	var parts []string
+	if sorting > 0 {
+		parts = append(parts, fmt.Sprintf("%d being sorted", sorting))
 	}
-	return out
-}
-
-func (s *Status) updatePicker(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	matches := s.matches()
-	switch msg.String() {
-	case "esc":
-		s.picking = false
-		return s, nil
-	case "down", "ctrl+n":
-		s.pickSel = min(s.pickSel+1, max(len(matches)-1, 0))
-		return s, nil
-	case "up", "ctrl+p":
-		s.pickSel = max(s.pickSel-1, 0)
-		return s, nil
-	case "enter":
-		if s.pickSel < len(matches) {
-			repo := matches[s.pickSel]
-			if err := s.env.Registry.Add(repo); err != nil {
-				s.err = err
-			}
-			s.picking = false
-			s.setFocus(focus.Focus{Repo: repo})
-			s.flash += "; describe a new goal in the intake pane"
-			s.reload()
-		}
-		return s, nil
+	if waiting > 0 {
+		parts = append(
+			parts,
+			tui.Color(fmt.Sprintf("%d waiting on your answers", waiting), tui.Magenta),
+		)
 	}
-	var cmd tea.Cmd
-	s.picker, cmd = s.picker.Update(msg)
-	s.pickSel = 0
-	return s, cmd
-}
-
-func (s *Status) renderPicker() string {
-	var b strings.Builder
-	b.WriteString(tui.Bold("open a repo") + "\n\n" + s.picker.View() + "\n\n")
-	matches := s.matches()
-	rows := max(s.height-8, 3)
-	start := max(0, s.pickSel-rows+1)
-	for i := start; i < len(matches) && i < start+rows; i++ {
-		mark := "  "
-		if i == s.pickSel {
-			mark = tui.Color("› ", tui.Cyan)
-		}
-		b.WriteString(mark + matches[i] + "\n")
+	if len(parts) == 0 {
+		return ""
 	}
-	if len(matches) == 0 {
-		b.WriteString(tui.Dim("no repo under the search roots matches") + "\n")
-	}
-	b.WriteString("\n" + tui.Dim("enter open · esc cancel"))
-	return b.String()
+	return tui.Dim("intake: ") + strings.Join(parts, tui.Dim(" · "))
 }
-
-// Editing reports whether a repo is being picked, or a job such as laying a
-// goal out is still running.
-func (s *Status) Editing() bool { return s.picking || s.busy != "" }

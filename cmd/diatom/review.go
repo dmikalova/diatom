@@ -8,7 +8,6 @@ import (
 	"io"
 	"strings"
 
-	"github.com/dmikalova/diatom/internal/focus"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/review"
 	"github.com/dmikalova/diatom/internal/reviewui"
@@ -25,16 +24,12 @@ func cmdReview(ctx context.Context, args []string, stdout io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("%w: %w", errUsage, err)
 	}
-	if *follow {
-		fc, err := focus.Default()
-		if err != nil {
-			return err
-		}
-		return runProgram(ctx, reviewui.NewFollow(ctx, fc))
-	}
 	s, err := here(ctx)
 	if err != nil {
 		return err
+	}
+	if *follow {
+		return runProgram(ctx, reviewui.NewFollow(ctx, s))
 	}
 	name, err := reviewGoal(s, *goal)
 	if err != nil {

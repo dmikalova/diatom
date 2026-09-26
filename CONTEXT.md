@@ -19,11 +19,11 @@ The goal state after done, reached once the goal's work is merged into its base 
 _Avoid_: closed, complete, merged
 
 **Intake**:
-Free-form input from the human, such as a new goal or a handful of playtest notes, waiting to be sorted into goals and tasks.
+Anything the human sends the agents to sort out, such as a new goal, a handful of playtest notes or a comment from review. Every intake goes to triage. The way back to the human is a question.
 _Avoid_: inbox, submission, notes, todo
 
 **Triage**:
-The task that sorts an intake into new tasks, a new goal or questions back to the human.
+The agent's work of sorting an intake into the repo's goals: new goals, tasks on existing ones, feedback for a goal being planned, or questions back to the human. The human doesn't use triage directly; they send intake and answer its questions.
 _Avoid_: classification, routing
 
 **Plan**:

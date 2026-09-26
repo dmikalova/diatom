@@ -14,6 +14,7 @@ import (
 // switches when the status pane moves the focus (ADR 0007).
 type Follow struct {
 	ctx   context.Context
+	store *queue.Store
 	file  focus.File
 	cur   focus.Focus
 	inner *Model
@@ -22,9 +23,9 @@ type Follow struct {
 	err           error
 }
 
-// NewFollow starts a reviewer that follows the focus.
-func NewFollow(ctx context.Context, file focus.File) *Follow {
-	f := &Follow{ctx: ctx, file: file, width: 100, height: 30}
+// NewFollow starts a reviewer of the repo's goals that follows the focus.
+func NewFollow(ctx context.Context, s *queue.Store) *Follow {
+	f := &Follow{ctx: ctx, store: s, file: focus.In(s.Repo()), width: 100, height: 30}
 	f.refocus()
 	return f
 }
@@ -43,7 +44,7 @@ func (f *Follow) refocus() {
 	if fc.Goal == "" {
 		return
 	}
-	m, err := New(f.ctx, queue.Open(fc.Repo), fc.Goal)
+	m, err := New(f.ctx, f.store, fc.Goal)
 	if err != nil {
 		f.err = err
 		return

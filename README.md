@@ -14,7 +14,7 @@ The scheduler core runs:
 - priority order and batching (ADR 0004)
 - the gate and git hooks (ADR 0005)
 - the Claude Code runner (ADR 0006)
-- one scheduler per machine (ADR 0007)
+- one scheduler per repo (ADR 0007)
 - questions that park tasks (ADR 0009)
 - sessions with only explicit context (ADR 0011)
 - the reviewer, with revisions landing as fixups (ADRs 0001 and 0008)
@@ -45,12 +45,26 @@ echo '.diatom/' >> ~/.config/git/ignore
 [`docs/walkthrough-vex.md`](docs/walkthrough-vex.md) walks through a whole run
 on vex, from goals to landing them.
 
+diatom works in the repo it is started in, from anywhere inside it. For two
+repos, run two diatoms.
+
 ```bash
 cd ~/Code/github.com/dmikalova/vex
 echo 'gate: mage ci:check' > .diatom/config.yaml
+diatom workspace    # everything below in one zellij session, scheduler included
+```
 
-# A new goal is grilled first: answer its questions, then sign off its plan.
-diatom goal new new-set -title "Implement the new set" < goal.md
+Type what you want into the intake pane, such as "Turn docs/todo-agent.md into
+goals, one per section". Triage, an agent, sorts every intake into the repo's
+goals: new goals, tasks on existing ones, feedback for a goal being planned, or
+questions back to you. A new goal is grilled first: answer its questions, then
+sign off its plan. Work the intake already decides skips grilling and waits for
+your sign-off.
+
+The same from the command line:
+
+```bash
+diatom goal new new-set -title "Implement the new set" < goal.md   # grilled first
 diatom goal plan new-set
 diatom goal approve new-set
 
@@ -58,13 +72,12 @@ diatom goal approve new-set
 diatom goal new hotfix -ws engine -active
 diatom task add -goal hotfix -ws engine "Fix ward stacking" < fix.md
 
-diatom workspace    # everything below in one zellij session, scheduler included
 diatom run          # the scheduler; Ctrl-C suspends its sessions, which resume on the next run
-diatom stop         # the same from anywhere; -drain lets running sessions finish instead
-diatom status       # every goal in every known repo
+diatom stop         # the same from anywhere in the repo; -drain lets sessions finish instead
+diatom status       # every goal in the repo
 diatom review       # approve, reject or defer each hunk the agents committed
 diatom questions    # what the agents need decided
-diatom answer new-set 0001 "Ward does not stack."
+diatom answer new-set 0001 "Ward does not stack."   # or `intake 0001` for triage's
 diatom goal done new-set   # refuses while hunks are unreviewed or deferred
 diatom goal finish new-set -prs   # or -push, straight to the base branch
 ```
@@ -120,7 +133,6 @@ lists.
 Only `~/.config/diatom/config.yaml` may set these:
 
 ```yaml
-machineSessions: 3
 autoUpdate: true                  # install new releases and restart on them
 profiles:
   implementation: { model: opus, effort: medium, maxTurns: 300 }

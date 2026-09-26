@@ -2,8 +2,8 @@
 // merged from `.diatom/config.yaml` in the repository root and in each of its
 // parent directories, then the XDG file `~/.config/diatom/config.yaml`, where
 // the search stops. The closest file wins. Home-only settings (the profiles,
-// the machine-wide session cap and the search roots) are read from the XDG file
-// alone, and setting one anywhere else is an error.
+// and updating diatom itself) are read from the XDG file alone, and setting
+// one anywhere else is an error.
 package config
 
 import (
@@ -34,7 +34,7 @@ const FileName = "config.yaml"
 var defaults []byte
 
 // homeOnly are the top-level keys only the XDG file may set.
-var homeOnly = []string{"profiles", "machineSessions", "searchRoots"}
+var homeOnly = []string{"profiles", "autoUpdate"}
 
 // Repo is the configuration of one repository, merged by the walk-up.
 type Repo struct {
@@ -83,10 +83,6 @@ type ADR struct {
 type Home struct {
 	// Profiles maps each profile name to the agent that runs it (ADR 0006).
 	Profiles map[string]Profile `yaml:"profiles"`
-	// MachineSessions caps the sessions running across every repo; 0 is no cap.
-	MachineSessions int `yaml:"machineSessions"`
-	// SearchRoots are the directories the status pane's repo picker searches.
-	SearchRoots []string `yaml:"searchRoots"`
 	// AutoUpdate installs each new release of diatom as it comes out and
 	// restarts the scheduler on it, resuming its sessions. A diatom built
 	// from a checkout never updates itself.

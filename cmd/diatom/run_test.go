@@ -14,7 +14,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/dmikalova/diatom/internal/registry"
+	"github.com/dmikalova/diatom/internal/queue"
 )
 
 // fakeGo stands in for the go command, with latest as the newest release.
@@ -75,7 +75,7 @@ func TestUpdaterCheck(t *testing.T) {
 }
 
 func TestStop(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	repo := inRepo(t)
 	if code, stdout, _ := diatom(
 		t,
 		"",
@@ -84,12 +84,8 @@ func TestStop(t *testing.T) {
 		!strings.Contains(stdout, "no diatom scheduler") {
 		t.Errorf("stop with nothing running = %d %q", code, stdout)
 	}
-	// This test process stands in for the scheduler.
-	reg, err := registry.Default()
-	if err != nil {
-		t.Fatal(err)
-	}
-	unlock, err := reg.LockScheduler()
+	// This test process stands in for the repo's scheduler.
+	unlock, err := queue.Open(repo).LockScheduler()
 	if err != nil {
 		t.Fatal(err)
 	}

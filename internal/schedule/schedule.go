@@ -73,7 +73,7 @@ type Limits struct {
 	// Repos are each repo's own caps; a repo missing from it gets one
 	// session and uncapped batches.
 	Repos map[string]RepoLimits
-	// Machine caps the sessions across every repo; 0 is no cap.
+	// Machine caps the sessions across every repo given; 0 is no cap.
 	Machine int
 }
 

@@ -90,12 +90,17 @@ type Entry struct {
 	// Tree is the worktree's files when a revision was marked done, which
 	// splits a session's work into one fixup per revision.
 	Tree string `json:"tree,omitempty"`
-	// Title, Workstream, After and Profile describe a task triage adds, or
-	// with Title alone a goal it starts.
+	// Goal, Title, Workstream, After and Profile describe a task triage adds
+	// to a goal. Goal alone is the goal feedback is for, and Title alone a
+	// goal triage starts.
+	Goal       string   `json:"goal,omitempty"`
 	Title      string   `json:"title,omitempty"`
 	Workstream string   `json:"workstream,omitempty"`
 	After      []string `json:"after,omitempty"`
 	Profile    string   `json:"profile,omitempty"`
+	// Plan is the plan of a goal triage starts with its work already
+	// decided, as YAML, for the human to sign off without grilling.
+	Plan string `json:"plan,omitempty"`
 }
 
 // The entry types.
@@ -103,8 +108,10 @@ const (
 	EntryDone = "done"
 	EntryAsk  = "ask"
 	EntryNote = "note"
-	// EntryAdd is a task triage adds to one of the goal's workstreams.
+	// EntryAdd is a task triage adds to one of a goal's workstreams.
 	EntryAdd = "add"
+	// EntryFeedback is feedback triage passes to a goal in grilling.
+	EntryFeedback = "feedback"
 	// EntryGoal is a new goal triage starts from part of an intake.
 	EntryGoal = "goal"
 	// EntryPlan is the plan grilling hands in, as YAML in Text.
@@ -150,8 +157,9 @@ type Report struct {
 	Questions []Entry
 	// Notes are the notes the agent added, in order.
 	Notes []Entry
-	// Adds, Goals and Plans are what triage and grilling handed in, in order.
-	Adds, Goals, Plans []Entry
+	// Adds, Feedback, Goals and Plans are what triage and grilling handed
+	// in, in order.
+	Adds, Feedback, Goals, Plans []Entry
 }
 
 // ReadReport reads the session's report.
@@ -182,6 +190,8 @@ func ReadReport(dir string) (Report, error) {
 			r.Notes = append(r.Notes, e)
 		case EntryAdd:
 			r.Adds = append(r.Adds, e)
+		case EntryFeedback:
+			r.Feedback = append(r.Feedback, e)
 		case EntryGoal:
 			r.Goals = append(r.Goals, e)
 		case EntryPlan:

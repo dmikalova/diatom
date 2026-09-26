@@ -146,7 +146,7 @@ func newFixture(t *testing.T) *fixture {
 	f.agent = &agent{t: t}
 	f.h = &Harness{
 		Paths:  config.Paths{Home: base, XDG: filepath.Join(base, "xdg")},
-		Repos:  func() ([]string, error) { return []string{repo}, nil },
+		Root:   repo,
 		Runner: f.agent,
 		Exe:    "/usr/bin/true",
 		Gate: func(_ context.Context, dir, _ string) (gate.Result, error) {

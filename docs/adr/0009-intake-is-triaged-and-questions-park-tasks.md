@@ -8,18 +8,17 @@ New work doesn't always come as a well-formed goal. After a playtest, the human 
 
 ## Decision
 
-**Everything the human types into the input pane is an intake, and every intake gets a triage task on the planning profile.**
+**Everything the human sends is an intake, and every intake goes to triage: an agent that sorts it into the repo's goals.** The human has two channels. Intake is how they send the agents anything to sort out. Questions are how the agents come back to them, from triage and from tasks alike.
 
-- **Triage sorts the intake into one or more of:**
-  - tasks on workstreams of an existing goal
-  - a new goal, which needs sign-off (ADR 0010)
+- **Every intake has a triage task**, whether it was typed into the intake pane or left as a comment while approving a hunk. The goal the human was looking at goes with it, as a hint to where it belongs, not a rule. Triage tasks live in a hidden goal of the repo's own, which holds their questions too.
+- **Triage reads the repo and all of its goals, and sorts the intake into any of:**
+  - tasks on the workstreams of any active or parked goal
+  - feedback for a goal still in planning: a plan waiting for sign-off is set aside, and grilling starts another round with it
+  - one or more new goals, each grilled before work starts (ADR 0010), or signed off straight away when the intake already decides the work
   - questions back to the human when something is unclear
-- **The target is the focused goal by default.** Triage may start a new goal from part of an intake instead of adding to the focused one.
-- **With only a repo focused, an intake is a new goal.** It starts in planning with a grilling task and needs no triage.
-- **Triage reports through the task tool**: tasks it adds to the goal's workstreams, goals it starts, and questions. A task on a workstream the goal doesn't have, or after a task that doesn't exist, becomes a question instead, because adding a workstream or changing dependencies needs the human (ADR 0010). An intake is filed as done once its triage is.
-- **An intake for a goal still in planning is feedback for its grilling.** A plan waiting for sign-off is set aside and grilling starts another round with the feedback.
+- **Triage reports through the task tool.** A task for a goal that is done, on a workstream the goal doesn't have, or after a task that doesn't exist becomes a question instead, because adding a workstream or changing dependencies needs the human (ADR 0010). A task for a goal in planning becomes feedback for its grilling. An intake is filed as done once its triage is, and not while triage waits on a question.
 - **Planning sessions can't end without reporting.** A question or plan written only in the agent's reply reaches nobody, so the Stop hook of triage and grilling sends the agent back, twice at most, until each task is asked about or handed in.
-- **Submitting a new goal is itself an intake**, so there is one input path for everything.
+- **Asking for a new goal is itself an intake**, so there is one input path for everything. "Turn `docs/todo-agent.md` into goals, one per section" is one intake, which triage turns into several goals.
 - **A question parks its task, and the session ends.** The worker moves on to other ready work. The answer makes the task ready again and is added to its context.
 - **Grilling works in rounds.** Each round is one set of questions, and the answers queue the next round.
-- **Questions from every goal appear in one pane**, so a question from a goal the human isn't looking at still reaches them.
+- **Questions from every goal and from triage appear in one pane**, so a question from a goal the human isn't looking at still reaches them.

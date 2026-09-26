@@ -50,7 +50,7 @@ func TestLoadDefaults(t *testing.T) {
 
 func TestLoadClosestWins(t *testing.T) {
 	root, paths := tree(t)
-	write(t, paths.XDG, "gate: xdg-gate\nmaxSessions: 4\nsearchRoots: [~/Code]\n"+
+	write(t, paths.XDG, "gate: xdg-gate\nmaxSessions: 4\nautoUpdate: true\n"+
 		"profiles:\n  implementation:\n    model: sonnet\n")
 	write(
 		t,
@@ -79,8 +79,8 @@ func TestLoadClosestWins(t *testing.T) {
 	if p.Model != "sonnet" || p.Effort != "medium" || p.MaxTurns != 300 {
 		t.Errorf("implementation = %+v, want the model overridden and the rest kept", p)
 	}
-	if len(c.SearchRoots) != 1 {
-		t.Errorf("SearchRoots = %v", c.SearchRoots)
+	if !c.AutoUpdate {
+		t.Error("AutoUpdate from the XDG file was lost")
 	}
 }
 
@@ -122,13 +122,13 @@ func TestLoadErrors(t *testing.T) {
 
 func TestLoadHome(t *testing.T) {
 	_, paths := tree(t)
-	write(t, paths.XDG, "machineSessions: 2\n")
+	write(t, paths.XDG, "autoUpdate: true\n")
 	c, err := LoadHome(paths)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.MachineSessions != 2 {
-		t.Errorf("MachineSessions = %d", c.MachineSessions)
+	if !c.AutoUpdate {
+		t.Error("AutoUpdate = false")
 	}
 }
 

@@ -1,13 +1,12 @@
-// Package harness is diatom's scheduler: the one headless process per machine
-// that owns every queue, git operation and agent session (ADR 0007). Each
-// pass of its loop reads the queues of every known repo, applies answered
-// questions, asks schedule for the batches to start, and runs each batch in
-// its workstream's worktree.
+// Package harness is diatom's scheduler: the one headless process per repo
+// that owns the repo's queue, git operations and agent sessions (ADR 0007).
+// Each pass of its loop turns new intake into triage tasks, applies answered
+// questions and review decisions, asks schedule for the batches to start, and
+// runs each batch in its workstream's worktree.
 package harness
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -26,8 +25,8 @@ import (
 type Harness struct {
 	// Paths locate the config walk-up's stopping points.
 	Paths config.Paths
-	// Repos lists the known repos.
-	Repos func() ([]string, error)
+	// Root is the repo the scheduler works in, one per scheduler (ADR 0007).
+	Root string
 	// Runner runs agent sessions.
 	Runner runner.Runner
 	// Exe is the diatom binary the agent's hooks and task tool run.
@@ -185,38 +184,20 @@ type Repo struct {
 	Config *config.Config
 }
 
-// plan gathers the ready work across every known repo and returns the
-// batches to start.
+// plan gathers the repo's ready work and returns the batches to start.
 func (h *Harness) plan(
 	ctx context.Context,
 	busy []schedule.Running,
 ) ([]schedule.Batch, map[string]Repo, error) {
-	paths, err := h.Repos()
+	repo, goals, err := h.load(ctx, h.Root)
 	if err != nil {
 		return nil, nil, err
 	}
-	home, err := config.LoadHome(h.Paths)
-	if err != nil {
-		return nil, nil, err
-	}
-	lim := schedule.Limits{Machine: home.MachineSessions, Repos: map[string]schedule.RepoLimits{}}
-	repos := map[string]Repo{}
-	var goals []*schedule.Goal
-	var errs []error
-	for _, path := range paths {
-		repo, gs, err := h.load(ctx, path)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", path, err))
-			continue
-		}
-		repos[path] = repo
-		lim.Repos[path] = schedule.RepoLimits{
-			Sessions: repo.Config.MaxSessions,
-			Batch:    repo.Config.MaxBatch,
-		}
-		goals = append(goals, gs...)
-	}
-	return schedule.Next(goals, busy, lim), repos, errors.Join(errs...)
+	lim := schedule.Limits{Repos: map[string]schedule.RepoLimits{h.Root: {
+		Sessions: repo.Config.MaxSessions,
+		Batch:    repo.Config.MaxBatch,
+	}}}
+	return schedule.Next(goals, busy, lim), map[string]Repo{h.Root: repo}, nil
 }
 
 // load reads one repo's active goals and their ready tasks, applying answered
@@ -227,64 +208,78 @@ func (h *Harness) load(ctx context.Context, path string) (Repo, []*schedule.Goal
 		return Repo{}, nil, err
 	}
 	repo := Repo{Store: queue.Open(path), Config: cfg}
-	if err := h.applyRepoIntake(ctx, repo.Store); err != nil {
+	if err := h.applyIntake(ctx, repo.Store); err != nil {
 		return repo, nil, err
 	}
 	all, err := repo.Store.Goals()
 	if err != nil {
 		return repo, nil, err
 	}
-	var goals []*schedule.Goal
 	h.watchDone(ctx, repo.Store, all)
+	// Triage runs beside the goals, in the goal that holds it.
+	if g, err := repo.Store.Goal(queue.IntakeGoal); err == nil {
+		all = append([]*queue.Goal{g}, all...)
+	}
+	var goals []*schedule.Goal
 	for _, g := range all {
 		if g.State != queue.GoalActive && g.State != queue.GoalPlanning {
 			continue
 		}
-		if err := h.applyAnswers(repo.Store, g.Name); err != nil {
-			return repo, nil, err
-		}
-		tasks, err := repo.Store.Tasks(g.Name)
+		ready, err := h.loadGoal(ctx, repo.Store, g)
 		if err != nil {
-			return repo, nil, err
+			return repo, nil, fmt.Errorf("goal %s: %w", g.Name, err)
 		}
-		if g.State == queue.GoalActive {
-			err = errors.Join(
-				h.applyReviews(ctx, repo.Store, g.Name),
-				h.applyGoalIntake(repo.Store, g.Name, tasks),
-			)
-		} else {
-			err = h.applyPlanningIntake(repo.Store, g.Name, tasks)
-		}
-		if err != nil {
-			return repo, nil, err
-		}
-		if tasks, err = repo.Store.Tasks(g.Name); err != nil {
-			return repo, nil, err
-		}
-		var ready []*queue.Task
-		for _, t := range schedule.Ready(tasks) {
-			switch {
-			case g.State == queue.GoalPlanning:
-				// Nothing but grilling runs before the plan is signed off.
-				if t.Kind == queue.Grilling {
-					ready = append(ready, t)
-				}
-			case planningKind(t.Kind) || runnable[t.Kind] && t.Workstream != "":
-				ready = append(ready, t)
-			}
-		}
-		goals = append(
-			goals,
-			&schedule.Goal{
-				Repo:    path,
-				Name:    g.Name,
-				Pinned:  g.Pinned,
-				Created: g.Created,
-				Ready:   ready,
-			},
-		)
+		goals = append(goals, &schedule.Goal{
+			Repo:    path,
+			Name:    g.Name,
+			Pinned:  g.Pinned,
+			Created: g.Created,
+			Ready:   ready,
+		})
 	}
 	return repo, goals, ctx.Err()
+}
+
+// loadGoal brings in what the human decided for a goal since the last look,
+// answers, reviews and feedback, and returns its tasks ready to run.
+func (h *Harness) loadGoal(
+	ctx context.Context,
+	s *queue.Store,
+	g *queue.Goal,
+) ([]*queue.Task, error) {
+	if err := h.applyAnswers(s, g.Name); err != nil {
+		return nil, err
+	}
+	tasks, err := s.Tasks(g.Name)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case g.Name == queue.IntakeGoal:
+	case g.State == queue.GoalActive:
+		err = h.applyReviews(ctx, s, g.Name)
+	default:
+		err = h.applyFeedback(s, g.Name, tasks)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if tasks, err = s.Tasks(g.Name); err != nil {
+		return nil, err
+	}
+	var ready []*queue.Task
+	for _, t := range schedule.Ready(tasks) {
+		switch {
+		case g.State == queue.GoalPlanning:
+			// Nothing but grilling runs before the plan is signed off.
+			if t.Kind == queue.Grilling {
+				ready = append(ready, t)
+			}
+		case planningKind(t.Kind) || runnable[t.Kind] && t.Workstream != "":
+			ready = append(ready, t)
+		}
+	}
+	return ready, nil
 }
 
 // applyAnswers adds each answered question's answer to its task, makes the

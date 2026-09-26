@@ -21,6 +21,7 @@
 //	diatom workspace
 //	diatom pane status|questions|intake
 //	diatom answer <goal> <question> <answer>
+//	diatom intake [-goal <goal>] < text
 //	diatom version
 //
 // Inside an agent session:
@@ -68,9 +69,9 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	var err error
 	switch cmd, rest := args[0], args[1:]; cmd {
 	case "run":
-		err = cmdRun(stderr)
+		err = cmdRun(ctx, stderr)
 	case "stop":
-		err = cmdStop(rest, stdout)
+		err = cmdStop(ctx, rest, stdout)
 	case "status":
 		err = cmdStatus(ctx, stdout)
 	case "goal":
@@ -87,6 +88,8 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		err = cmdPane(ctx, rest, stdout)
 	case "answer":
 		err = cmdAnswer(ctx, rest)
+	case "intake":
+		err = cmdIntake(ctx, rest, stdin, stdout)
 	case "hook":
 		err = cmdHook(ctx, rest, stdin, stdout)
 	case "version":
@@ -114,7 +117,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 const usage = `Usage:
   diatom run                        run the scheduler; Ctrl-C suspends its sessions
   diatom stop [-drain]              suspend the running scheduler, or let it drain
-  diatom status                     show every goal in every known repo
+  diatom status                     show every goal in the repo
   diatom goal new <name> [-title text] < description   grill a new goal
   diatom goal new <name> -ws engine,cards:engine -active   skip grilling
   diatom goal plan|approve <name>   show or sign off a goal's plan
@@ -129,6 +132,7 @@ const usage = `Usage:
   diatom workspace                  open the zellij workspace with every pane
   diatom pane status|questions|intake   run one workspace pane
   diatom answer <goal> <question> <answer>
+  diatom intake [-goal <goal>] < text   send anything for triage to sort out
   diatom version
 
 Inside an agent session:

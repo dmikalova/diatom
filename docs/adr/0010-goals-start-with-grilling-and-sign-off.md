@@ -20,6 +20,7 @@ If the agent guesses, it produces a lot of work that later has to be revised. Re
   - Grilling hands the plan in as YAML through the task tool, which checks it on the spot so the agent fixes mistakes in the same session.
   - The human signs it off with `diatom goal approve` or in the status pane. Each task then depends on the tasks it names and on every task of the workstreams its own workstream depends on.
   - Grilling reads the code in a detached checkout of the integration branch. Anything written there is thrown away.
+- **Work the human has already decided skips grilling, never sign-off.** When an intake decides the workstreams and tasks itself, triage hands in the plan along with the new goal (ADR 0009). The goal starts in planning with the plan waiting for sign-off. A plan that doesn't hold up against the config sends the goal to grilling instead, which starts from the draft.
 - **During the run, agents may add tasks to existing workstreams without approval.** Those tasks show up in the status pane. For clear-cut work, an agent either does it or records it as a task. Anything that needs a design decision goes back to the human as a new grilling round.
 - **Adding a workstream or changing dependencies needs the human's approval.**
 - **Where ADRs go and what format they use is configurable** through the config walk-up (ADR 0007), so personal and work repos can follow different standards:

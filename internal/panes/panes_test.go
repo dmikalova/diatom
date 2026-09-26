@@ -18,7 +18,6 @@ import (
 	"github.com/dmikalova/diatom/internal/intake"
 	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
-	"github.com/dmikalova/diatom/internal/registry"
 )
 
 type fixture struct {
@@ -78,17 +77,12 @@ func newFixture(t *testing.T) *fixture {
 	); err != nil {
 		t.Fatal(err)
 	}
-	reg := registry.Registry{Path: filepath.Join(base, "state", "repos")}
-	if err := reg.Add(repo); err != nil {
-		t.Fatal(err)
-	}
 	paths := config.Paths{Home: base, XDG: filepath.Join(base, "xdg")}
-	write(t, filepath.Join(paths.XDG, "config.yaml"), "searchRoots: [~/code]\n")
 	env := Env{
-		Registry: reg,
-		Focus:    focus.File{Path: filepath.Join(base, "state", "focus.yaml")},
-		Paths:    paths,
-		Now:      func() time.Time { return time.Unix(1000, 0).UTC() },
+		Store: store,
+		Focus: focus.In(repo),
+		Paths: paths,
+		Now:   func() time.Time { return time.Unix(1000, 0).UTC() },
 	}
 	return &fixture{t: t, env: env, repo: repo, store: store}
 }
@@ -131,7 +125,7 @@ func TestStatus(t *testing.T) {
 	f := newFixture(t)
 	s := NewStatus(context.Background(), f.env)
 	out := s.render()
-	for _, want := range []string{"vex/set", "active", "1 pending", "1 questions", "1 to review", "focus nothing"} {
+	for _, want := range []string{"vex", "set", "active", "1 pending", "1 questions", "1 to review", "focus the repo"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status lacks %q:\n%s", want, out)
 		}
@@ -139,8 +133,12 @@ func TestStatus(t *testing.T) {
 
 	key(s, "enter")
 	fc, _ := f.env.Focus.Read()
-	if fc.Repo != f.repo || fc.Goal != "set" || !strings.Contains(s.render(), "focus vex/set") {
+	if fc.Goal != "set" || !strings.Contains(s.render(), "focus set") {
 		t.Errorf("focus = %+v", fc)
+	}
+	key(s, "esc")
+	if fc, _ := f.env.Focus.Read(); fc.Goal != "" {
+		t.Errorf("after esc, focus = %+v, want the repo", fc)
 	}
 
 	key(s, "p")
@@ -169,26 +167,30 @@ func TestStatusShowsRunningSession(t *testing.T) {
 	}
 }
 
-func TestStatusPicker(t *testing.T) {
+func TestStatusShowsIntakeBeingSorted(t *testing.T) {
 	f := newFixture(t)
-	s := NewStatus(context.Background(), f.env)
-	key(s, "o")
-	if !s.picking || len(s.repos) != 2 {
-		t.Fatalf("picker repos = %v", s.repos)
+	if err := f.store.CreateGoal(
+		&queue.Goal{Name: queue.IntakeGoal, State: queue.GoalActive},
+	); err != nil {
+		t.Fatal(err)
 	}
-	typeText(s, "dot")
-	if m := s.matches(); len(m) != 1 || !strings.HasSuffix(m[0], "dotfiles") {
-		t.Fatalf("matches = %v", m)
+	for _, title := range []string{"Triage: notes", "Triage: web"} {
+		if err := f.store.AddTask(
+			queue.IntakeGoal,
+			&queue.Task{Title: title, Kind: queue.Triage},
+		); err != nil {
+			t.Fatal(err)
+		}
 	}
-	key(s, "enter")
-	fc, _ := f.env.Focus.Read()
-	repos, _ := f.env.Registry.List()
-	if s.picking || !strings.HasSuffix(fc.Repo, "dotfiles") || fc.Goal != "" || len(repos) != 2 {
-		t.Errorf("after picking: focus %+v, repos %v", fc, repos)
+	task, _ := f.store.Task(queue.IntakeGoal, "0002")
+	if err := f.store.Move(queue.IntakeGoal, task, queue.Blocked); err != nil {
+		t.Fatal(err)
 	}
-	key(s, "o", "esc")
-	if s.picking {
-		t.Error("esc did not close the picker")
+	out := NewStatus(context.Background(), f.env).render()
+	if !strings.Contains(out, "1 being sorted") ||
+		!strings.Contains(out, "1 waiting on your answers") ||
+		strings.Contains(out, queue.IntakeGoal) {
+		t.Errorf("status:\n%s", out)
 	}
 }
 
@@ -217,33 +219,27 @@ func TestQuestions(t *testing.T) {
 func TestIntake(t *testing.T) {
 	f := newFixture(t)
 	in := NewIntake(f.env)
-	typeText(in, "playtest: ward felt too strong")
+	// With no goal focused, the intake goes to triage with no hint.
+	typeText(in, "new goal: implement the next set")
 	key(in, "ctrl+s")
-	if !strings.Contains(in.render(), "nothing is focused") {
-		t.Errorf("intake without focus:\n%s", in.render())
-	}
-
-	if err := f.env.Focus.Write(focus.Focus{Repo: f.repo, Goal: "set"}); err != nil {
-		t.Fatal(err)
-	}
-	key(in, "ctrl+s")
-	pending, err := intake.Pending(intake.Dir(f.repo, "set"))
-	if err != nil || len(pending) != 1 || pending[0].Text != "playtest: ward felt too strong" ||
-		pending[0].Source != "pane" {
-		t.Fatalf("pending = %+v, %v", pending, err)
-	}
-	if !strings.Contains(in.render(), "1 waiting for triage") {
+	if !strings.Contains(in.render(), "queued for triage") {
 		t.Errorf("intake after queueing:\n%s", in.render())
 	}
 
-	// With only a repo focused, a new goal goes to the repo's intake.
-	if err := f.env.Focus.Write(focus.Focus{Repo: f.repo}); err != nil {
+	// With a goal focused, it goes with the goal as a hint.
+	if err := f.env.Focus.Write(focus.Focus{Goal: "set"}); err != nil {
 		t.Fatal(err)
 	}
-	typeText(in, "new goal: implement the next set")
+	typeText(in, "playtest: ward felt too strong")
 	key(in, "ctrl+s")
-	if repoLevel, _ := intake.Pending(intake.Dir(f.repo, "")); len(repoLevel) != 1 {
-		t.Errorf("repo intake = %+v", repoLevel)
+	pending, err := intake.Pending(intake.Dir(f.repo))
+	if err != nil || len(pending) != 2 || pending[0].Goal != "" ||
+		pending[1].Text != "playtest: ward felt too strong" || pending[1].Goal != "set" ||
+		pending[1].Source != "pane" {
+		t.Fatalf("pending = %+v, %v", pending, err)
+	}
+	if !strings.Contains(in.render(), "2 waiting for triage") {
+		t.Errorf("intake after queueing twice:\n%s", in.render())
 	}
 	in.Update(tickMsg{})
 }

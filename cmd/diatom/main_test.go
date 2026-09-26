@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/dmikalova/diatom/internal/git"
+	"github.com/dmikalova/diatom/internal/intake"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/session"
 )
@@ -364,8 +365,9 @@ func TestReviewGoalChoice(t *testing.T) {
 }
 
 func TestWorkspaceLayout(t *testing.T) {
-	layout := workspaceLayout(`/opt/my "tools"/diatom`)
+	layout := workspaceLayout(`/opt/my "tools"/diatom`, "/code/vex")
 	for _, want := range []string{
+		`cwd "/code/vex"`,
 		`command="/opt/my \"tools\"/diatom"`,
 		`args "review" "-focus"`, `args "pane" "status"`, `args "pane" "questions"`, `args "pane" "intake"`,
 		`tab name="scheduler"`, `args "run"`,
@@ -377,9 +379,13 @@ func TestWorkspaceLayout(t *testing.T) {
 	if strings.Count(layout, "{") != strings.Count(layout, "}") {
 		t.Error("layout braces don't balance")
 	}
+	if got := sessionName("/code/my repo.git"); got != "diatom-my-repo-git" {
+		t.Errorf("session name = %q", got)
+	}
 }
 
 func TestWorkspaceRefusesInsideZellij(t *testing.T) {
+	inRepo(t)
 	t.Setenv("ZELLIJ", "0")
 	if code, _, stderr := diatom(
 		t,
@@ -481,6 +487,8 @@ func TestPlanningToolCommands(t *testing.T) {
 		"task",
 		"add-task",
 		"0001",
+		"-goal",
+		"set",
 		"-ws",
 		"engine",
 		"-title",
@@ -493,8 +501,68 @@ func TestPlanningToolCommands(t *testing.T) {
 	if code, _, stderr := diatom(t, "", "task", "new-goal", "0001", "-title", "Web UI"); code != 0 {
 		t.Fatalf("new-goal: %s", stderr)
 	}
-	if code, _, _ := diatom(t, "", "task", "add-task", "0001", "-title", "x"); code != 2 {
-		t.Error("add-task without -ws was accepted")
+	planFile := filepath.Join(t.TempDir(), "plan.yaml")
+	good := "summary: x\nworkstreams: [{name: e}]\ntasks: [{key: a, title: A, workstream: e}]\n"
+	if err := os.WriteFile(planFile, []byte(good), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, stdout, stderr := diatom(
+		t,
+		"Decided.",
+		"task",
+		"new-goal",
+		"0001",
+		"-title",
+		"ForgeKey",
+		"-plan",
+		planFile,
+	); code != 0 ||
+		!strings.Contains(stdout, "for the human to sign off") {
+		t.Fatalf("new-goal -plan = %d %q %q", code, stdout, stderr)
+	}
+	if err := os.WriteFile(planFile, []byte("summary: x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, stderr := diatom(
+		t,
+		"",
+		"task",
+		"new-goal",
+		"0001",
+		"-title",
+		"Bad",
+		"-plan",
+		planFile,
+	); code != 1 ||
+		!strings.Contains(stderr, "not accepted") {
+		t.Errorf("new-goal with an invalid plan = %d %q", code, stderr)
+	}
+	if code, _, stderr := diatom(
+		t,
+		"Split cards.",
+		"task",
+		"feedback",
+		"0001",
+		"-goal",
+		"grim",
+	); code != 0 {
+		t.Fatalf("feedback: %s", stderr)
+	}
+	if code, _, _ := diatom(t, "", "task", "feedback", "0001", "-goal", "grim"); code != 2 {
+		t.Error("feedback without text was accepted")
+	}
+	if code, _, _ := diatom(
+		t,
+		"",
+		"task",
+		"add-task",
+		"0001",
+		"-ws",
+		"e",
+		"-title",
+		"x",
+	); code != 2 {
+		t.Error("add-task without -goal was accepted")
 	}
 	if code, _, stderr := diatom(
 		t,
@@ -507,10 +575,13 @@ func TestPlanningToolCommands(t *testing.T) {
 		t.Errorf("plan in a triage session = %d %q", code, stderr)
 	}
 	r, _ := session.ReadReport(dir)
-	if len(r.Adds) != 1 || r.Adds[0].Title != "Weaken ward" ||
+	if len(r.Adds) != 1 || r.Adds[0].Title != "Weaken ward" || r.Adds[0].Goal != "set" ||
 		strings.Join(r.Adds[0].After, ",") != "0003,0004" ||
 		r.Adds[0].Text != "Ward stops 1." ||
-		len(r.Goals) != 1 {
+		len(r.Goals) != 2 || r.Goals[1].Plan != good ||
+		len(
+			r.Feedback,
+		) != 1 || r.Feedback[0].Goal != "grim" || r.Feedback[0].Text != "Split cards." {
 		t.Errorf("report = %+v", r)
 	}
 
@@ -530,7 +601,6 @@ func TestPlanningToolCommands(t *testing.T) {
 		!strings.Contains(stderr, "not accepted") {
 		t.Errorf("an invalid plan = %d %q", code, stderr)
 	}
-	good := "summary: x\nworkstreams: [{name: e}]\ntasks: [{key: a, title: A, workstream: e}]\n"
 	if code, stdout, _ := diatom(
 		t,
 		good,
@@ -543,5 +613,44 @@ func TestPlanningToolCommands(t *testing.T) {
 	}
 	if code, _, _ := diatom(t, "", "task", "new-goal", "0002", "-title", "x"); code != 1 {
 		t.Error("new-goal was accepted in a grilling session")
+	}
+}
+
+func TestIntakeCommand(t *testing.T) {
+	repo := inRepo(t)
+	diatom(t, "", "goal", "new", "set", "-ws", "engine", "-active")
+	if code, stdout, stderr := diatom(
+		t,
+		"Ward is too strong.",
+		"intake",
+		"-goal",
+		"set",
+	); code != 0 ||
+		!strings.Contains(stdout, "queued for triage") {
+		t.Fatalf("intake = %d %q %q", code, stdout, stderr)
+	}
+	pending, err := intake.Pending(intake.Dir(repo))
+	if err != nil || len(pending) != 1 || pending[0].Goal != "set" ||
+		pending[0].Text != "Ward is too strong." {
+		t.Errorf("pending = %+v, %v", pending, err)
+	}
+	if code, _, _ := diatom(t, "x", "intake", "-goal", "nope"); code != 1 {
+		t.Error("intake for a missing goal was accepted")
+	}
+	if code, _, _ := diatom(t, "", "intake"); code != 2 {
+		t.Error("empty intake was accepted")
+	}
+}
+
+func TestOutsideARepo(t *testing.T) {
+	t.Chdir(t.TempDir())
+	for _, cmd := range [][]string{{"run"}, {"status"}, {"workspace"}, {"stop"}, {"intake"}} {
+		if code, _, stderr := diatom(
+			t,
+			"x",
+			cmd...); code != 1 ||
+			!strings.Contains(stderr, "not in a git repository") {
+			t.Errorf("%s outside a repo = %d %q", cmd[0], code, stderr)
+		}
 	}
 }

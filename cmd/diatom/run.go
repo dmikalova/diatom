@@ -15,7 +15,7 @@ import (
 
 	"github.com/dmikalova/diatom/internal/config"
 	"github.com/dmikalova/diatom/internal/harness"
-	"github.com/dmikalova/diatom/internal/registry"
+	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/runner/claude"
 	"github.com/dmikalova/diatom/internal/update"
 )
@@ -37,7 +37,11 @@ const updateTimeout = 5 * time.Minute
 //
 // With autoUpdate set, a new release is installed at startup and then hourly,
 // and the scheduler hands itself over to it, suspending its sessions first.
-func cmdRun(stderr io.Writer) error {
+func cmdRun(ctx context.Context, stderr io.Writer) error {
+	s, err := here(ctx)
+	if err != nil {
+		return err
+	}
 	paths, err := config.DefaultPaths()
 	if err != nil {
 		return err
@@ -53,11 +57,7 @@ func cmdRun(stderr io.Writer) error {
 		return update.Exec(bin)
 	}
 
-	reg, err := registry.Default()
-	if err != nil {
-		return err
-	}
-	unlock, err := reg.LockScheduler()
+	unlock, err := s.LockScheduler()
 	if err != nil {
 		return err
 	}
@@ -119,11 +119,11 @@ func cmdRun(stderr io.Writer) error {
 	go up.watch(suspend, func(bin string) { restart(bin, "a new release is installed") })
 	go watchBinary(suspend, exe, func() { restart(exe, "the diatom binary was replaced") })
 
-	log.Info("diatom scheduler starting", "version", update.Version(), "registry", reg.Path,
+	log.Info("diatom scheduler starting", "version", update.Version(), "repo", s.Repo(),
 		"autoUpdate", home.AutoUpdate)
 	h := &harness.Harness{
 		Paths:  paths,
-		Repos:  reg.List,
+		Root:   s.Repo(),
 		Runner: claude.Runner{},
 		Exe:    exe,
 		Log:    log,
@@ -205,20 +205,20 @@ func (u *updater) watch(ctx context.Context, restart func(bin string)) {
 
 // cmdStop asks the running scheduler to suspend its sessions and exit, or
 // with -drain to start no new ones and exit once the running ones finish.
-func cmdStop(args []string, stdout io.Writer) error {
+func cmdStop(ctx context.Context, args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("stop", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	drain := fs.Bool("drain", false, "let the running sessions finish instead of suspending them")
 	if err := fs.Parse(args); err != nil || fs.NArg() > 0 {
 		return fmt.Errorf("%w: stop takes only -drain", errUsage)
 	}
-	reg, err := registry.Default()
+	s, err := here(ctx)
 	if err != nil {
 		return err
 	}
-	pid, err := reg.Scheduler()
-	if errors.Is(err, registry.ErrNotRunning) {
-		_, _ = fmt.Fprintln(stdout, "no diatom scheduler is running")
+	pid, err := s.Scheduler()
+	if errors.Is(err, queue.ErrNotRunning) {
+		_, _ = fmt.Fprintln(stdout, "no diatom scheduler is running in this repo")
 		return nil
 	}
 	if err != nil {

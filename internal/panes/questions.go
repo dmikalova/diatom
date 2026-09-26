@@ -2,7 +2,6 @@ package panes
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"charm.land/bubbles/v2/textarea"
@@ -19,9 +18,9 @@ type questionRow struct {
 	task       string
 }
 
-// Questions lists the open questions of every goal in every repo, so a
-// question from a goal the human isn't looking at still reaches them
-// (ADR 0009), and records their answers.
+// Questions lists the open questions of every goal in the repo, triage's
+// included, so a question from a goal the human isn't looking at still
+// reaches them (ADR 0009), and records their answers.
 type Questions struct {
 	env       Env
 	rows      []questionRow
@@ -46,38 +45,34 @@ func NewQuestions(env Env) *Questions {
 
 func (m *Questions) reload() {
 	m.err = nil
-	repos, err := m.env.Registry.List()
+	store := m.env.Store
+	goals, err := store.Goals()
 	if err != nil {
 		m.err = err
 		return
 	}
+	names := []string{queue.IntakeGoal}
+	for _, g := range goals {
+		if g.State != queue.GoalDone && g.State != queue.GoalFinished {
+			names = append(names, g.Name)
+		}
+	}
 	var rows []questionRow
-	for _, repo := range repos {
-		store := queue.Open(repo)
-		goals, err := store.Goals()
+	for _, name := range names {
+		qs, err := store.Questions(name, queue.QuestionOpen)
 		if err != nil {
 			m.err = err
 			continue
 		}
-		for _, g := range goals {
-			if g.State == queue.GoalDone || g.State == queue.GoalFinished {
+		for _, q := range qs {
+			if q.Answer != "" {
 				continue
 			}
-			qs, err := store.Questions(g.Name, queue.QuestionOpen)
-			if err != nil {
-				m.err = err
-				continue
+			row := questionRow{repo: store.Repo(), goal: name, q: q}
+			if t, err := store.Task(name, q.Task); err == nil {
+				row.task = t.Title
 			}
-			for _, q := range qs {
-				if q.Answer != "" {
-					continue
-				}
-				row := questionRow{repo: repo, goal: g.Name, q: q}
-				if t, err := store.Task(g.Name, q.Task); err == nil {
-					row.task = t.Title
-				}
-				rows = append(rows, row)
-			}
+			rows = append(rows, row)
 		}
 	}
 	m.rows = rows
@@ -177,7 +172,7 @@ func (m *Questions) render() string {
 		if len(first) > max(m.width-30, 20) {
 			first = first[:max(m.width-30, 20)] + "…"
 		}
-		fmt.Fprintf(&b, "%s%s %s\n", mark, tui.Dim(filepath.Base(r.repo)+"/"+r.goal), first)
+		fmt.Fprintf(&b, "%s%s %s\n", mark, tui.Dim(goalLabel(r.goal)), first)
 	}
 	if m.sel < len(m.rows) {
 		r := m.rows[m.sel]
@@ -207,3 +202,11 @@ func (m *Questions) render() string {
 
 // Editing reports whether an answer is being written.
 func (m *Questions) Editing() bool { return m.answering }
+
+// goalLabel names a question's goal: triage's questions are about intake.
+func goalLabel(goal string) string {
+	if goal == queue.IntakeGoal {
+		return "intake"
+	}
+	return goal
+}

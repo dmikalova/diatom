@@ -19,8 +19,8 @@ import (
 	"github.com/dmikalova/diatom/internal/session"
 )
 
-// planningWorktree is the worktree triage and grilling read the code in: the
-// goal's integration branch, detached. Its name can't be a workstream's.
+// planningWorktree is the worktree triage and grilling read the code in. Its
+// name can't be a workstream's.
 const planningWorktree = "_planning"
 
 // planningKind reports whether a task kind runs as a planning session: no
@@ -28,60 +28,39 @@ const planningWorktree = "_planning"
 // tool.
 func planningKind(k queue.Kind) bool { return k == queue.Triage || k == queue.Grilling }
 
-// applyRepoIntake turns intake aimed at the repo rather than a goal into new
-// goals: with only a repo focused, what the human types is a new goal, which
-// starts in planning with a grilling task (ADR 0010).
-func (h *Harness) applyRepoIntake(ctx context.Context, s *queue.Store) error {
-	items, err := intake.Pending(intake.Dir(s.Repo(), ""))
-	if err != nil {
+// applyIntake gives each intake a triage task (ADR 0009). Everything the
+// human sends goes to triage, which sorts it into the repo's goals; the goal
+// the human was looking at is only a hint. The intake stays until its triage
+// is done.
+func (h *Harness) applyIntake(ctx context.Context, s *queue.Store) error {
+	items, err := intake.Pending(intake.Dir(s.Repo()))
+	if err != nil || len(items) == 0 {
 		return err
 	}
-	for _, in := range items {
-		title, _, _ := strings.Cut(in.Text, "\n")
-		g, err := plan.NewGoal(
-			ctx,
-			s,
-			"",
-			title,
-			in.Text,
-			queue.Origin{Type: "intake", Ref: filepath.Base(in.Path)},
-			h.now(),
-		)
-		if err != nil {
-			return err
-		}
-		h.log().Info("new goal from intake", "repo", s.Repo(), "goal", g.Name)
-		if err := intake.Done(in); err != nil {
-			return err
-		}
+	if err := h.ensureIntakeGoal(ctx, s); err != nil {
+		return err
 	}
-	return nil
-}
-
-// applyGoalIntake gives each intake of an active goal a triage task (ADR
-// 0009). The intake stays until its triage is done.
-func (h *Harness) applyGoalIntake(s *queue.Store, goal string, tasks []*queue.Task) error {
-	items, err := intake.Pending(intake.Dir(s.Repo(), goal))
+	tasks, err := s.Tasks(queue.IntakeGoal)
 	if err != nil {
 		return err
 	}
 	for _, in := range items {
 		ref := filepath.Base(in.Path)
 		if slices.ContainsFunc(tasks, func(t *queue.Task) bool {
-			return t.Kind == queue.Triage && t.Origin.Type == "intake" && t.Origin.Ref == ref
+			return t.Kind == queue.Triage && t.Origin.Ref == ref
 		}) {
 			continue
 		}
-		first, _, _ := strings.Cut(in.Text, "\n")
+		first, _, _ := strings.Cut(strings.TrimSpace(in.Text), "\n")
 		if len(first) > 60 {
 			first = first[:60] + "…"
 		}
-		if err := s.AddTask(goal, &queue.Task{
+		if err := s.AddTask(queue.IntakeGoal, &queue.Task{
 			Title:   "Triage: " + first,
 			Kind:    queue.Triage,
 			Origin:  queue.Origin{Type: "intake", Ref: ref},
 			Created: h.now(),
-			Body:    in.Text,
+			Body:    triageBody(s, in),
 		}); err != nil {
 			return err
 		}
@@ -89,11 +68,56 @@ func (h *Harness) applyGoalIntake(s *queue.Store, goal string, tasks []*queue.Ta
 	return nil
 }
 
-// applyPlanningIntake passes intake for a goal still in planning to its
-// grilling as feedback. A plan handed in and not yet signed off is set aside,
-// and grilling starts another round with the feedback.
-func (h *Harness) applyPlanningIntake(s *queue.Store, goal string, tasks []*queue.Task) error {
-	items, err := intake.Pending(intake.Dir(s.Repo(), goal))
+// ensureIntakeGoal makes the goal that holds the triage tasks. Triage reads
+// the base branch as it is, so it follows what is checked out now.
+func (h *Harness) ensureIntakeGoal(ctx context.Context, s *queue.Store) error {
+	if _, err := s.Goal(queue.IntakeGoal); err == nil {
+		return nil
+	}
+	base, err := git.Repo{Dir: s.Repo()}.CurrentBranch(ctx)
+	if err != nil {
+		return fmt.Errorf("finding the branch triage reads: %w", err)
+	}
+	return s.CreateGoal(&queue.Goal{
+		Name:    queue.IntakeGoal,
+		Title:   "Intake",
+		State:   queue.GoalActive,
+		Base:    base,
+		Created: h.now(),
+	})
+}
+
+// triageBody is an intake as its triage task reads it: the human's text,
+// then where they were when they sent it.
+func triageBody(s *queue.Store, in intake.Intake) string {
+	body := strings.TrimSpace(in.Text) + "\n\n---\n\n"
+	switch g, err := s.Goal(in.Goal); {
+	case in.Goal == "":
+		body += "Sent with no goal in view."
+	case err != nil:
+		body += fmt.Sprintf("Sent while looking at goal %s, which no longer exists.", in.Goal)
+	default:
+		body += fmt.Sprintf("Sent while looking at goal %s (%q, %s): a hint to where it belongs.",
+			g.Name, g.Title, g.State)
+	}
+	if in.Source == "review" {
+		body += fmt.Sprintf(" It is a comment the human left while approving hunk %s of commit %s.",
+			in.Hunk, in.Commit)
+	}
+	return body + "\n"
+}
+
+// feedbackDir holds the feedback triage passes to a goal in grilling, until
+// its next round.
+func feedbackDir(s *queue.Store, goal string) string {
+	return filepath.Join(s.GoalDir(goal), "feedback")
+}
+
+// applyFeedback passes feedback to a goal's grilling. A plan handed in and
+// not yet signed off is set aside, and grilling starts another round with the
+// feedback. A round already running gets it once it ends.
+func (h *Harness) applyFeedback(s *queue.Store, goal string, tasks []*queue.Task) error {
+	items, err := intake.Pending(feedbackDir(s, goal))
 	if err != nil || len(items) == 0 {
 		return err
 	}
@@ -104,7 +128,7 @@ func (h *Harness) applyPlanningIntake(s *queue.Store, goal string, tasks []*queu
 		}
 	}
 	if grill == nil || grill.State == queue.Active {
-		return nil // an active round gets the feedback once it ends
+		return nil
 	}
 	for _, in := range items {
 		grill.Body = appendSection(grill.Body, "Feedback from the human", in.Text)
@@ -128,7 +152,9 @@ func (h *Harness) applyPlanningIntake(s *queue.Store, goal string, tasks []*queu
 	return nil
 }
 
-// runPlanning runs a triage or grilling batch in the planning worktree.
+// runPlanning runs a triage or grilling batch in the planning worktree:
+// grilling reads the goal's integration branch, and triage the base branch
+// as it is now.
 func (h *Harness) runPlanning(
 	ctx context.Context,
 	repo Repo,
@@ -139,8 +165,10 @@ func (h *Harness) runPlanning(
 	main := git.Repo{Dir: s.Repo()}
 	wt := git.Repo{Dir: s.WorktreeDir(g.Name, planningWorktree)}
 	unlock := h.lockRepo(s.Repo())
-	err := main.CreateBranch(ctx, g.IntegrationBranch(), g.Base)
-	if err == nil {
+	var err error
+	if g.Name == queue.IntakeGoal {
+		err = main.EnsureDetached(ctx, wt.Dir, g.Base)
+	} else if err = main.CreateBranch(ctx, g.IntegrationBranch(), g.Base); err == nil {
 		err = main.EnsureDetached(ctx, wt.Dir, g.IntegrationBranch())
 	}
 	unlock()
@@ -194,7 +222,7 @@ func (h *Harness) finishPlanning(
 	}
 	planned := map[string]bool{}
 	if runErr == nil {
-		if err := h.applyAdds(ctx, repo, g, report, ask); err != nil {
+		if err := h.applyTriage(ctx, repo, report, ask); err != nil {
 			return err
 		}
 		if planned, err = h.applyPlan(repo, g, report); err != nil {
@@ -228,7 +256,7 @@ func (h *Harness) finishPlanning(
 		}
 		// A triage that asked is waiting on the human, not done.
 		if done && !asked[t.ID] && t.Kind == queue.Triage && t.Origin.Type == "intake" {
-			if err := doneIntake(s.Repo(), g.Name, t.Origin.Ref); err != nil {
+			if err := doneIntake(s.Repo(), t.Origin.Ref); err != nil {
 				return err
 			}
 		}
@@ -236,77 +264,152 @@ func (h *Harness) finishPlanning(
 	return nil
 }
 
-// applyAdds queues the tasks and goals triage handed in. A task on a
-// workstream the goal doesn't have, or after a task that doesn't exist, goes
-// to the human instead: adding a workstream or changing dependencies needs
-// their approval (ADR 0010).
-func (h *Harness) applyAdds(ctx context.Context, repo Repo, g *queue.Goal, report session.Report,
+// applyTriage applies what triage handed in: tasks for the repo's goals,
+// feedback for goals in grilling, and new goals.
+func (h *Harness) applyTriage(
+	ctx context.Context,
+	repo Repo,
+	report session.Report,
 	ask func(task, text string) error,
 ) error {
 	s := repo.Store
-	existing, err := s.Tasks(g.Name)
+	for _, e := range report.Feedback {
+		if err := h.feedback(s, e.Task, e.Goal, e.Text, ask); err != nil {
+			return err
+		}
+	}
+	for _, e := range report.Adds {
+		if err := h.applyAdd(repo, e, ask); err != nil {
+			return err
+		}
+	}
+	for _, e := range report.Goals {
+		if err := h.startGoal(ctx, repo, e); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// feedback passes text to the grilling of a goal in planning, or asks the
+// human when the goal isn't one.
+func (h *Harness) feedback(
+	s *queue.Store,
+	task, goal, text string,
+	ask func(task, text string) error,
+) error {
+	g, err := s.Goal(goal)
+	if err != nil || g.State != queue.GoalPlanning {
+		return ask(task, fmt.Sprintf("Triage had feedback for goal %q, which isn't being planned. "+
+			"Where should it go?\n\n%s", goal, text))
+	}
+	_, err = intake.Write(
+		feedbackDir(s, goal),
+		intake.Intake{Source: "triage", Created: h.now(), Text: text},
+	)
+	return err
+}
+
+// applyAdd adds a task triage handed in to its goal. A task for a goal still
+// in planning is feedback for its grilling instead. A task for a goal that
+// is done, on a workstream the goal doesn't have, or after a task that doesn't
+// exist goes to the human: adding a workstream or changing dependencies needs
+// their approval (ADR 0010).
+func (h *Harness) applyAdd(repo Repo, e session.Entry, ask func(task, text string) error) error {
+	s := repo.Store
+	g, err := s.Goal(e.Goal)
+	if err == nil && g.State == queue.GoalPlanning {
+		return h.feedback(s, e.Task, g.Name, "Add a task to the plan: "+e.Title+"\n\n"+e.Text, ask)
+	}
+	var problems []string
+	var existing []*queue.Task
+	switch {
+	case err != nil:
+		problems = append(problems, fmt.Sprintf("there is no goal %q", e.Goal))
+	case g.State == queue.GoalDone || g.State == queue.GoalFinished:
+		problems = append(problems, fmt.Sprintf("goal %s is %s", g.Name, g.State))
+	default:
+		if _, ok := g.Workstream(e.Workstream); !ok {
+			problems = append(
+				problems,
+				fmt.Sprintf("goal %s has no workstream %q", g.Name, e.Workstream),
+			)
+		}
+		if existing, err = s.Tasks(g.Name); err != nil {
+			return err
+		}
+	}
+	for _, id := range e.After {
+		if len(problems) == 0 &&
+			!slices.ContainsFunc(existing, func(t *queue.Task) bool { return t.ID == id }) {
+			problems = append(problems, "there is no task "+id+" to come after")
+		}
+	}
+	if _, ok := repo.Config.Profiles[e.Profile]; e.Profile != "" && !ok {
+		problems = append(problems, fmt.Sprintf("there is no profile %q", e.Profile))
+	}
+	if len(problems) > 0 {
+		return ask(
+			e.Task,
+			fmt.Sprintf("Triage wanted to add the task %q to goal %s on workstream %s, "+
+				"but %s. Should it be added, and where?\n\n%s", e.Title, e.Goal, e.Workstream,
+				strings.Join(problems, " and "), e.Text),
+		)
+	}
+	return s.AddTask(g.Name, &queue.Task{
+		Title:      e.Title,
+		Kind:       queue.Planned,
+		Profile:    e.Profile,
+		Workstream: e.Workstream,
+		DependsOn:  e.After,
+		Origin:     queue.Origin{Type: "triage", Ref: e.Task},
+		Created:    h.now(),
+		Body:       e.Text,
+	})
+}
+
+// startGoal starts a goal triage handed in. It is grilled first, unless
+// triage handed in its plan too because the work was already decided: then
+// the plan waits for the human's sign-off straight away.
+func (h *Harness) startGoal(ctx context.Context, repo Repo, e session.Entry) error {
+	s := repo.Store
+	body := e.Text
+	if body == "" {
+		body = e.Title
+	}
+	g, err := plan.NewGoal(ctx, s, "", e.Title, body,
+		queue.Origin{Type: "triage", Ref: e.Task}, h.now())
 	if err != nil {
 		return err
 	}
-	for _, e := range report.Adds {
-		var problems []string
-		if _, ok := g.Workstream(e.Workstream); !ok {
-			problems = append(problems, fmt.Sprintf("the goal has no workstream %q", e.Workstream))
-		}
-		for _, id := range e.After {
-			if !slices.ContainsFunc(existing, func(t *queue.Task) bool { return t.ID == id }) {
-				problems = append(problems, "there is no task "+id+" to come after")
-			}
-		}
-		if _, ok := repo.Config.Profiles[e.Profile]; e.Profile != "" && !ok {
-			problems = append(problems, fmt.Sprintf("there is no profile %q", e.Profile))
-		}
-		if len(problems) > 0 {
-			if err := ask(
-				e.Task,
-				fmt.Sprintf("Triage wanted to add the task %q on workstream %s, but %s. "+
-					"Should it be added, and where?\n\n%s", e.Title, e.Workstream, strings.Join(problems, " and "),
-					e.Text),
-			); err != nil {
-				return err
-			}
-			continue
-		}
-		t := &queue.Task{
-			Title:      e.Title,
-			Kind:       queue.Planned,
-			Profile:    e.Profile,
-			Workstream: e.Workstream,
-			DependsOn:  e.After,
-			Origin:     queue.Origin{Type: "triage", Ref: e.Task},
-			Created:    h.now(),
-			Body:       e.Text,
-		}
-		if err := s.AddTask(g.Name, t); err != nil {
-			return err
-		}
-		existing = append(existing, t)
+	h.log().Info("new goal from triage", "repo", s.Repo(), "goal", g.Name, "planned", e.Plan != "")
+	if e.Plan == "" {
+		return nil
 	}
-	for _, e := range report.Goals {
-		body := e.Text
-		if body == "" {
-			body = e.Title
-		}
-		ng, err := plan.NewGoal(
-			ctx,
-			s,
-			"",
-			e.Title,
-			body,
-			queue.Origin{Type: "triage", Ref: g.Name + "/" + e.Task},
-			h.now(),
-		)
-		if err != nil {
-			return err
-		}
-		h.log().Info("new goal from triage", "repo", s.Repo(), "goal", ng.Name)
+	tasks, err := s.Tasks(g.Name)
+	if err != nil || len(tasks) == 0 {
+		return err
 	}
-	return nil
+	grill := tasks[0]
+	p, err := plan.Parse([]byte(e.Plan))
+	if err == nil {
+		err = p.Validate(repo.Config.Profiles)
+	}
+	if err != nil {
+		// Grilling starts from the draft instead.
+		grill.Body = appendSection(grill.Body, "A plan triage drafted, which didn't hold up",
+			err.Error()+"\n\n```yaml\n"+strings.TrimSpace(e.Plan)+"\n```")
+		return s.SaveTask(g.Name, grill)
+	}
+	if err := plan.Save(s.GoalDir(g.Name), p); err != nil {
+		return err
+	}
+	grill.Body = appendSection(
+		grill.Body,
+		"Planned by triage",
+		"The work was already decided, so triage handed in the plan and there was nothing to grill.",
+	)
+	return s.Move(g.Name, grill, queue.Done)
 }
 
 // applyPlan saves the plan grilling handed in, and reports which grilling
@@ -343,8 +446,8 @@ func (h *Harness) applyPlan(
 }
 
 // doneIntake moves a triaged intake to done/.
-func doneIntake(repo, goal, name string) error {
-	in, err := intake.Read(filepath.Join(intake.Dir(repo, goal), name))
+func doneIntake(repo, name string) error {
+	in, err := intake.Read(filepath.Join(intake.Dir(repo), name))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
