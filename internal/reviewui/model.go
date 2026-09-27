@@ -20,9 +20,6 @@ import (
 	"github.com/dmikalova/diatom/internal/review"
 )
 
-// reloadEvery is how often the reviewer looks for new commits.
-const reloadEvery = 5 * time.Second
-
 // Model is the reviewer's state.
 type Model struct {
 	ctx   context.Context
@@ -51,9 +48,6 @@ type Model struct {
 	// back through it; back == len(history) is the present.
 	history []review.Event
 	back    int
-
-	// embedded is set while the reviewer is part of diatom's window.
-	embedded bool
 
 	width, height int
 	flash         string
@@ -152,29 +146,11 @@ func firstChange(ls []line) int {
 	return 0
 }
 
-type tickMsg struct{}
-
-func tick() tea.Cmd {
-	return tea.Tick(reloadEvery, func(time.Time) tea.Msg { return tickMsg{} })
-}
-
-// Init implements tea.Model.
-func (m *Model) Init() tea.Cmd { return tick() }
-
-// Update implements tea.Model.
-func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+// Update handles the window's messages: its size, and keys.
+func (m *Model) Update(msg tea.Msg) (*Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width, m.height = msg.Width, msg.Height
-		m.input.SetWidth(max(msg.Width-4, 10))
-	case tickMsg:
-		if !m.editing {
-			m.err = m.reload()
-			if m.cur < 0 {
-				m.show(m.firstPending(""))
-			}
-		}
-		return m, tick()
+		m.SetSize(msg.Width, msg.Height)
 	case tea.KeyPressMsg:
 		if m.editing {
 			return m.updateEditing(msg)
@@ -184,7 +160,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) updateEditing(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+func (m *Model) updateEditing(msg tea.KeyPressMsg) (*Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		m.editing = false
@@ -211,15 +187,9 @@ func (m *Model) updateEditing(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m *Model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+func (m *Model) updateKey(msg tea.KeyPressMsg) (*Model, tea.Cmd) {
 	m.flash = ""
-	k := msg.String()
-	if m.embedded && (k == "q" || k == "ctrl+c" || k == "tab" || k == "shift+tab") {
-		return m, nil
-	}
-	switch k {
-	case "q", "ctrl+c":
-		return m, tea.Quit
+	switch msg.String() {
 	case "j", "down":
 		m.move(1)
 	case "k", "up":
@@ -249,9 +219,9 @@ func (m *Model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.decide(review.Reject)
 	case "d":
 		m.decide(review.Defer)
-	case "n", "tab":
+	case "n":
 		m.skip(1)
-	case "p", "shift+tab":
+	case "p":
 		m.skip(-1)
 	case "u", "backspace":
 		m.stepBack()

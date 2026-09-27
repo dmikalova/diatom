@@ -1,4 +1,4 @@
-package panes
+package ui
 
 import (
 	"context"
@@ -11,7 +11,6 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/dmikalova/diatom/internal/focus"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/reviewui"
 	"github.com/dmikalova/diatom/internal/tui"
@@ -93,10 +92,11 @@ type App struct {
 	next   *Next
 	intake *Intake
 
-	// sel is the nav line selected, and shown the entry the main pane shows.
-	sel   int
-	shown string
-	focus part
+	// sel is the nav line selected, and shown the entry the main pane shows;
+	// navTop is the nav's first line on screen.
+	sel, navTop int
+	shown       string
+	focus       part
 	// fromNext is set while a goal opened from Next's context is shown:
 	// going back from it returns to Next.
 	fromNext bool
@@ -140,7 +140,6 @@ func NewApp(ctx context.Context, env Env, sched Scheduler) *App {
 		intake: NewIntake(env),
 		width:  120, height: 40,
 	}
-	a.intake.compact = true
 	a.intake.about = a.onScreen
 	a.intake.area.Blur()
 	status.openReview = a.openReview
@@ -158,7 +157,6 @@ func (a *App) openReview(goal string) {
 		a.status.err = err
 		return
 	}
-	rv.Embed()
 	a.review = rv
 	a.layout()
 }
@@ -219,10 +217,6 @@ func (a *App) show() {
 	a.status.detail, a.review, a.logOpen = nil, nil, false
 	if e.row != nil {
 		a.status.openDetail(e.row)
-		if !e.row.intake {
-			// The zellij panes still follow the focus.
-			_ = a.env.Focus.Write(focus.Focus{Goal: e.row.goal.Name})
-		}
 	}
 }
 
@@ -249,8 +243,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case UpdateMsg:
 		a.update = &msg
 	case jobMsg:
-		_, cmd := a.status.Update(msg)
-		return a, cmd
+		a.status.jobDone(msg)
+		a.next.reload()
 	case QuitMsg:
 		return a.quit(false)
 	case stoppedMsg:
@@ -378,7 +372,7 @@ func (a *App) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if key == "esc" {
 			return a, a.setFocus(partNav)
 		}
-		_, cmd := a.intake.Update(msg)
+		cmd := a.intake.key(msg)
 		a.layout()
 		return a, cmd
 	}
@@ -451,6 +445,10 @@ func (a *App) mainArea() int {
 
 // focusMain gives the keyboard to one of the main pane's areas.
 func (a *App) focusMain(i int) tea.Cmd {
+	if a.focus == partIntake {
+		a.intake.flash = ""
+		a.intake.reload()
+	}
 	a.focus = partMain
 	a.intake.area.Blur()
 	var cmd tea.Cmd
@@ -522,7 +520,7 @@ func (a *App) mainKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			return a, a.setFocus(partNav)
 		}
-		_, cmd := a.status.updateDetail(msg)
+		cmd := a.status.updateDetail(msg)
 		if a.status.detail == nil {
 			// Its own way back, such as h, reached the top.
 			a.shown = ""
@@ -562,6 +560,11 @@ func (a *App) setFocus(p part) tea.Cmd {
 		// Going to the nav, or the intake box at its foot, shows it again.
 		a.navHidden = false
 		a.saveUI()
+	}
+	if a.focus == partIntake && p != partIntake {
+		// What sending said is old news once the box is left.
+		a.intake.flash = ""
+		a.intake.reload()
 	}
 	a.focus = p
 	a.intake.area.Blur()
@@ -623,8 +626,8 @@ func (a *App) click(m tea.Mouse) (tea.Model, tea.Cmd) {
 		a.logOpen, a.logBack = true, 0
 		return a, a.setFocus(partMain)
 	}
-	if m.Y < len(lines) && lines[m.Y].entry >= 0 {
-		a.sel = lines[m.Y].entry
+	if y := m.Y + a.navTop; y < len(lines) && lines[y].entry >= 0 {
+		a.sel = lines[y].entry
 		if a.selected().kind == entryFinished {
 			a.unfolded = !a.unfolded
 		}
@@ -727,13 +730,20 @@ func (a *App) renderNav() string {
 	lines, foot := a.navLines()
 	box := strings.Split(strings.TrimRight(a.intake.render(), "\n"), "\n")
 	room := max(a.height-len(foot)-len(box), 1)
+	// Scrolled just enough to show the selected entry.
+	sel := 0
+	for i, l := range lines {
+		if l.entry == a.sel {
+			sel = i
+		}
+	}
 	var out []string
 	for _, l := range lines {
 		out = append(out, l.text)
 	}
-	if len(out) > room {
-		out = out[:room]
-	}
+	a.navTop = min(max(a.navTop, sel-room+1), sel)
+	a.navTop = max(min(a.navTop, len(out)-room), 0)
+	out = out[a.navTop:min(a.navTop+room, len(out))]
 	for len(out) < room {
 		out = append(out, "")
 	}

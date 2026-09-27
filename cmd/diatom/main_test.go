@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/dmikalova/diatom/internal/git"
-	"github.com/dmikalova/diatom/internal/intake"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/session"
 )
@@ -53,99 +52,7 @@ func diatom(t *testing.T, stdin string, args ...string) (code int, stdout, stder
 	return code, out.String(), errOut.String()
 }
 
-func TestGoalAndTaskCommands(t *testing.T) {
-	repo := inRepo(t)
-	if code, _, stderr := diatom(
-		t,
-		"",
-		"goal",
-		"new",
-		"set",
-		"-title",
-		"New set",
-		"-ws",
-		"engine,cards:engine",
-		"-active",
-	); code != 0 {
-		t.Fatalf("goal new: %s", stderr)
-	}
-	g, err := queue.Open(repo).Goal("set")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if g.State != queue.GoalActive || g.Base != "main" || len(g.Workstreams) != 2 ||
-		g.Workstreams[1].DependsOn[0] != "engine" {
-		t.Errorf("goal = %+v", g)
-	}
-
-	code, stdout, stderr := diatom(
-		t,
-		"Ward stops the next damage.\n",
-		"task",
-		"add",
-		"-goal",
-		"set",
-		"-ws",
-		"engine",
-		"Add",
-		"ward",
-	)
-	if code != 0 || strings.TrimSpace(stdout) != "0001" {
-		t.Fatalf("task add = %d %q %q", code, stdout, stderr)
-	}
-	task, _ := queue.Open(repo).Task("set", "0001")
-	if task.Title != "Add ward" || task.Body != "Ward stops the next damage.\n" ||
-		task.Profile != "implementation" {
-		t.Errorf("task = %+v", task)
-	}
-	if code, _, _ := diatom(t, "", "task", "add", "-goal", "set", "-ws", "web", "x"); code != 1 {
-		t.Error("task add accepted an unknown workstream")
-	}
-
-	if code, _, stderr := diatom(t, "", "goal", "park", "set"); code != 0 {
-		t.Fatalf("goal park: %s", stderr)
-	}
-	if code, _, _ := diatom(t, "", "goal", "pin", "set"); code != 2 {
-		t.Error("goal pin was accepted")
-	}
-	_, stdout, _ = diatom(t, "", "goal", "list")
-	if !strings.Contains(stdout, "set") || !strings.Contains(stdout, "parked") {
-		t.Errorf("goal list = %q", stdout)
-	}
-	_, stdout, _ = diatom(t, "", "status")
-	if !strings.Contains(stdout, "pending 1") {
-		t.Errorf("status = %q", stdout)
-	}
-}
-
-func TestQuestionsAndAnswer(t *testing.T) {
-	repo := inRepo(t)
-	diatom(t, "", "goal", "new", "set", "-ws", "engine", "-active")
-	s := queue.Open(repo)
-	if err := s.AddQuestion(
-		"set",
-		&queue.Question{Task: "0001", Text: "Does ward stack?"},
-	); err != nil {
-		t.Fatal(err)
-	}
-	_, stdout, _ := diatom(t, "", "questions")
-	if !strings.Contains(stdout, "set 0001 (task 0001)") ||
-		!strings.Contains(stdout, "    Does ward stack?") {
-		t.Errorf("questions = %q", stdout)
-	}
-	if code, _, stderr := diatom(t, "", "answer", "set", "0001", "No,", "never."); code != 0 {
-		t.Fatal(stderr)
-	}
-	qs, _ := s.Questions("set", queue.QuestionOpen)
-	if qs[0].Answer != "No, never." {
-		t.Errorf("answer = %q", qs[0].Answer)
-	}
-	if _, stdout, _ = diatom(t, "", "questions"); stdout != "" {
-		t.Errorf("answered question still listed: %q", stdout)
-	}
-}
-
-func TestGoalNewRequiresIgnoredState(t *testing.T) {
+func TestStateMustBeIgnored(t *testing.T) {
 	repo := inRepo(t)
 	if err := os.WriteFile(filepath.Join(repo, ".git", "info", "exclude"), nil, 0o644); err != nil {
 		t.Fatal(err)
@@ -153,9 +60,9 @@ func TestGoalNewRequiresIgnoredState(t *testing.T) {
 	// The developer's own global excludes would still ignore .diatom/.
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "none"))
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	code, _, stderr := diatom(t, "", "goal", "new", "set")
+	code, _, stderr := diatom(t, "", "task", "goals")
 	if code != 1 || !strings.Contains(stderr, "not ignored") {
-		t.Errorf("goal new = %d %q", code, stderr)
+		t.Errorf("task goals = %d %q", code, stderr)
 	}
 }
 
@@ -220,259 +127,6 @@ func TestUsage(t *testing.T) {
 	}
 	if code, stdout, _ := diatom(t, "", "version"); code != 0 || stdout != "dev\n" {
 		t.Errorf("version = %q", stdout)
-	}
-}
-
-func TestReviewListAndGoalDone(t *testing.T) {
-	repo := inRepo(t)
-	ctx := context.Background()
-	diatom(t, "", "goal", "new", "set", "-ws", "engine", "-active")
-	r := git.Repo{Dir: repo}
-	if err := os.WriteFile(
-		filepath.Join(repo, "ward.go"),
-		[]byte("package ward\n"),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := r.StageAll(ctx); err != nil {
-		t.Fatal(err)
-	}
-	sha, err := r.Commit(ctx, "feat: ward")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := queue.Open(repo).AddTask("set", &queue.Task{Title: "Add ward", Kind: queue.Planned,
-		Workstream: "engine", Commits: []string{sha}}); err != nil {
-		t.Fatal(err)
-	}
-
-	code, stdout, stderr := diatom(t, "", "review", "-list")
-	if code != 0 || !strings.Contains(stdout, sha[:7]+" ward.go#1 feat: ward (unreviewed)") {
-		t.Fatalf("review -list = %d %q %q", code, stdout, stderr)
-	}
-	if code, _, stderr := diatom(
-		t,
-		"",
-		"goal",
-		"done",
-		"set",
-	); code != 1 ||
-		!strings.Contains(stderr, "1 unreviewed") {
-		t.Errorf("goal done with an unreviewed hunk = %d %q", code, stderr)
-	}
-	if code, stdout, _ := diatom(
-		t,
-		"",
-		"goal",
-		"done",
-		"set",
-		"-force",
-	); code != 0 ||
-		!strings.Contains(stdout, "done") {
-		t.Errorf("goal done -force = %d %q", code, stdout)
-	}
-	if code, _, stderr := diatom(
-		t,
-		"",
-		"review",
-		"-list",
-	); code != 1 ||
-		!strings.Contains(stderr, "no open goal") {
-		t.Errorf("review with every goal done = %d %q", code, stderr)
-	}
-}
-
-func TestGoalFinish(t *testing.T) {
-	repo := inRepo(t)
-	ctx := context.Background()
-	diatom(t, "", "goal", "new", "set", "-ws", "engine", "-active")
-	r := git.Repo{Dir: repo}
-	if _, err := r.Run(ctx, "branch", "diatom/set/integration"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := r.Run(ctx, "checkout", "--quiet", "-b", "diatom/set/ws/engine"); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(repo, "ward.go"),
-		[]byte("package ward\n"),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := r.StageAll(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := r.Commit(ctx, "feat: ward"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := r.Run(ctx, "checkout", "--quiet", "main"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := r.MergeInto(ctx, "diatom/set/integration", "diatom/set/ws/engine"); err != nil {
-		t.Fatal(err)
-	}
-
-	if code, _, stderr := diatom(t, "", "goal", "finish", "set"); code != 1 ||
-		!strings.Contains(stderr, "goal done set") {
-		t.Errorf("goal finish on an active goal = %d %q", code, stderr)
-	}
-	code, stdout, stderr := diatom(t, "", "goal", "done", "set", "-force")
-	if code != 0 || !strings.Contains(stdout, "laid out on diatom/set/final: 1 commits on main") {
-		t.Fatalf("goal done = %d %q %q", code, stdout, stderr)
-	}
-	// The layout is still current, so it isn't made again.
-	code, stdout, _ = diatom(t, "", "goal", "finish", "set")
-	if code != 0 || strings.Contains(stdout, "laying") || !strings.Contains(stdout, "-push") {
-		t.Errorf("goal finish = %d %q", code, stdout)
-	}
-	if code, _, _ := diatom(t, "", "goal", "finish", "set", "-push", "-prs"); code != 2 {
-		t.Error("-push with -prs was accepted")
-	}
-	if code, _, stderr := diatom(
-		t,
-		"",
-		"goal",
-		"finish",
-		"set",
-		"-push",
-		"-remote",
-		"nowhere",
-	); code != 1 ||
-		!strings.Contains(stderr, "nowhere") {
-		t.Errorf("push to a missing remote = %d %q", code, stderr)
-	}
-}
-
-func TestReviewGoalChoice(t *testing.T) {
-	inRepo(t)
-	diatom(t, "", "goal", "new", "one", "-ws", "a", "-active")
-	diatom(t, "", "goal", "new", "two", "-ws", "a", "-active")
-	if code, _, stderr := diatom(
-		t,
-		"",
-		"review",
-		"-list",
-	); code != 2 ||
-		!strings.Contains(stderr, "one, two") {
-		t.Errorf("review with two goals = %d %q", code, stderr)
-	}
-	if code, _, _ := diatom(t, "", "review", "-list", "-goal", "two"); code != 0 {
-		t.Error("review -goal two failed")
-	}
-	if code, _, _ := diatom(t, "", "review", "-list", "-goal", "nope"); code != 1 {
-		t.Error("review of a missing goal succeeded")
-	}
-}
-
-func TestWorkspaceLayout(t *testing.T) {
-	layout := workspaceLayout(`/opt/my "tools"/diatom`, "/code/vex")
-	for _, want := range []string{
-		`cwd "/code/vex"`,
-		`command="/opt/my \"tools\"/diatom"`,
-		`args "review" "-focus"`, `args "pane" "status"`, `args "pane" "questions"`, `args "pane" "intake"`,
-		`tab name="scheduler"`, `args "run"`,
-	} {
-		if !strings.Contains(layout, want) {
-			t.Errorf("layout lacks %s:\n%s", want, layout)
-		}
-	}
-	if strings.Count(layout, "{") != strings.Count(layout, "}") {
-		t.Error("layout braces don't balance")
-	}
-	if got := sessionName("/code/my repo.git"); got != "diatom-my-repo-git" {
-		t.Errorf("session name = %q", got)
-	}
-}
-
-func TestWorkspaceRefusesInsideZellij(t *testing.T) {
-	inRepo(t)
-	t.Setenv("ZELLIJ", "0")
-	if code, _, stderr := diatom(
-		t,
-		"",
-		"workspace",
-	); code != 1 ||
-		!strings.Contains(stderr, "inside zellij") {
-		t.Errorf("workspace inside zellij = %d %q", code, stderr)
-	}
-	if code, _, _ := diatom(t, "", "pane", "nope"); code != 2 {
-		t.Error("an unknown pane was accepted")
-	}
-}
-
-func TestGoalGrillingCommands(t *testing.T) {
-	repo := inRepo(t)
-	code, stdout, stderr := diatom(
-		t,
-		"Implement the Grim Reminders set.\n",
-		"goal",
-		"new",
-		"grim",
-		"-title",
-		"Grim Reminders",
-	)
-	if code != 0 || !strings.Contains(stdout, "in planning") {
-		t.Fatalf("goal new = %d %q %q", code, stdout, stderr)
-	}
-	s := queue.Open(repo)
-	tasks, _ := s.Tasks("grim")
-	if len(tasks) != 1 || tasks[0].Kind != queue.Grilling ||
-		tasks[0].Body != "Implement the Grim Reminders set.\n" {
-		t.Fatalf("tasks = %+v", tasks)
-	}
-	if code, _, stderr := diatom(
-		t,
-		"",
-		"goal",
-		"new",
-		"x",
-		"-ws",
-		"a",
-	); code != 2 ||
-		!strings.Contains(stderr, "needs -active") {
-		t.Errorf("planning goal with -ws = %d %q", code, stderr)
-	}
-	if code, _, stderr := diatom(
-		t,
-		"",
-		"goal",
-		"plan",
-		"grim",
-	); code != 1 ||
-		!strings.Contains(stderr, "no plan yet") {
-		t.Errorf("goal plan without one = %d %q", code, stderr)
-	}
-	if err := os.WriteFile(filepath.Join(s.GoalDir("grim"), "plan.yaml"), []byte(
-		"summary: Do it.\nworkstreams: [{name: engine}]\ntasks: [{key: a, title: Add ward, workstream: engine}]\n",
-	),
-		0o644); err != nil {
-		t.Fatal(err)
-	}
-	if code, stdout, _ := diatom(
-		t,
-		"",
-		"goal",
-		"plan",
-		"grim",
-	); code != 0 ||
-		!strings.Contains(stdout, "[engine] Add ward") {
-		t.Errorf("goal plan = %d %q", code, stdout)
-	}
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	if code, stdout, stderr := diatom(
-		t,
-		"",
-		"goal",
-		"approve",
-		"grim",
-	); code != 0 ||
-		!strings.Contains(stdout, "signed off") {
-		t.Fatalf("goal approve = %d %q %q", code, stdout, stderr)
-	}
-	if g, _ := s.Goal("grim"); g.State != queue.GoalActive {
-		t.Errorf("goal after approve = %s", g.State)
 	}
 }
 
@@ -637,35 +291,9 @@ func TestPlanningToolCommands(t *testing.T) {
 	}
 }
 
-func TestIntakeCommand(t *testing.T) {
-	repo := inRepo(t)
-	diatom(t, "", "goal", "new", "set", "-ws", "engine", "-active")
-	if code, stdout, stderr := diatom(
-		t,
-		"Ward is too strong.",
-		"intake",
-		"-goal",
-		"set",
-	); code != 0 ||
-		!strings.Contains(stdout, "queued for triage") {
-		t.Fatalf("intake = %d %q %q", code, stdout, stderr)
-	}
-	pending, err := intake.Pending(intake.Dir(repo))
-	if err != nil || len(pending) != 1 || pending[0].Goal != "set" ||
-		pending[0].Text != "Ward is too strong." {
-		t.Errorf("pending = %+v, %v", pending, err)
-	}
-	if code, _, _ := diatom(t, "x", "intake", "-goal", "nope"); code != 1 {
-		t.Error("intake for a missing goal was accepted")
-	}
-	if code, _, _ := diatom(t, "", "intake"); code != 2 {
-		t.Error("empty intake was accepted")
-	}
-}
-
 func TestOutsideARepo(t *testing.T) {
 	t.Chdir(t.TempDir())
-	for _, cmd := range [][]string{{"run"}, {"status"}, {"workspace"}, {"stop"}, {"intake"}} {
+	for _, cmd := range [][]string{{"open"}, {"task", "goals"}} {
 		if code, _, stderr := diatom(
 			t,
 			"x",
@@ -676,49 +304,17 @@ func TestOutsideARepo(t *testing.T) {
 	}
 }
 
-func TestSessionState(t *testing.T) {
-	list := "diatom-vex [Created 2m ago] \n" +
-		"diatom-dotfiles [Created 1h ago] (EXITED - attach to resurrect)\n"
-	for name, want := range map[string]int{
-		"diatom-vex": sessionRunning, "diatom-dotfiles": sessionExited, "diatom": sessionMissing,
-	} {
-		if got := sessionState(list, name); got != want {
-			t.Errorf("%s = %d, want %d", name, got, want)
-		}
-	}
-}
-
-func TestGoalAfter(t *testing.T) {
-	inRepo(t)
-	diatom(t, "", "goal", "new", "catalog", "-ws", "engine", "-active")
-	if code, stdout, stderr := diatom(t, "", "goal", "new", "sweep", "-ws", "engine", "-active",
-		"-after", "catalog"); code != 0 || !strings.Contains(stdout, "once catalog finish") {
-		t.Fatalf("goal new -after = %d %q %q", code, stdout, stderr)
-	}
-	if code, _, stderr := diatom(t, "", "goal", "new", "x", "-after", "nope"); code != 1 ||
-		!strings.Contains(stderr, "nope") {
-		t.Errorf("-after a missing goal = %d %q", code, stderr)
-	}
-	if _, stdout, _ := diatom(t, "", "goal", "list"); !strings.Contains(stdout, "after catalog") {
-		t.Errorf("list = %q", stdout)
-	}
-	if code, _, stderr := diatom(t, "", "goal", "after", "catalog", "sweep"); code != 1 ||
-		!strings.Contains(stderr, "loop") {
-		t.Errorf("a loop = %d %q", code, stderr)
-	}
-	if code, stdout, _ := diatom(t, "", "goal", "after", "sweep"); code != 0 ||
-		!strings.Contains(stdout, "waits for no other goal") {
-		t.Errorf("clearing = %d %q", code, stdout)
-	}
-	if _, stdout, _ := diatom(t, "", "goal", "list"); strings.Contains(stdout, "after") {
-		t.Errorf("list after clearing = %q", stdout)
-	}
-}
-
 func TestTaskGoals(t *testing.T) {
 	inRepo(t)
-	diatom(t, "", "goal", "new", "set", "-title", "Next set", "-ws", "engine", "-active")
-	diatom(t, "", "task", "add", "-goal", "set", "-ws", "engine", "Add ward")
+	s := queue.Open(".")
+	if err := s.CreateGoal(&queue.Goal{Name: "set", Title: "Next set", State: queue.GoalActive,
+		Workstreams: []queue.Workstream{{Name: "engine"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddTask("set", &queue.Task{Title: "Add ward", Kind: queue.Planned,
+		Workstream: "engine"}); err != nil {
+		t.Fatal(err)
+	}
 	code, stdout, stderr := diatom(t, "", "task", "goals")
 	if code != 0 || stdout != "- `set`: Next set (active, 0 of 1 tasks done)\n" {
 		t.Errorf("task goals = %d %q %q", code, stdout, stderr)

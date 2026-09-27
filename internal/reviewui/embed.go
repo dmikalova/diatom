@@ -6,11 +6,6 @@ import (
 	"github.com/dmikalova/diatom/internal/review"
 )
 
-// Embed makes the reviewer a part of diatom's window rather than a program
-// of its own: the window quits and moves the keyboard with tab, so the
-// reviewer leaves those keys alone, and the window's tick reloads it.
-func (m *Model) Embed() { m.embedded = true }
-
 // SetSize fits the reviewer to its part of the window.
 func (m *Model) SetSize(width, height int) {
 	m.width, m.height = width, height

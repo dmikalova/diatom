@@ -12,7 +12,6 @@ import (
 	"github.com/bluekeyes/go-gitdiff/gitdiff"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/dmikalova/diatom/internal/focus"
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/review"
@@ -370,46 +369,5 @@ func TestNothingToReview(t *testing.T) {
 		t.Errorf("empty review:\n%s", m.render())
 	}
 	press(m, "a", "u", "v", "j")
-	if v := m.View(); !v.AltScreen {
-		t.Error("the reviewer does not use the alternate screen")
-	}
-	m.Update(tickMsg{})
-}
-
-func TestFollowSwitchesWithFocus(t *testing.T) {
-	f := newFixture(t)
-	f.write("ward.go", body("ward", "u"))
-	sha := f.commit("feat: ward")
-	f.task(
-		&queue.Task{
-			Title:      "Add ward",
-			Kind:       queue.Planned,
-			Workstream: "engine",
-			Commits:    []string{sha},
-		},
-	)
-
-	file := focus.In(f.repo.Dir)
-	fl := NewFollow(context.Background(), f.store)
-	if fl.inner != nil || !strings.Contains(fl.View().Content, "No goal is focused") {
-		t.Fatal("reviewer without focus shows a hunk")
-	}
-	if err := file.Write(focus.Focus{Goal: "set"}); err != nil {
-		t.Fatal(err)
-	}
-	fl.Update(tickMsg{})
-	if fl.inner == nil || !strings.Contains(fl.View().Content, "feat: ward") {
-		t.Fatalf("reviewer after focusing:\n%s", fl.View().Content)
-	}
-	fl.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
-	if rec, _ := fl.inner.rev.Load(sha); len(rec.Hunks) != 1 {
-		t.Error("a key in the follow pane did not reach the reviewer")
-	}
-	if err := file.Write(focus.Focus{}); err != nil {
-		t.Fatal(err)
-	}
-	fl.Update(tickMsg{})
-	if fl.inner != nil {
-		t.Error("the reviewer kept a goal after the focus left it")
-	}
+	m.Refresh()
 }

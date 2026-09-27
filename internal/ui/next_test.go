@@ -1,4 +1,4 @@
-package panes
+package ui
 
 import (
 	"strings"
@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/dmikalova/diatom/internal/intake"
+	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
 )
 
@@ -250,5 +251,47 @@ func TestNextOffersToFinishAGoal(t *testing.T) {
 	}
 	if _, cmd := a.Update(tea.KeyPressMsg{Code: tea.KeyEnter}); cmd == nil {
 		t.Error("a second enter doesn't start finishing the goal")
+	}
+}
+
+func TestNextAnswersOnSeveralLines(t *testing.T) {
+	f := newFixture(t)
+	a, _ := newApp(t, f)
+	key(a, "enter", "tab", "enter")
+	if it := a.next.shown(); it == nil || it.kind != itemQuestion || a.next.area != areaAnswer {
+		t.Fatal("an empty answer moved on")
+	}
+	typeText(a, "No, it never")
+	key(a, "shift+enter")
+	typeText(a, "stacks.")
+	key(a, "enter")
+	open, _ := f.store.Questions("set", queue.QuestionOpen)
+	if len(open) != 1 || open[0].Answer != "No, it never\nstacks." {
+		t.Errorf("answer = %+v", open)
+	}
+}
+
+func TestNextSendsAPlanBack(t *testing.T) {
+	f := newFixture(t)
+	newPlan(t, f, "hex")
+	a, _ := newApp(t, f)
+	key(a, "enter", "tab")
+	typeText(a, "Split the engine.")
+	key(a, "enter")
+	fb, err := intake.Pending(plan.FeedbackDir(f.store.GoalDir("hex")))
+	if err != nil || len(fb) != 1 || fb[0].Text != "Split the engine." {
+		t.Fatalf("feedback = %+v, %v", fb, err)
+	}
+	if g, _ := f.store.Goal("hex"); g.State != queue.GoalPlanning ||
+		!strings.Contains(a.next.flash, "sent back to hex's grilling") {
+		t.Errorf("hex is %s, flash %q", g.State, a.next.flash)
+	}
+	// The plan waits for grilling now, not for the human.
+	if it := a.next.shown(); it == nil || it.kind != itemQuestion {
+		t.Errorf("after sending the plan back, Next shows %+v", it)
+	}
+	openGoal(t, a, "hex")
+	if out := ansi.Strip(a.render()); !strings.Contains(out, "plan sent back with your changes") {
+		t.Errorf("the goal's page:\n%s", out)
 	}
 }

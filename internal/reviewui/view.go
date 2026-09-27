@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"strings"
 
-	tea "charm.land/bubbletea/v2"
 	"github.com/bluekeyes/go-gitdiff/gitdiff"
 
 	"github.com/dmikalova/diatom/internal/review"
@@ -20,14 +19,6 @@ const (
 
 func (m *Model) bodyHeight() int {
 	return max(m.height-headerLines-footerLines-len(m.causes()), 3)
-}
-
-// View implements tea.Model.
-func (m *Model) View() tea.View {
-	v := tea.NewView(m.render())
-	v.AltScreen = true
-	v.WindowTitle = "diatom review · " + m.goal
-	return v
 }
 
 func (m *Model) render() string {
@@ -240,9 +231,6 @@ func (m *Model) footer() string {
 		return m.input.View() + "\n"
 	}
 	keys := "a approve · r reject · d defer · c comment · x drop comment · n/p skip · u back · v combined"
-	if !m.embedded {
-		keys += " · q quit"
-	}
 	if m.flash != "" {
 		return sgr(fgCode(cyan)) + m.flash + reset + "\n" + dim(keys)
 	}

@@ -1,4 +1,4 @@
-// Package tui holds what diatom's terminal panes share: styling with the
+// Package tui holds what diatom's window shares: styling with the
 // terminal's own 16 ANSI colors, so every pane follows the terminal's theme.
 package tui
 

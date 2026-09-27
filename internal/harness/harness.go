@@ -381,7 +381,7 @@ func (h *Harness) watchDone(ctx context.Context, s *queue.Store, goals []*queue.
 
 // watchLanding finishes a done goal once it has landed upstream: merged into
 // its base branch there, with the checks passing (ADR 0003). A failed check
-// is kept on the goal's layout for the panes, and tried again later.
+// is kept on the goal's layout for the window, and tried again later.
 func (h *Harness) watchLanding(ctx context.Context, s *queue.Store, g *queue.Goal) {
 	gh := h.GH
 	if gh == nil {

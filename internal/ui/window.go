@@ -1,4 +1,4 @@
-package panes
+package ui
 
 import (
 	"os"

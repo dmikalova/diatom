@@ -14,11 +14,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/dmikalova/diatom/internal/config"
-	"github.com/dmikalova/diatom/internal/focus"
 	"github.com/dmikalova/diatom/internal/harness"
-	"github.com/dmikalova/diatom/internal/panes"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/runner/claude"
+	"github.com/dmikalova/diatom/internal/ui"
 	"github.com/dmikalova/diatom/internal/update"
 )
 
@@ -66,15 +65,15 @@ func cmdApp(ctx context.Context) error {
 		return err
 	}
 	defer sched.unlock()
-	env := panes.Env{Store: s, Focus: focus.In(s.Repo()), Paths: paths, Now: time.Now}
-	app := panes.NewApp(ctx, env, sched.Scheduler)
+	env := ui.Env{Store: s, Paths: paths, Now: time.Now}
+	app := ui.NewApp(ctx, env, sched.Scheduler)
 	p := tea.NewProgram(app, tea.WithoutSignalHandler())
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer signal.Stop(sigs)
 	go func() {
 		for range sigs {
-			p.Send(panes.QuitMsg{})
+			p.Send(ui.QuitMsg{})
 		}
 	}()
 	// A newer diatom waits for the human to restart on it, rather than
@@ -83,10 +82,10 @@ func cmdApp(ctx context.Context) error {
 	defer stopWatch()
 	if exe, err := self(); err == nil {
 		go up.watch(watch, func(bin string) {
-			p.Send(panes.UpdateMsg{Bin: bin, Why: "a new release is installed"})
+			p.Send(ui.UpdateMsg{Bin: bin, Why: "a new release is installed"})
 		})
 		go watchBinary(watch, exe, func() {
-			p.Send(panes.UpdateMsg{Bin: exe, Why: "a new build is installed"})
+			p.Send(ui.UpdateMsg{Bin: exe, Why: "a new build is installed"})
 		})
 	}
 	_, err = p.Run()
@@ -109,7 +108,7 @@ func cmdApp(ctx context.Context) error {
 // scheduler is the scheduler cmdApp runs, and err why it stopped, once Done
 // is closed.
 type scheduler struct {
-	panes.Scheduler
+	ui.Scheduler
 	err    error
 	unlock func()
 }
@@ -159,7 +158,7 @@ func startScheduler(s *queue.Store, paths config.Paths, log *slog.Logger) (*sche
 // openLog opens the scheduler's log for appending, setting a big one aside
 // first.
 func openLog(s *queue.Store) (io.WriteCloser, error) {
-	path := panes.LogPath(s)
+	path := ui.LogPath(s)
 	if fi, err := os.Stat(path); err == nil && fi.Size() > logKeep {
 		if err := os.Rename(path, path+".1"); err != nil {
 			return nil, err

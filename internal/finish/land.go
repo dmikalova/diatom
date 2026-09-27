@@ -199,7 +199,7 @@ func plural(n int, one, many string) string {
 // Summary says in one line how far a done goal is on its way upstream.
 func Summary(g *queue.Goal, res *Result) string {
 	if res == nil {
-		return "not laid out: `diatom goal finish " + g.Name + "` lays it out"
+		return "not laid out: landing it with F or P lays it out first"
 	}
 	l := res.Landing
 	var line string

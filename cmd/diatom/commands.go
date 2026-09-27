@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -11,15 +10,11 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"text/tabwriter"
-	"time"
 
 	"github.com/dmikalova/diatom/internal/config"
-	"github.com/dmikalova/diatom/internal/finish"
 	"github.com/dmikalova/diatom/internal/gate"
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/hook"
-	"github.com/dmikalova/diatom/internal/intake"
 	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/roster"
@@ -48,365 +43,6 @@ func here(ctx context.Context) (*queue.Store, error) {
 	return queue.Open(root), nil
 }
 
-func cmdGoal(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
-	if len(args) == 0 {
-		return fmt.Errorf("%w: goal needs a subcommand", errUsage)
-	}
-	s, err := here(ctx)
-	if err != nil {
-		return err
-	}
-	switch sub, rest := args[0], args[1:]; sub {
-	case "new":
-		return goalNew(ctx, s, rest, stdin, stdout)
-	case "approve":
-		return goalApprove(ctx, s, rest, stdout)
-	case "plan":
-		return goalPlan(s, rest, stdout)
-	case "list":
-		goals, err := s.Goals()
-		if err != nil {
-			return err
-		}
-		w := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-		for _, g := range goals {
-			var notes []string
-			if waiting := s.Waiting(g); len(waiting) > 0 {
-				notes = append(notes, "after "+strings.Join(waiting, ","))
-			}
-			_, _ = fmt.Fprintf(
-				w,
-				"%s\t%s\t%s\t%s\n",
-				g.Name,
-				g.State,
-				strings.Join(notes, " "),
-				g.Title,
-			)
-		}
-		return w.Flush()
-	case "done":
-		return goalDone(ctx, s, rest, stdout)
-	case "finish":
-		return goalFinish(ctx, s, rest, stdout)
-	case "after":
-		if len(rest) == 0 {
-			return fmt.Errorf("%w: goal after takes a goal, then the goals it waits for", errUsage)
-		}
-		if err := s.SetAfter(rest[0], rest[1:]); err != nil {
-			return err
-		}
-		if len(rest) == 1 {
-			_, _ = fmt.Fprintf(stdout, "goal %s waits for no other goal\n", rest[0])
-		} else {
-			_, _ = fmt.Fprintf(
-				stdout,
-				"goal %s waits for %s to finish\n",
-				rest[0],
-				strings.Join(rest[1:], " and "),
-			)
-		}
-		return nil
-	case "activate", "park":
-		if len(rest) != 1 {
-			return fmt.Errorf("%w: goal %s takes a goal name", errUsage, sub)
-		}
-		g, err := s.Goal(rest[0])
-		if err != nil {
-			return err
-		}
-		g.State = queue.GoalActive
-		if sub == "park" {
-			g.State = queue.GoalParked
-		}
-		return s.SaveGoal(g)
-	}
-	return fmt.Errorf("%w: unknown goal subcommand %q", errUsage, args[0])
-}
-
-// goalDone ends a goal's work (see finish.MarkDone), then lays its commits
-// out for landing (ADR 0003).
-func goalDone(ctx context.Context, s *queue.Store, args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("goal done", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	force := fs.Bool("force", false, "finish the goal with hunks unreviewed or tasks not done")
-	name, err := parseInterspersed(fs, args)
-	if err != nil {
-		return err
-	}
-	if len(name) != 1 {
-		return fmt.Errorf("%w: goal done takes a goal name", errUsage)
-	}
-	g, err := s.Goal(name[0])
-	if err != nil {
-		return err
-	}
-	if err := finish.MarkDone(ctx, s, g, *force); err != nil {
-		return err
-	}
-	_, _ = fmt.Fprintf(stdout, "goal %s is done\n", g.Name)
-	res, err := layOut(ctx, s, g, stdout)
-	if err != nil {
-		_, _ = fmt.Fprintf(stdout, "Its commits couldn't be laid out for landing: %v\n"+
-			"%s holds all of its work.\n", err, g.IntegrationBranch())
-		return nil
-	}
-	_, _ = fmt.Fprint(stdout, finish.Describe(g, res))
-	return nil
-}
-
-// goalFinish lands a done goal: it shows the goal laid out for landing, or
-// with -push pushes it straight to the base branch, or with -prs opens its
-// stack of pull requests. A layout the goal's branches have moved past is
-// laid out again first. The scheduler then watches the goal land, and
-// finishes it once it is merged upstream with the checks passing.
-func goalFinish(ctx context.Context, s *queue.Store, args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("goal finish", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	push := fs.Bool("push", false, "push the goal straight to its base branch")
-	prs := fs.Bool("prs", false, "push the goal's branches and open a pull request for each")
-	remote := fs.String("remote", "origin", "the remote to push to")
-	force := fs.Bool("force", false, "push even though the gate fails")
-	name, err := parseInterspersed(fs, args)
-	if err != nil {
-		return err
-	}
-	if len(name) != 1 || *push && *prs {
-		return fmt.Errorf("%w: goal finish takes a goal name, and -push or -prs", errUsage)
-	}
-	g, err := s.Goal(name[0])
-	if err != nil {
-		return err
-	}
-	if g.State != queue.GoalDone {
-		return fmt.Errorf(
-			"goal %s is %s: only a done goal is finished, after `diatom goal done %s`",
-			g.Name,
-			g.State,
-			g.Name,
-		)
-	}
-	res, err := finish.Ready(ctx, s, g)
-	if err != nil {
-		return err
-	}
-	if res == nil {
-		if res, err = layOut(ctx, s, g, stdout); err != nil {
-			return err
-		}
-	}
-	how := finish.Push
-	switch {
-	case *prs:
-		how = finish.PRs
-	case !*push:
-		_, _ = fmt.Fprint(stdout, finish.Describe(g, res))
-		return nil
-	}
-	urls, err := finish.Land(ctx, s, g, res, how, *remote, *force, finish.RunGH)
-	for _, u := range urls {
-		_, _ = fmt.Fprintln(stdout, u)
-	}
-	if err != nil {
-		return err
-	}
-	if how == finish.Push {
-		_, _ = fmt.Fprintf(stdout, "pushed %s to %s on %s\n", res.Final, g.Base, *remote)
-		if local, err := (git.Repo{Dir: s.Repo()}).RevParse(
-			ctx,
-			g.Base,
-		); err == nil &&
-			local != res.Tip() {
-			_, _ = fmt.Fprintf(
-				stdout,
-				"Your %s is behind it now: `git pull` brings it up to date.\n",
-				g.Base,
-			)
-		}
-	}
-	_, _ = fmt.Fprintf(stdout, "The scheduler finishes goal %s once it is merged into %s on %s "+
-		"and the checks there pass.\n", g.Name, g.Base, *remote)
-	return nil
-}
-
-// layOut lays a done goal out for landing, running the gate on each pull
-// request.
-func layOut(
-	ctx context.Context,
-	s *queue.Store,
-	g *queue.Goal,
-	stdout io.Writer,
-) (*finish.Result, error) {
-	paths, err := config.DefaultPaths()
-	if err != nil {
-		return nil, err
-	}
-	cfg, err := config.Load(s.Repo(), paths)
-	if err != nil {
-		return nil, err
-	}
-	_, _ = fmt.Fprintf(stdout, "laying goal %s out on %s, running the gate on each pull request…\n",
-		g.Name, g.Base)
-	return finish.Build(ctx, s, g, finish.Options{Gate: cfg.Gate, Timeout: cfg.GateTimeout})
-}
-
-// goalNew creates a goal on the current branch. It starts in planning with a
-// grilling task holding the description from stdin (ADR 0010); -active skips
-// grilling for a goal whose workstreams and tasks are written by hand.
-func goalNew(
-	ctx context.Context,
-	s *queue.Store,
-	args []string,
-	stdin io.Reader,
-	stdout io.Writer,
-) error {
-	fs := flag.NewFlagSet("goal new", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	title := fs.String("title", "", "what the goal is for")
-	ws := fs.String("ws", "", "workstreams, comma-separated, each as name or name:dep+dep")
-	active := fs.Bool("active", false, "start the goal active instead of planning")
-	after := fs.String("after", "", "goals this one waits for, comma-separated, until they finish")
-	name, err := parseInterspersed(fs, args)
-	if err != nil {
-		return err
-	}
-	if len(name) != 1 {
-		return fmt.Errorf("%w: goal new takes one goal name", errUsage)
-	}
-	waitFor := splitList(*after)
-	for _, dep := range waitFor {
-		if _, err := s.Goal(dep); err != nil {
-			return fmt.Errorf("goal %s can't wait for %s: %w", name[0], dep, err)
-		}
-	}
-	repo := git.Repo{Dir: s.Repo()}
-	base, err := repo.CurrentBranch(ctx)
-	if err != nil {
-		return fmt.Errorf("the goal branches from the current branch, and there is none: %w", err)
-	}
-	if !*active {
-		if *ws != "" {
-			return fmt.Errorf(
-				"%w: a goal in planning gets its workstreams from its plan; -ws needs -active",
-				errUsage,
-			)
-		}
-		body, err := readBody(stdin)
-		if err != nil {
-			return err
-		}
-		if strings.TrimSpace(*title) == "" {
-			*title = name[0]
-		}
-		g, err := plan.NewGoal(
-			ctx,
-			s,
-			name[0],
-			*title,
-			"",
-			body,
-			queue.Origin{Type: "human"},
-			time.Now(),
-		)
-		if err != nil {
-			return err
-		}
-		if err := s.SetAfter(g.Name, waitFor); err != nil {
-			return err
-		}
-		_, _ = fmt.Fprintf(
-			stdout,
-			"goal %s created from %s, in planning: grilling starts once `diatom run` "+
-				"picks it up%s\n",
-			g.Name,
-			g.Base,
-			waitNote(waitFor),
-		)
-		return nil
-	}
-	workstreams, err := parseWorkstreams(*ws)
-	if err != nil {
-		return err
-	}
-	g := &queue.Goal{
-		Name: name[0], Title: *title, State: queue.GoalPlanning, Base: base,
-		Created: time.Now(), Workstreams: workstreams,
-	}
-	if g.Title == "" {
-		g.Title = g.Name
-	}
-	g.State = queue.GoalActive
-	if err := s.CreateGoal(g); err != nil {
-		return err
-	}
-	if err := s.SetAfter(g.Name, waitFor); err != nil {
-		return err
-	}
-	_, _ = fmt.Fprintf(
-		stdout,
-		"goal %s created from %s, %s%s\n",
-		g.Name,
-		base,
-		g.State,
-		waitNote(waitFor),
-	)
-	return nil
-}
-
-// waitNote says which goals a new goal waits for.
-func waitNote(after []string) string {
-	if len(after) == 0 {
-		return ""
-	}
-	return ", once " + strings.Join(after, " and ") + " finish"
-}
-
-// splitList splits a comma-separated list, dropping empty items.
-func splitList(s string) []string {
-	var out []string
-	for item := range strings.SplitSeq(s, ",") {
-		if item = strings.TrimSpace(item); item != "" {
-			out = append(out, item)
-		}
-	}
-	return out
-}
-
-// goalApprove signs a goal's plan off (ADR 0010).
-func goalApprove(ctx context.Context, s *queue.Store, args []string, stdout io.Writer) error {
-	if len(args) != 1 {
-		return fmt.Errorf("%w: goal approve takes a goal name", errUsage)
-	}
-	paths, err := config.DefaultPaths()
-	if err != nil {
-		return err
-	}
-	cfg, err := config.Load(s.Repo(), paths)
-	if err != nil {
-		return err
-	}
-	if err := plan.Approve(ctx, s, cfg, args[0], time.Now()); err != nil {
-		return err
-	}
-	_, _ = fmt.Fprintf(stdout, "goal %s is signed off and active\n", args[0])
-	return nil
-}
-
-// goalPlan prints a goal's plan.
-func goalPlan(s *queue.Store, args []string, stdout io.Writer) error {
-	if len(args) != 1 {
-		return fmt.Errorf("%w: goal plan takes a goal name", errUsage)
-	}
-	p, err := plan.Load(s.GoalDir(args[0]))
-	if err != nil {
-		return err
-	}
-	if p == nil {
-		return fmt.Errorf("goal %s has no plan yet", args[0])
-	}
-	_, _ = io.WriteString(stdout, plan.Describe(p))
-	return nil
-}
-
 // parseInterspersed parses flags that may come after positional arguments.
 func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
 	var pos []string
@@ -422,30 +58,15 @@ func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
 	}
 }
 
-func parseWorkstreams(spec string) ([]queue.Workstream, error) {
-	var out []queue.Workstream
-	for part := range strings.SplitSeq(spec, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		name, deps, _ := strings.Cut(part, ":")
-		w := queue.Workstream{Name: name}
-		for d := range strings.SplitSeq(deps, "+") {
-			if d != "" {
-				w.DependsOn = append(w.DependsOn, d)
-			}
-		}
-		out = append(out, w)
-	}
-	for _, w := range out {
-		for _, d := range w.DependsOn {
-			if !slices.ContainsFunc(out, func(o queue.Workstream) bool { return o.Name == d }) {
-				return nil, fmt.Errorf("workstream %s depends on unknown workstream %s", w.Name, d)
-			}
+// splitList splits a comma-separated list, dropping empty items.
+func splitList(s string) []string {
+	var out []string
+	for item := range strings.SplitSeq(s, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
 		}
 	}
-	return out, nil
+	return out
 }
 
 func cmdTask(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
@@ -453,8 +74,6 @@ func cmdTask(ctx context.Context, args []string, stdin io.Reader, stdout io.Writ
 		return fmt.Errorf("%w: task needs a subcommand", errUsage)
 	}
 	switch sub, rest := args[0], args[1:]; sub {
-	case "add":
-		return taskAdd(ctx, rest, stdin, stdout)
 	case session.EntryDone, session.EntryNote, session.EntryAsk:
 		return taskReport(ctx, sub, rest, stdout)
 	case "add-task", "after", "feedback", "new-goal", "plan":
@@ -490,74 +109,6 @@ func taskGoals(ctx context.Context, args []string, stdout io.Writer) error {
 		return fmt.Errorf("no goal %q; the goals are %s", args[0], strings.Join(names, ", "))
 	}
 	return roster.Detail(stdout, s, args[0])
-}
-
-func taskAdd(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
-	fs := flag.NewFlagSet("task add", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	goal := fs.String("goal", "", "the goal")
-	ws := fs.String("ws", "", "the workstream")
-	kind := fs.String("kind", string(queue.Planned), "the task kind")
-	profile := fs.String("profile", "", "the profile, instead of the kind's default")
-	after := fs.String("after", "", "ids of tasks that must be done first, comma-separated")
-	priority := fs.Int("priority", 0, "order among tasks of the same kind; lower runs first")
-	title, err := parseInterspersed(fs, args)
-	if err != nil {
-		return err
-	}
-	if *goal == "" || *ws == "" || len(title) == 0 {
-		return fmt.Errorf("%w: task add needs -goal, -ws and a title", errUsage)
-	}
-	s, err := here(ctx)
-	if err != nil {
-		return err
-	}
-	g, err := s.Goal(*goal)
-	if err != nil {
-		return err
-	}
-	if _, ok := g.Workstream(*ws); !ok {
-		return fmt.Errorf("goal %s has no workstream %s", g.Name, *ws)
-	}
-	body, err := readBody(stdin)
-	if err != nil {
-		return err
-	}
-	t := &queue.Task{
-		Title: strings.Join(
-			title,
-			" ",
-		),
-		Kind:       queue.Kind(*kind),
-		Profile:    *profile,
-		Workstream: *ws,
-		Priority:   *priority,
-		Origin:     queue.Origin{Type: "human"},
-		Created:    time.Now(),
-		Body:       body,
-	}
-	for id := range strings.SplitSeq(*after, ",") {
-		if id = strings.TrimSpace(id); id != "" {
-			t.DependsOn = append(t.DependsOn, id)
-		}
-	}
-	if err := s.AddTask(g.Name, t); err != nil {
-		return err
-	}
-	_, _ = fmt.Fprintln(stdout, t.ID)
-	return nil
-}
-
-// readBody reads a task body from stdin when it is piped, not a terminal.
-func readBody(stdin io.Reader) (string, error) {
-	if f, ok := stdin.(*os.File); ok {
-		info, err := f.Stat()
-		if err != nil || info.Mode()&os.ModeCharDevice != 0 {
-			return "", nil
-		}
-	}
-	b, err := io.ReadAll(stdin)
-	return string(b), err
 }
 
 // taskReport is the agent's task tool. In a revision session, marking a task
@@ -598,125 +149,6 @@ func taskReport(ctx context.Context, typ string, args []string, stdout io.Writer
 	return nil
 }
 
-func cmdQuestions(ctx context.Context, stdout io.Writer) error {
-	s, err := here(ctx)
-	if err != nil {
-		return err
-	}
-	goals, err := s.Goals()
-	if err != nil {
-		return err
-	}
-	names := []string{queue.IntakeGoal}
-	for _, g := range goals {
-		names = append(names, g.Name)
-	}
-	for _, name := range names {
-		qs, err := s.Questions(name, queue.QuestionOpen)
-		if err != nil {
-			return err
-		}
-		for _, q := range qs {
-			if q.Answer != "" {
-				continue
-			}
-			_, _ = fmt.Fprintf(
-				stdout,
-				"%s %s (task %s)\n%s\n",
-				questionGoal(name),
-				q.ID,
-				q.Task,
-				indent(q.Text),
-			)
-		}
-	}
-	return nil
-}
-
-// questionGoal names the goal a question is filed under: triage's are under
-// intake.
-func questionGoal(goal string) string {
-	if goal == queue.IntakeGoal {
-		return "intake"
-	}
-	return goal
-}
-
-func indent(s string) string {
-	return "    " + strings.ReplaceAll(strings.TrimRight(s, "\n"), "\n", "\n    ")
-}
-
-func cmdAnswer(ctx context.Context, args []string) error {
-	if len(args) < 3 {
-		return fmt.Errorf("%w: answer takes a goal, a question id and the answer", errUsage)
-	}
-	s, err := here(ctx)
-	if err != nil {
-		return err
-	}
-	goal := args[0]
-	if goal == "intake" {
-		goal = queue.IntakeGoal
-	}
-	return s.Answer(goal, args[1], strings.Join(args[2:], " "), time.Now())
-}
-
-func cmdStatus(ctx context.Context, stdout io.Writer) error {
-	s, err := here(ctx)
-	if err != nil {
-		return err
-	}
-	w := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-	triage, err := s.Tasks(queue.IntakeGoal)
-	if err != nil {
-		return err
-	}
-	if n := len(
-		slices.DeleteFunc(triage, func(t *queue.Task) bool { return t.State == queue.Done }),
-	); n > 0 {
-		_, _ = fmt.Fprintf(w, "intake\t\t%d being sorted\n", n)
-	}
-	goals, err := s.Goals()
-	if err != nil {
-		return err
-	}
-	for _, g := range goals {
-		if g.State == queue.GoalFinished {
-			continue
-		}
-		if g.State == queue.GoalDone {
-			res, err := finish.Load(s.GoalDir(g.Name))
-			if err != nil {
-				return err
-			}
-			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", g.Name, g.State, finish.Summary(g, res))
-			continue
-		}
-		tasks, err := s.Tasks(g.Name)
-		if err != nil {
-			return err
-		}
-		counts := map[queue.State]int{}
-		var active []string
-		for _, t := range tasks {
-			counts[t.State]++
-			if t.State == queue.Active {
-				active = append(active, t.Workstream+"/"+t.ID)
-			}
-		}
-		if waiting := s.Waiting(g); len(waiting) > 0 {
-			active = append(active, "waiting for "+strings.Join(waiting, ","))
-		}
-		_, _ = fmt.Fprintf(w, "%s\t%s\tpending %d\tactive %d\tblocked %d\tdone %d\t%s\n",
-			g.Name, g.State, counts[queue.Pending], counts[queue.Active],
-			counts[queue.Blocked], counts[queue.Done], strings.Join(active, " "))
-	}
-	if err := w.Flush(); err != nil {
-		return err
-	}
-	return ctx.Err()
-}
-
 // hookScope is the part of diatom's state the session's file tools may reach:
 // its worktree, its tasks and its goal's ADR drafts. Outside a session
 // nothing is held back.
@@ -754,39 +186,4 @@ func cmdHook(ctx context.Context, args []string, stdin io.Reader, stdout io.Writ
 		return hook.Stop(ctx, dir, spec, gate.Within(spec.GateTimeout, gate.Run), stdout)
 	}
 	return errors.Join(errUsage, fmt.Errorf("unknown hook %q", args[0]))
-}
-
-// cmdIntake sends text on stdin for triage to sort into the repo's goals
-// (ADR 0009), as the intake pane does. -goal says which goal it is about, as
-// a hint.
-func cmdIntake(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
-	fs := flag.NewFlagSet("intake", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	goal := fs.String("goal", "", "the goal it is about, as a hint to triage")
-	if err := fs.Parse(args); err != nil || fs.NArg() > 0 {
-		return fmt.Errorf("%w: intake takes only -goal, and the text on stdin", errUsage)
-	}
-	s, err := here(ctx)
-	if err != nil {
-		return err
-	}
-	if *goal != "" {
-		if _, err := s.Goal(*goal); err != nil {
-			return err
-		}
-	}
-	text, err := io.ReadAll(stdin)
-	if err != nil {
-		return err
-	}
-	if string(bytes.TrimSpace(text)) == "" {
-		return fmt.Errorf("%w: intake needs the text on stdin", errUsage)
-	}
-	if _, err := intake.Write(intake.Dir(s.Repo()), intake.Intake{
-		Source: "cli", Created: time.Now(), Goal: *goal, Text: string(text),
-	}); err != nil {
-		return err
-	}
-	_, _ = fmt.Fprintln(stdout, "queued for triage")
-	return nil
 }

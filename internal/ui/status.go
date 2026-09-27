@@ -1,8 +1,8 @@
-// Package panes holds the workspace's panes besides the reviewer (ADR 0007):
-// status, questions and intake. Each is a separate Bubble Tea program that
-// reads and writes .diatom/ state, so any of them can restart without the
-// others noticing.
-package panes
+// Package ui is diatom's window (ADR 0007): a nav of Next, the intake and
+// the repo's goals down the left, and a main pane showing what it selects.
+// Everything it shows is read from .diatom/, and everything it changes is
+// written there, so the scheduler running beside it needs no other channel.
+package ui
 
 import (
 	"context"
@@ -14,11 +14,9 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 
 	"github.com/dmikalova/diatom/internal/config"
 	"github.com/dmikalova/diatom/internal/finish"
-	"github.com/dmikalova/diatom/internal/focus"
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/intake"
 	"github.com/dmikalova/diatom/internal/plan"
@@ -33,11 +31,10 @@ import (
 // refreshEvery is how often a pane rereads the state.
 const refreshEvery = 3 * time.Second
 
-// Env is what every pane reads and writes.
+// Env is what the window reads and writes.
 type Env struct {
-	// Store is the repo's; a workspace shows one repo (ADR 0007).
+	// Store is the repo's; a window shows one repo (ADR 0007).
 	Store *queue.Store
-	Focus focus.File
 	Paths config.Paths
 	Now   func() time.Time
 }
@@ -81,14 +78,13 @@ type goalRow struct {
 	description string
 }
 
-// Status shows every goal in the repo, the intake triage is sorting, and the
-// sessions running now, and sets the focus the other panes follow.
+// Status is where the repo's goals, and the intake triage is sorting, stand:
+// the rows the nav lists, and a goal opened to its actions, tasks, sessions
+// and steps.
 type Status struct {
-	ctx   context.Context
-	env   Env
-	rows  []goalRow
-	sel   int
-	focus focus.Focus
+	ctx  context.Context
+	env  Env
+	rows []goalRow
 
 	// hunks caches each commit's hunk count; commits never change.
 	hunks map[string]int
@@ -110,8 +106,6 @@ type Status struct {
 	detail *detail
 	// openReview opens a goal's review, where the window has one.
 	openReview func(goal string)
-	// top is the first line of the list on screen.
-	top int
 
 	width, height int
 	flash         string
@@ -130,11 +124,6 @@ func NewStatus(ctx context.Context, env Env) *Status {
 
 func (s *Status) reload() {
 	s.err = nil
-	fc, err := s.env.Focus.Read()
-	if err != nil {
-		s.err = err
-	}
-	s.focus = fc
 	store := s.env.Store
 	s.health = health(store)
 	goals, err := store.Goals()
@@ -163,14 +152,7 @@ func (s *Status) reload() {
 		}
 		rows = append(rows, row)
 	}
-	keep := s.selected()
 	s.rows = rows
-	if keep != nil {
-		s.sel = max(slices.IndexFunc(rows, func(r goalRow) bool {
-			return r.goal.Name == keep.goal.Name
-		}), 0)
-	}
-	s.sel = min(s.sel, max(len(rows)-1, 0))
 	s.reloadDetail()
 }
 
@@ -329,77 +311,10 @@ func (s *Status) toReview(store *queue.Store, goal string, commits []string) (in
 	return total, nil
 }
 
-func (s *Status) selected() *goalRow {
-	if s.sel < 0 || s.sel >= len(s.rows) {
-		return nil
-	}
-	return &s.rows[s.sel]
-}
-
-// Init implements tea.Model.
-func (s *Status) Init() tea.Cmd { return tick() }
-
-// Update implements tea.Model.
-func (s *Status) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		s.width, s.height = msg.Width, msg.Height
-	case tickMsg:
-		s.reload()
-		return s, tick()
-	case jobMsg:
-		s.reload()
-		s.busy, s.flash, s.err = "", msg.flash, msg.err
-	case tea.KeyPressMsg:
-		return s.updateKey(msg)
-	}
-	return s, nil
-}
-
-// goalKeys act on a goal, so not on the intake row.
-var goalKeys = []string{"p", "s", "d", "D", "F", "P", "f"}
-
-func (s *Status) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	s.flash = ""
-	if s.detail != nil {
-		return s.updateDetail(msg)
-	}
-	row := s.selected()
-	key := msg.String()
-	if row != nil && row.intake && slices.Contains(goalKeys, key) {
-		s.flash = "intake isn't a goal: enter shows what triage is doing with it"
-		return s, nil
-	}
-	if row != nil {
-		if cmd, ok := s.act(row, key); ok {
-			return s, cmd
-		}
-	}
-	switch key {
-	case "q", "ctrl+c":
-		return s, tea.Quit
-	case "j", "down":
-		s.sel = min(s.sel+1, max(len(s.rows)-1, 0))
-	case "k", "up":
-		s.sel = max(s.sel-1, 0)
-	case "enter", "space", " ", "right", "l":
-		if row != nil {
-			if !row.intake {
-				s.setFocus(focus.Focus{Goal: row.goal.Name})
-			}
-			s.openDetail(row)
-		}
-	case "f":
-		if row != nil {
-			s.setFocus(focus.Focus{Goal: row.goal.Name})
-		}
-	case "esc":
-		s.setFocus(focus.Focus{})
-	case "r":
-		s.reload()
-	}
-	s.confirm = ""
-	return s, nil
+// jobDone ends a background job, such as laying a goal out.
+func (s *Status) jobDone(msg jobMsg) {
+	s.reload()
+	s.busy, s.flash, s.err = "", msg.flash, msg.err
 }
 
 // act does what one of a goal's keys does, and reports whether key is one.
@@ -631,87 +546,17 @@ func (s *Status) save(row *goalRow, what string) {
 	s.flash = fmt.Sprintf("%s %s", row.goal.Name, what)
 }
 
-func (s *Status) setFocus(fc focus.Focus) {
-	if err := s.env.Focus.Write(fc); err != nil {
-		s.err = err
-		return
-	}
-	s.focus = fc
-	s.flash = "focused " + describe(fc)
-}
-
-func describe(fc focus.Focus) string {
-	if fc.Goal == "" {
-		return "the repo"
-	}
-	return fc.Goal
-}
-
-// View implements tea.Model. The repo and focus are in the title, which
-// zellij shows on the pane's frame, so the pane itself is only the goals.
-func (s *Status) View() tea.View {
-	v := tea.NewView(s.render())
-	v.AltScreen = true
-	// The total comes first, so a narrow frame cuts the focus instead.
-	total := 0.0
-	for _, r := range s.rows {
-		total += r.cost
-	}
-	v.WindowTitle = fmt.Sprintf("status · $%.2f · %s · focus %s",
-		total, filepath.Base(s.env.Store.Repo()), describe(s.focus))
-	return v
-}
-
-func (s *Status) render() string {
-	if s.detail != nil {
-		return s.renderDetail()
-	}
-	var b strings.Builder
-	used := 0
-	if s.health != "" {
-		h := ansi.Wordwrap(s.health, max(s.width, 20), "")
-		b.WriteString(tui.Color(h, tui.Red) + "\n\n")
-		used = strings.Count(h, "\n") + 2
-	}
-	if len(s.rows) == 0 {
-		b.WriteString(
-			"No goals yet. Describe what you want in the intake pane, and triage turns it " +
-				"into goals.\n",
-		)
-	}
-	var lines []string
-	first, last := 0, 0
-	for i, r := range s.rows {
-		var rb strings.Builder
-		s.renderRow(&rb, i, r)
-		if i == s.sel {
-			first = len(lines)
-		}
-		lines = append(lines, strings.Split(strings.TrimRight(rb.String(), "\n"), "\n")...)
-		if i == s.sel {
-			last = len(lines) - 1
-		}
-	}
-	foot := s.foot()
-	b.WriteString(scroll(lines, first, last, &s.top, max(s.height-len(foot)-used, 3)))
-	if len(foot) > 0 {
-		b.WriteString("\n" + strings.Join(foot, "\n"))
-	}
-	return b.String()
-}
-
 // health says what keeps the scheduler from starting work, or "" when
 // nothing does.
 func health(store *queue.Store) string {
 	if _, err := store.Scheduler(); errors.Is(err, queue.ErrNotRunning) {
-		return "The scheduler isn't running, so no work starts: run `diatom run` in the scheduler tab."
+		return "no scheduler: reopen diatom to start work"
 	}
 	st, err := store.Stuck()
 	if err != nil || st == nil {
 		return ""
 	}
-	return fmt.Sprintf("The scheduler is stuck, so no work starts, since %s: %s",
-		st.Since.Local().Format("15:04"), st.Error)
+	return fmt.Sprintf("stuck since %s: %s", st.Since.Local().Format("15:04"), st.Error)
 }
 
 // foot is what the last key and the background job said.
@@ -740,12 +585,10 @@ func scroll(lines []string, first, last int, top *int, room int) string {
 	return strings.Join(lines[*top:min(*top+room, len(lines))], "\n")
 }
 
-// renderRow renders one goal and what is running for it.
-func (s *Status) renderRow(b *strings.Builder, i int, r goalRow) {
+// renderRow renders one goal and what is running for it, at the head of its
+// page.
+func (s *Status) renderRow(b *strings.Builder, r goalRow) {
 	mark := "  "
-	if i == s.sel {
-		mark = tui.Color("› ", tui.Cyan)
-	}
 	if r.intake {
 		cost := ""
 		if r.cost > 0 {
@@ -755,11 +598,7 @@ func (s *Status) renderRow(b *strings.Builder, i int, r goalRow) {
 		s.renderActive(b, r)
 		return
 	}
-	focused := " "
-	if r.goal.Name == s.focus.Goal {
-		focused = tui.Color("●", tui.Cyan)
-	}
-	fmt.Fprintf(b, "%s%s %s %s\n", mark, focused, tui.Bold(r.goal.Name), goalState(r))
+	fmt.Fprintf(b, "%s  %s %s\n", mark, tui.Bold(r.goal.Name), goalState(r))
 	fmt.Fprintf(
 		b,
 		"      %s",
@@ -890,10 +729,6 @@ func lastEvent(repo, goal, ws string) string {
 	}
 	return oneLine(st[len(st)-1].summary, 90)
 }
-
-// Editing reports whether a job, such as laying a goal out, is still
-// running.
-func (s *Status) Editing() bool { return s.busy != "" }
 
 // intakeLine says what the human sent that triage is still sorting.
 func intakeLine(r goalRow) string {

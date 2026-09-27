@@ -1,4 +1,4 @@
-package panes
+package ui
 
 import (
 	"fmt"
@@ -29,6 +29,9 @@ type detail struct {
 // openDetail opens a row of the status list.
 func (s *Status) openDetail(r *goalRow) {
 	s.detail = &detail{goal: r.goal.Name, title: r.goal.Title}
+	if s.detail.title == "" {
+		s.detail.title = r.goal.Name
+	}
 	if r.intake {
 		s.detail.title = "Intake"
 	}
@@ -80,6 +83,16 @@ func (s *Status) detailRow() *goalRow {
 
 // detailActions are what can be done with the goal open: its actions, and
 // reviewing it where the window can.
+// pageRow is the row of the goal or intake open, nil when it is gone.
+func (s *Status) pageRow() *goalRow {
+	for i := range s.rows {
+		if s.rows[i].goal.Name == s.detail.goal {
+			return &s.rows[i]
+		}
+	}
+	return nil
+}
+
 func (s *Status) detailActions() []action {
 	row := s.detailRow()
 	acts := actions(row)
@@ -92,22 +105,19 @@ func (s *Status) detailActions() []action {
 // updateDetail handles keys while a goal or anything in it is open: enter or
 // space does the action or opens what is selected, a goal's keys work as in
 // the list, and esc backs out one level.
-func (s *Status) updateDetail(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+func (s *Status) updateDetail(msg tea.KeyPressMsg) tea.Cmd {
 	d := s.detail
 	key := msg.String()
-	if key == "q" || key == "ctrl+c" {
-		return s, tea.Quit
-	}
 	if d.task != nil {
 		if d.task.update(s, key) {
 			d.task = nil
 		}
-		return s, nil
+		return nil
 	}
 	acts := s.detailActions()
 	if row := s.detailRow(); row != nil {
 		if cmd, ok := s.act(row, key); ok {
-			return s, cmd
+			return cmd
 		}
 	}
 	if !isEnter(key) {
@@ -125,7 +135,7 @@ func (s *Status) updateDetail(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case d.sel < len(acts):
 			if isEnter(key) {
 				cmd, _ := s.act(s.detailRow(), acts[d.sel].key)
-				return s, cmd
+				return cmd
 			}
 		case d.sel-len(acts) < len(d.tasks):
 			tv, err := loadTask(s.env.Store, d.goal, d.tasks[d.sel-len(acts)].ID)
@@ -136,7 +146,7 @@ func (s *Status) updateDetail(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			d.task = tv
 		}
 	}
-	return s, nil
+	return nil
 }
 
 // isEnter reports whether key chooses what a menu has selected: enter, or
@@ -169,29 +179,8 @@ func (s *Status) renderDetail() string {
 // one selected in view.
 func (s *Status) renderMenu(d *detail, room int) string {
 	var lines []string
-	row := s.detailRow()
-	if row != nil {
-		var rb strings.Builder
-		s.renderRow(&rb, -1, *row)
-		// The row's first line repeats the title; the rest says where it
-		// stands.
-		lines = strings.Split(strings.TrimRight(rb.String(), "\n"), "\n")[1:]
-		for i := range lines {
-			lines[i] = strings.TrimPrefix(lines[i], "    ")
-		}
-		if d := row.description; d != "" {
-			lines = append(
-				strings.Split(ansi.Wordwrap("  "+d, max(s.width, 20), ""), "\n"),
-				lines...)
-		}
-		if len(row.waiting) > 0 {
-			lines = append(
-				lines,
-				"  "+tui.Color("blocked: waits for "+strings.Join(row.waiting, ", ")+
-					" to finish, and nothing of it starts until then", tui.Red),
-			)
-		}
-		lines = append(lines, "")
+	if row := s.pageRow(); row != nil {
+		lines = s.pageHead(*row)
 	}
 	sel := 0
 	acts := s.detailActions()
@@ -205,6 +194,7 @@ func (s *Status) renderMenu(d *detail, room int) string {
 	if len(acts) > 0 {
 		lines = append(lines, "")
 	}
+	row := s.detailRow()
 	if row != nil && row.plan != nil {
 		lines = append(lines, tui.Dim("─── plan"))
 		lines = append(
@@ -223,6 +213,34 @@ func (s *Status) renderMenu(d *detail, room int) string {
 		lines = append(lines, s.taskLine(d, t, mark))
 	}
 	return scroll(lines, sel, sel, &d.top, room)
+}
+
+// pageHead says where the goal or intake open stands: its state, what it is
+// for, its tasks, and what it waits for.
+func (s *Status) pageHead(row goalRow) []string {
+	var rb strings.Builder
+	s.renderRow(&rb, row)
+	// The row's first line repeats the title; the rest says where it stands.
+	lines := strings.Split(strings.TrimRight(rb.String(), "\n"), "\n")[1:]
+	for i := range lines {
+		lines[i] = strings.TrimPrefix(lines[i], "    ")
+	}
+	head := []string{"  " + intakeLine(row)}
+	if !row.intake {
+		head = []string{"  " + goalState(row) + tui.Dim(" · "+row.goal.Name)}
+		if d := row.description; d != "" {
+			head = append(head, strings.Split(ansi.Wordwrap("  "+d, max(s.width, 20), ""), "\n")...)
+		}
+	}
+	lines = append(head, lines...)
+	if len(row.waiting) > 0 {
+		lines = append(
+			lines,
+			"  "+tui.Color("blocked: waits for "+strings.Join(row.waiting, ", ")+
+				" to finish, and nothing of it starts until then", tui.Red),
+		)
+	}
+	return append(lines, "")
 }
 
 // taskLine is one of a goal's tasks, with its latest step while it runs.

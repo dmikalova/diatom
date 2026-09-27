@@ -4,37 +4,18 @@
 //
 // Usage:
 //
-//	diatom run
-//	diatom stop [-drain]
-//	diatom status
-//	diatom goal new <name> [-title text] [-after goal,goal] < description
-//	diatom goal new <name> [-title text] -ws engine,cards:engine -active
-//	diatom goal plan|approve <name>
-//	diatom goal list
-//	diatom goal activate|park <name>
-//	diatom goal after <name> [goal...]
-//	diatom goal done <name> [-force]
-//	diatom goal finish <name> [-push | -prs] [-remote origin] [-force]
-//	diatom task add -goal <goal> -ws <workstream> [-kind planned] [-profile name]
-//	                [-after id,id] [-priority n] <title> < body.md
-//	diatom questions
-//	diatom review [-goal <goal>] [-list] [-focus]
-//	diatom workspace
-//	diatom pane status|questions|intake
-//	diatom answer <goal> <question> <answer>
-//	diatom intake [-goal <goal>] < text
+//	diatom
 //	diatom version
+//
+// diatom opens a window on the repository the current directory is in, and
+// runs its scheduler until the window closes (ADR 0007).
 //
 // Inside an agent session:
 //
-//	diatom task done <id>
-//	diatom task note <id> <text>
-//	diatom task ask <id> <question>
-//	diatom hook pre-tool-use
-//	diatom hook stop
-//
-// The goal, task, questions and answer commands act on the repository the
-// current directory is in.
+//	diatom task done|note|ask <id> [text]
+//	diatom task add-task|after|feedback|new-goal|plan <id> ...
+//	diatom task goals [<goal>]
+//	diatom hook pre-tool-use|stop
 package main
 
 import (
@@ -70,28 +51,8 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	switch cmd, rest := args[0], args[1:]; cmd {
 	case "open":
 		err = cmdApp(ctx)
-	case "run":
-		err = cmdRun(ctx, stderr)
-	case "stop":
-		err = cmdStop(ctx, rest, stdout)
-	case "status":
-		err = cmdStatus(ctx, stdout)
-	case "goal":
-		err = cmdGoal(ctx, rest, stdin, stdout)
 	case "task":
 		err = cmdTask(ctx, rest, stdin, stdout)
-	case "questions":
-		err = cmdQuestions(ctx, stdout)
-	case "review":
-		err = cmdReview(ctx, rest, stdout)
-	case "workspace":
-		err = cmdWorkspace(ctx)
-	case "pane":
-		err = cmdPane(ctx, rest, stdout)
-	case "answer":
-		err = cmdAnswer(ctx, rest)
-	case "intake":
-		err = cmdIntake(ctx, rest, stdin, stdout)
 	case "hook":
 		err = cmdHook(ctx, rest, stdin, stdout)
 	case "version":
@@ -117,28 +78,11 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 }
 
 const usage = `Usage:
-  diatom                            open diatom on the repo; quitting suspends its sessions
-  diatom run                        run the scheduler; Ctrl-C suspends its sessions
-  diatom stop [-drain]              suspend the running scheduler, or let it drain
-  diatom status                     show every goal in the repo
-  diatom goal new <name> [-title text] [-after a,b] < description   grill a new goal
-  diatom goal new <name> -ws engine,cards:engine -active   skip grilling
-  diatom goal plan|approve <name>   show or sign off a goal's plan
-  diatom goal list
-  diatom goal activate|park <name>
-  diatom goal after <name> [goal...]   wait for those goals to finish; none clears it
-  diatom goal done <name> [-force]  finish a goal and lay it out for landing
-  diatom goal finish <name> [-push | -prs] [-remote origin]   land a done goal
-  diatom task add -goal <goal> -ws <workstream> [-kind planned] [-profile name]
-                  [-after id,id] [-priority n] <title> < body.md
-  diatom questions                  list open questions
-  diatom review [-goal g] [-list]   review the agents' commits, hunk by hunk
-  diatom workspace                  open the zellij workspace with every pane
-  diatom pane status|questions|intake   run one workspace pane
-  diatom answer <goal> <question> <answer>
-  diatom intake [-goal <goal>] < text   send anything for triage to sort out
+  diatom           open diatom on the repo; quitting suspends its sessions
   diatom version
 
 Inside an agent session:
   diatom task done|note|ask <id> [text]
+  diatom task add-task|after|feedback|new-goal|plan <id> ...
+  diatom task goals [<goal>]
   diatom hook pre-tool-use|stop`

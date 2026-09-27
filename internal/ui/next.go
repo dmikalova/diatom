@@ -1,4 +1,4 @@
-package panes
+package ui
 
 import (
 	"context"
@@ -98,6 +98,13 @@ type Next struct {
 	err           error
 }
 
+// The answer box's hints, for a question and for a plan.
+const (
+	answerHint = "Your answer. enter sends it, shift+enter adds a line, esc goes back."
+	planHint   = "enter with nothing typed signs the plan off. Or write what to change, and enter " +
+		"sends it back to grilling. esc goes back."
+)
+
 // NewNext loads what waits on the human, from the status's rows.
 func NewNext(ctx context.Context, env Env, status *Status) *Next {
 	area := textarea.New()
@@ -161,7 +168,6 @@ func (n *Next) reviewer(goal string) *reviewui.Model {
 		n.err = err
 		return nil
 	}
-	rv.Embed()
 	n.reviews[goal] = rv
 	return rv
 }

@@ -5,16 +5,10 @@ import (
 	"context"
 	"log/slog"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
-
-	tea "charm.land/bubbletea/v2"
-
-	"github.com/dmikalova/diatom/internal/queue"
 )
 
 // fakeGo stands in for the go command, with latest as the newest release.
@@ -71,67 +65,6 @@ func TestUpdaterCheck(t *testing.T) {
 	checkout := updater{log: log, auto: true, current: "", goCmd: fakeGo(t, "v9.0.0", &installs)}
 	if bin := checkout.check(ctx); bin != "" || installs != 1 {
 		t.Error("a build from a checkout updated itself")
-	}
-}
-
-func TestStop(t *testing.T) {
-	repo := inRepo(t)
-	if code, stdout, _ := diatom(
-		t,
-		"",
-		"stop",
-	); code != 0 ||
-		!strings.Contains(stdout, "no diatom scheduler") {
-		t.Errorf("stop with nothing running = %d %q", code, stdout)
-	}
-	// This test process stands in for the repo's scheduler.
-	unlock, err := queue.Open(repo).LockScheduler()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer unlock()
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGUSR1)
-	defer signal.Stop(sigs)
-	if code, stdout, _ := diatom(
-		t,
-		"",
-		"stop",
-		"-drain",
-	); code != 0 ||
-		!strings.Contains(stdout, "once the running ones finish") {
-		t.Errorf("stop -drain = %d %q", code, stdout)
-	}
-	select {
-	case sig := <-sigs:
-		if sig != syscall.SIGUSR1 {
-			t.Errorf("got %v", sig)
-		}
-	case <-time.After(5 * time.Second):
-		t.Error("the scheduler was not signalled")
-	}
-	if code, _, _ := diatom(t, "", "stop", "now"); code != 2 {
-		t.Error("stop took an argument")
-	}
-}
-
-// pane stands in for a workspace pane.
-type pane struct{ editing bool }
-
-func (p *pane) Init() tea.Cmd                       { return nil }
-func (p *pane) Update(tea.Msg) (tea.Model, tea.Cmd) { return p, nil }
-func (p *pane) View() tea.View                      { return tea.NewView("") }
-func (p *pane) Editing() bool                       { return p.editing }
-
-func TestRestartWaitsForEditing(t *testing.T) {
-	inner := &pane{editing: true}
-	r := &restartable{inner: inner}
-	if _, cmd := r.Update(binaryChanged{}); cmd != nil || r.restart {
-		t.Fatal("restarted in the middle of an answer")
-	}
-	inner.editing = false
-	if _, cmd := r.Update(tea.KeyPressMsg{}); cmd == nil || !r.restart {
-		t.Error("did not restart once the answer was sent")
 	}
 }
 
