@@ -21,6 +21,7 @@ import (
 	"github.com/dmikalova/diatom/internal/intake"
 	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
+	"github.com/dmikalova/diatom/internal/review"
 	"github.com/dmikalova/diatom/internal/session"
 )
 
@@ -765,32 +766,57 @@ func TestStatusSaysWhenNothingCanStart(t *testing.T) {
 	}
 }
 
-func TestStatusSaysReadyTasksWaitForASession(t *testing.T) {
+func TestStatusGoalStates(t *testing.T) {
 	f := newFixture(t)
-	busy, _ := f.store.Task("set", "0001")
-	if err := f.store.Move("set", busy, queue.Active); err != nil {
+	s := NewStatus(context.Background(), f.env)
+	line := func() string {
+		s.reload()
+		for l := range strings.SplitSeq(ansi.Strip(s.render()), "\n") {
+			if l = strings.TrimSpace(strings.TrimPrefix(l, "›")); strings.HasPrefix(l, "set ") {
+				return l
+			}
+		}
+		return ""
+	}
+	// A pending task with no session running is queued.
+	if got := line(); got != "set queued" {
+		t.Errorf("with a task ready: %q", got)
+	}
+	task, _ := f.store.Task("set", "0001")
+	if err := f.store.Move("set", task, queue.Active); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.store.AddTask("set", &queue.Task{Title: "Add cards", Kind: queue.Planned,
-		Workstream: "cards"}); err != nil {
+	if got := line(); got != "set active" {
+		t.Errorf("with a task running: %q", got)
+	}
+	if err := f.store.Move("set", task, queue.Done); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.store.AddTask("set", &queue.Task{Title: "More engine", Kind: queue.Planned,
-		Workstream: "engine"}); err != nil {
+	if got := line(); got != "set reviewing" {
+		t.Errorf("with every task done and a hunk to review: %q", got)
+	}
+	items, err := review.Load(context.Background(), f.store, "set")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := review.Store{Dir: f.store.GoalDir("set")}
+	if _, err := store.Decide(items[0].Hunk, review.Approve, nil, time.Unix(1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if got := line(); got != "set ready to finish" {
+		t.Errorf("with everything reviewed: %q", got)
+	}
+}
+
+func TestStatusListsPinnedGoalsFirst(t *testing.T) {
+	f := newFixture(t)
+	if err := f.store.CreateGoal(&queue.Goal{Name: "later", State: queue.GoalActive,
+		Created: time.Unix(2000, 0), Pinned: true}); err != nil {
 		t.Fatal(err)
 	}
 	s := NewStatus(context.Background(), f.env)
-	s.Update(tea.WindowSizeMsg{Width: 200, Height: 30})
-	// The engine task waits for its own workstream's session, so only the
-	// cards task counts.
-	if out := ansi.Strip(s.render()); !strings.Contains(out,
-		"1 ready, waiting for a free session: this repo runs 1 at a time (maxSessions)") {
-		t.Errorf("status:\n%s", out)
-	}
-	write(t, filepath.Join(f.repo, ".diatom", "config.toml"), "maxSessions = 2\n")
-	s.reload()
-	if out := ansi.Strip(s.render()); strings.Contains(out, "waiting for a free session") {
-		t.Errorf("with a session free:\n%s", out)
+	if len(s.rows) != 2 || s.rows[0].goal.Name != "later" {
+		t.Errorf("rows = %v, %v", s.rows[0].goal.Name, s.rows[1].goal.Name)
 	}
 }
 

@@ -154,7 +154,15 @@ on Opus that ask questions and then hand in a plan.
 ## 5. While the work runs
 
 In status, each goal shows its task counts, open questions, hunks waiting for
-review, and a `▶ <workstream>` line with the latest step of any running session.
+review, its cost so far, and a `▶ <workstream>` line with the latest step of
+any running session. An active goal reads **queued** while its ready work
+waits for a free session, **reviewing** once every task is done and hunks are
+left, and **ready to finish** once those are reviewed too.
+
+A freed session goes to the most urgent kind of work first: fixes, then
+revisions, triage, grilling and planned work. Among work of the same kind it
+goes to the goal highest in the list. Pinned goals come first, and `P` pins
+one.
 
 What happens without you:
 

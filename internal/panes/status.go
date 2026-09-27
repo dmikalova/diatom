@@ -102,10 +102,6 @@ type Status struct {
 	// health says what keeps the scheduler from starting work, when
 	// something does: it isn't running, or every pass fails.
 	health string
-	// maxSessions is the repo's cap on sessions at once, and full is set
-	// when that many are running, so ready tasks wait for one to end.
-	maxSessions int
-	full        bool
 
 	// detail is the row opened with enter: its tasks, or one of them.
 	detail *detail
@@ -162,14 +158,23 @@ func (s *Status) reload() {
 		}
 		rows = append(rows, row)
 	}
-	s.maxSessions, s.full = 0, false
-	if cfg, err := config.Load(store.Repo(), s.env.Paths); err == nil {
-		running := 0
-		for _, r := range rows {
-			running += len(r.activeWork)
+	// Pinned goals first, as the scheduler takes them; the rest stay oldest
+	// first, as it does too.
+	slices.SortStableFunc(rows, func(a, b goalRow) int {
+		switch {
+		case a.intake != b.intake:
+			if a.intake {
+				return -1
+			}
+			return 1
+		case a.goal.Pinned != b.goal.Pinned:
+			if a.goal.Pinned {
+				return -1
+			}
+			return 1
 		}
-		s.maxSessions, s.full = cfg.MaxSessions, running >= cfg.MaxSessions
-	}
+		return 0
+	})
 	keep := s.selected()
 	s.rows = rows
 	if keep != nil {
@@ -764,7 +769,7 @@ func (s *Status) renderRow(b *strings.Builder, i int, r goalRow) {
 	if r.goal.Pinned {
 		name += " 📌"
 	}
-	fmt.Fprintf(b, "%s%s %s %s\n", mark, focused, tui.Bold(name), stateColor(r.goal.State))
+	fmt.Fprintf(b, "%s%s %s %s\n", mark, focused, tui.Bold(name), goalState(r))
 	fmt.Fprintf(
 		b,
 		"      %s",
@@ -793,11 +798,6 @@ func (s *Status) renderRow(b *strings.Builder, i int, r goalRow) {
 				tui.Yellow,
 			) + "\n",
 		)
-	}
-	if r.ready > 0 && s.full {
-		b.WriteString("      " + tui.Color(fmt.Sprintf(
-			"%d ready, waiting for a free session: this repo runs %d at a time (maxSessions)",
-			r.ready, s.maxSessions), tui.Yellow) + "\n")
 	}
 	if r.goal.State == queue.GoalDone {
 		b.WriteString("      " + landingLine(r) + "\n")
@@ -853,6 +853,26 @@ func planningLine(r goalRow) string {
 		return tui.Color("grilling: a round is running", tui.Blue)
 	}
 	return tui.Dim("grilling: the next round is queued")
+}
+
+// goalState is the goal's state as the human sees it. An active goal is
+// queued while it has work ready and no session running, and reviewing once
+// every task is done while hunks are left to review; with those reviewed
+// too it is ready to finish.
+func goalState(r goalRow) string {
+	if r.goal.State != queue.GoalActive || len(r.activeWork) > 0 {
+		return stateColor(r.goal.State)
+	}
+	left := r.counts[queue.Pending] + r.counts[queue.Blocked]
+	switch {
+	case r.ready > 0:
+		return tui.Color("queued", tui.Yellow)
+	case left == 0 && r.counts[queue.Done] > 0 && r.toReview > 0:
+		return tui.Color("reviewing", tui.Cyan)
+	case left == 0 && r.counts[queue.Done] > 0:
+		return tui.Color("ready to finish", tui.Magenta)
+	}
+	return stateColor(r.goal.State)
 }
 
 func stateColor(st queue.GoalState) string {

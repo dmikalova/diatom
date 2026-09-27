@@ -160,3 +160,17 @@ func TestNextBatchesSameEffort(t *testing.T) {
 		t.Errorf("retry batch = %+v, want its effort", got)
 	}
 }
+
+// TestNextHigherGoalFirst pins that among work of the same kind, a freed
+// session goes to the goal higher in the list: the older one.
+func TestNextHigherGoalFirst(t *testing.T) {
+	now := time.Now()
+	top := &Goal{Repo: "vex", Name: "top", Created: now,
+		Ready: []*queue.Task{task("5", queue.Planned, "engine")}}
+	lower := &Goal{Repo: "vex", Name: "lower", Created: now.Add(time.Millisecond),
+		Ready: []*queue.Task{task("1", queue.Planned, "engine")}}
+	lim := Limits{Repos: map[string]RepoLimits{"vex": {Sessions: 1}}}
+	if got := Next([]*Goal{lower, top}, nil, lim); len(got) != 1 || got[0].Goal != "top" {
+		t.Errorf("Next = %+v, want the top goal", got)
+	}
+}
