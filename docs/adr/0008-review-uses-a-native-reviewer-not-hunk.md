@@ -20,7 +20,7 @@ The review record (ADR 0001) is central to diatom, so it can't sit on an unstabl
 
 ## Decision
 
-**diatom ships its own reviewer (`diatom review`), built with Bubble Tea v2, go-gitdiff and chroma.**
+**diatom ships its own reviewer, built with Bubble Tea v2, go-gitdiff and chroma.** It is part of diatom's window (ADR 0007): Next's review items and a goal's page open it.
 
 The first version includes:
 

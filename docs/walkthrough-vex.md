@@ -1,9 +1,7 @@
 # Running diatom on vex
 
-This walks through running diatom on vex: turning `docs/todo-agent.md` into
-goals, working through them, and landing them. You run every step yourself. It
-has four phases: set vex up, turn the todo-agent into goals, work through them,
-and land them.
+This walks through running diatom on vex: sending it work, answering what it
+asks, reviewing what it builds, and landing it. You run every step yourself.
 
 ## 0. One-time setup
 
@@ -18,31 +16,31 @@ gh auth status        # diatom opens PRs and reads CI checks with gh
   up to half an hour, while Go's module proxy catches up. Name the version, as
   in `@v0.4.0`, to get it straight away.
 - `~/.config/diatom/config.toml`, from your dotfiles, sets `autoUpdate = true`,
-  and `mage ci:check` as the gate of every Go repo.
-  From here on the scheduler installs each new release itself and restarts on
-  it, resuming its sessions.
+  and `mage ci:check` as the gate of every Go repo. diatom installs each new
+  release when it opens, and while it runs installs one in the background and
+  says so in the footer: `U` restarts on it, resuming the sessions.
 - Your global git ignore already lists `.diatom/`, which diatom requires before
-  it creates a goal.
+  it starts.
+- In Ghostty, `keybind = performable:super+c=copy_to_clipboard` lets cmd+c
+  copy from diatom's window when nothing is selected in the terminal.
 
 ## 1. Prepare vex
 
-1. **Commit what the agents should see.** Agents work from committed `main`.
-   Your uncommitted `docs/todo.md` change is invisible to them, which is fine
-   since agents never read that file. But anything they should see has to be
-   committed first, including the project-standards v1.32.0 bump in `go.mod`
-   and `go.sum`.
+1. **Commit what the agents should see.** Agents work from committed `main`,
+   so anything they should see has to be committed first.
 2. **Optionally create `.diatom/config.toml`.** It's ignored, so it stays
    local:
 
    ```toml
-   maxSessions = 2   # agent sessions at once in vex; raise it once you trust it
+   maxSessions = 2               # agent sessions at once; raise it once you trust it
+   autoApprove = ["*_test.go"]   # hunks in these files are approved for you
    ```
 
    vex needs no gate of its own: it has a `go.mod`, so it gets the Go gate
-   from your home config, `mage ci:check`. Without one, `diatom workspace`
-   would ask for it. The gate is `ci:check`, not `ci:fix`, because it must
-   only check. vex's AGENTS.md forbids git operations, which matches diatom:
-   the harness makes every commit.
+   from your home config, `mage ci:check`. Without one, diatom would ask for it
+   when it opens. The gate is `ci:check`, not `ci:fix`, because it must only
+   check. vex's AGENTS.md forbids git operations, which matches diatom: the
+   harness makes every commit.
 
    vex's `ci:check` takes about 12 seconds warm, and over a minute on a cold
    build cache. A gate still running after 2 minutes is stuck: diatom stops
@@ -50,120 +48,106 @@ gh auth status        # diatom opens PRs and reads CI checks with gh
    seconds, so agents run narrow checks and leave the whole gate to diatom.
    Set `gateTimeout` or `commandTimeout` in this file to change either.
 
-## 2. Open the workspace
+## 2. Open diatom
 
 ```sh
-cd ~/Code/github.com/dmikalova/vex && diatom workspace
+cd ~/Code/github.com/dmikalova/vex && diatom
 ```
 
-- **Work tab:**
-  - **Reviewer** on the left, 60% wide.
-  - **Status** lists the intake triage is sorting, then every goal; its title
-    shows the repo and the focus. Every menu opens its selection with
-    `enter` or `space`, and `esc` backs out one level:
-    - A goal opens to a menu of what can be done with it now (sign off, mark
-      done, open PRs, push, park), then its tasks, each running one with
-      its latest step. Each menu entry shows its key, which also works
-      straight from the list.
-    - A task opens to the Claude sessions that worked on it, newest first:
-      running, or how each ended, its cost, and why diatom couldn't commit
-      its work if it couldn't.
-    - A session opens to its steps, one line each in Claude's own words, and
-      the gate's runs. It follows the latest step while the session runs.
-    - A step opens to its full command and the end of its output.
-    - At the top, `esc` focuses the repo itself, and `f` focuses a goal
-      without opening it.
-  - **Questions** is where you answer the agents and sign off plans.
-  - **Intake** is where you type new work or notes.
-- **Scheduler tab:** `diatom run` and its log. It starts sessions as soon as
-  work is ready.
+The window runs vex's scheduler, which starts sessions as soon as work is
+ready. The nav down the left lists:
 
-Stopping never loses work. Ctrl-C in the scheduler tab, or `diatom stop` from
-anywhere, suspends every session within seconds with its files as they are.
-The next `diatom run` resumes each agent's own Claude session where it
-stopped. `diatom stop -drain` lets the running sessions finish instead.
+- **Next**: what waits on you, one item at a time.
+- **Intake**: what triage is sorting, and its questions.
+- **The goals**, each with a glyph for where it stands and counts of its open
+  questions (`?2`) and hunks to review (`±14`). Finished goals fold away at the
+  bottom.
+- **The footer**: what the work has cost, the sessions running, and anything
+  wrong with the scheduler. Clicking it, or `L`, opens the scheduler's log.
+- **The intake box**, at the foot.
 
-## 3. Turn the todo-agent into goals
+The main pane shows what the nav selects. Tab moves between the nav, the parts
+of the main pane and the intake box, and the mouse clicks and scrolls. `h`
+hides the nav, and dragging its edge resizes it. Every menu opens its selection
+with `enter` or `space`, and `esc` backs out one level.
 
-Break it up by what lands together. Areas that edit the same code belong in one
-goal, because conflicts inside a goal are fixed as the work goes. Conflicts
-between goals only surface when the second one lands. Each goal's workstreams
-become one stacked PR each. Four goals:
+Quitting with `q` or ctrl+c, or closing the terminal, suspends every session
+within seconds with its files as they are. The next time diatom opens, it
+resumes each agent's own Claude session where it stopped. Nothing runs while
+diatom is closed. A second diatom on vex only views.
 
-| Goal                  | Section                                           | Why on its own                                                     |
-| --------------------- | ------------------------------------------------- | ------------------------------------------------------------------ |
-| `effect-catalog`      | Closed effect catalog + `RulesBearing` (ADR 0018) | Already decided; rulebook and tests                                |
-| `forgekey-purge`      | `ForgeKey` bakes "purge self"                     | Already decided; small                                             |
-| `effect-glyphs`       | gocognit: the `effectGlyphs` exclusion            | The doc itself asks for a glyph-family grilling                    |
-| `mass-mutation-sweep` | Post-Mass-Mutation cleanup sweep, all subsections | Large and heavily overlapping; grilling splits it into workstreams |
+## 3. Send it work
 
-With the repo focused (`esc` in status), type this into the intake pane and
-press `enter` to send it. `shift+enter` starts a new line:
+Break the work up by what lands together. Areas that edit the same code belong
+in one goal, because conflicts inside a goal are fixed as the work goes.
+Conflicts between goals only surface when the second one lands. Each goal's
+workstreams become one stacked PR each.
+
+Press `i` and type what you want, then `enter` to send it. `shift+enter`
+starts a new line:
 
 ```text
-Turn docs/todo-agent.md into goals, one per ## section. The ForgeKey and effect
-catalog sections are already decided. The Post-Mass-Mutation cleanup sweep
-waits for the effect catalog and ForgeKey goals. Ignore the file's preamble:
-it's for agents in chat, not for you.
+Split effectGlyphs by glyph family, so the last gocognit exclusion can go.
+Then close the effect catalog behind a RulesBearing marker, as ADR 0018
+decided; the effect glyph split waits for it.
 ```
 
-Triage reads the file and starts the four goals. It hands in the ForgeKey plan
-with its goal, so that one skips grilling and waits for your sign-off; the
-effect catalog may too, if the section decides every task. The effect glyphs
-goal is grilled. The status pane shows the intake as "being sorted" until
-triage is done: open it with `enter` to watch triage work. Anything triage
-can't decide comes to the questions pane, filed under intake.
+What the main pane shows goes with it as a clue to where it belongs, so an
+idea you have while answering a question can be sent straight away: triage
+works out whether it belongs to that goal, another, or a new one. Triage, an
+agent, sorts the intake into the repo's goals, each with a one-line
+description of what it is for. A goal whose work the intake already decides
+comes with its plan, waiting for your sign-off; the rest are grilled first.
+Open Intake to watch triage work. Anything it can't decide comes to Next.
 
-The sweep waits: nothing of it runs, grilling included, until the effect
-catalog and ForgeKey goals are finished (step 7). Status shows it as
-**blocked**, and opening it names the goals it waits for. Its branch then starts from `main` with both landed, pulled or not,
-so it never overlaps them. Set or change what a goal waits for from the command
-line too: `diatom goal after mass-mutation-sweep effect-catalog forgekey-purge`.
+A goal can wait for others: nothing of it runs, grilling included, until they
+are finished (step 7). The nav marks it **blocked** (`⊘`), and its page names
+the goals it waits for. Its branch then starts from `main` with them landed,
+so it never overlaps them.
 
-The command line works too. `section` prints one `##` section of the file, and
-`diatom goal new` starts a goal from it without triage:
+## 4. Next: answer questions, then sign off each plan
 
-```sh
-cd ~/Code/github.com/dmikalova/vex
-section() { awk -v h="$1" '/^## /{p = index($0, h) > 0} p' docs/todo-agent.md; }
-section 'gocognit gate' | diatom goal new effect-glyphs -title "Split effectGlyphs by glyph family"
-```
+Each planning goal gets grilling rounds: read-only planning sessions on Opus
+that ask questions and then hand in a plan. Everything they ask comes to Next,
+with plans to sign off first, then questions, each level in the nav's order of
+goals.
 
-## 4. Grilling: answer questions, then sign off each plan
+An item of Next has three parts, and tab moves through them:
 
-Each planning goal gets grilling rounds. These are read-only planning sessions
-on Opus that ask questions and then hand in a plan.
+1. **What it is about**: the goal's title, where it stands, what it is for, and
+   which task asked. `enter` here opens the goal's page, with its brief, plan
+   and earlier questions and answers; `esc` comes back.
+2. **The item**: the question or plan in full. `↑`/`↓` scroll it, and `space`
+   scrolls half a page.
+3. **The answer**: `enter` sends it and moves on to the first item left.
 
-1. **Answer questions** in the questions pane: `j`/`k` to move, `enter` to
-   open a question with its full text, `enter` again to send your answer and
-   move on to the next, and `esc` to go back. Each question comes with its
-   context. The next round starts only after every question in the current
-   round is answered.
-2. **Review the plan.** A plan ready for sign-off goes to the top of the
-   questions pane, and answering a question takes you straight to a plan you
-   haven't seen yet. It shows the workstreams and tasks in order (or run
-   `diatom goal plan <goal>`).
-3. **Correct it or approve it** from the plan's answer box.
-   - To correct it, write what to change and press `enter`. The plan is set
-     aside and a new round starts with your feedback.
-   - To approve it, press `enter` twice with nothing typed (or `s` twice on the
-     goal in status, or run `diatom goal approve <goal>`). This queues the
-     tasks and commits any ADR drafts from grilling, which then come up in
-     the reviewer like any other commit.
+For a plan:
+
+- To correct it, write what to change and press `enter`. The plan is set aside
+  and a new round starts with your feedback.
+- To approve it, press `enter` twice with nothing typed, or `s` twice on the
+  goal's page. This queues the tasks and commits any ADR drafts from grilling,
+  which then come up for review like any other commit.
+
+With the terminal in the background, a notification says when Next has
+something again after having nothing.
 
 ## 5. While the work runs
 
-In status, each goal shows its task counts, open questions, hunks waiting for
-review, its cost so far, and a `▶ <workstream>` line with the latest step of
-any running session. An active goal reads **queued** while its ready work
-waits for a free session, **reviewing** once every task is done and hunks are
-left, and **ready to finish** once those are reviewed too.
+A goal's page shows its task counts, open questions, hunks waiting for review,
+its cost so far, and a `▶ <workstream>` line with the latest step of any
+running session. An active goal reads **queued** while its ready work waits for
+a free session, **reviewing** once every task is done and hunks are left, and
+**ready to finish** once those are reviewed too. Its tasks open to the Claude
+sessions that worked on them, those to their steps, and those to their full
+command and output.
 
 A freed session goes to the most urgent kind of work first: fixes, then
 revisions, triage, grilling and planned work. Among work of the same kind it
-goes to the goal highest in the list. A session takes up to 5 tasks of one
+goes to the goal highest in the nav. A session takes up to 5 tasks of one
 workstream at once, following a chain of tasks that depend on each other, so
-related work shares one agent's context.
+related work shares one agent's context. Every prompt lists the repo's other
+goals, so an agent knows what they cover and how far they have got.
 
 What happens without you:
 
@@ -176,69 +160,71 @@ What happens without you:
 
 What needs you:
 
-- **Questions** from implementation agents show up in the same pane. Answering
-  one unblocks its task.
-- **Review, whenever you like.** The reviewer follows the focused goal:
-  - `a`, `r` and `d` approve, reject and defer the hunk on screen.
+- **Questions** from implementation agents come to Next too. Answering one
+  unblocks its task.
+- **Review, whenever you like**, in Next once the questions are answered, or
+  with `r` on a goal's page:
+  - `a`, `r` and `d` approve, reject and defer the hunk on screen, and `n` and
+    `p` move between hunks.
   - `c` comments on the line under the cursor, and `u` steps back through
     earlier decisions.
   - Rejecting with a comment becomes a revision task within seconds. The fix
     comes back as a `fixup!` commit, and `v` shows it folded into the original.
   - Review doesn't hold up the agents, but you have to review everything before
     step 6.
-  - Hunks in files matching `autoApprove` in `.diatom/config.toml`, which is
-    `*_test.go` for vex, are approved for you and never reach the reviewer. Its
-    header counts them.
-- **New thoughts mid-goal:** focus the goal and type in intake. Triage turns it
-  into tasks, a question, or a separate goal. A task on a workstream the goal
-  doesn't have comes back to you as a question.
-- **Controls:** `p` parks or resumes a goal. Nothing new starts while parked,
-  and nothing is lost.
+  - Hunks in files matching `autoApprove` are approved for you and never reach
+    the reviewer. Its header counts them.
+- **Controls:** `p` on a goal's page parks or resumes it. Nothing new starts
+  while parked, and nothing is lost.
 
-## 6. Mark a goal done
+To try the work yourself, such as running `mage web` to see it in a browser,
+check the goal's integration branch out beside vex:
 
-Once every task is done and every hunk reviewed, open the goal in status and
-pick **Mark it done** with `enter` twice, or press `d` twice (or run
-`diatom goal done <goal>`).
+```sh
+git worktree add --detach ../vex-check diatom/<goal>/integration
+cd ../vex-check && mage web
+```
+
+## 6. Finish a goal
+
+Once every task is done and every hunk reviewed, the goal comes up in Next,
+with what it changes and the goals waiting for it. Finish it with `enter` twice
+on **Mark it done**, or `d` twice on its page.
 
 - diatom replays the goal's commits onto `main` without the merge commits, with
   each fixup squashed into its target. It runs the gate on each PR's tip and
   shows the stack.
-- **Mark it done with work left**, `D` twice (or `-force`), marks it done
-  even with work left.
+- **Mark it done with work left**, `D` twice on its page, marks it done even
+  with work left.
 - If the workstreams can't be put in stack order, you get one PR, and the
-  status line says why.
+  goal's page says why.
 
 ## 7. Land it
 
-Open the goal in status and choose one from its menu:
+The done goal stays in Next until it has landed. Choose one:
 
 - **`P` twice pushes straight to `main`.** You've already reviewed every hunk
   inside diatom, so this is the simple path for a solo repo, and vex's CI/CD
   runs on the push.
 - **`F` twice opens the stacked PRs**, one per workstream, each based on the one
-  before. Use this when you want CI per PR, as for the big sweep. Merge them
-  bottom-up using **"Create a merge commit"**. Squash or rebase merges rewrite
-  the lower PR's commits, so the next PR up would show them all again.
+  before. Use this when you want CI per PR. Merge them bottom-up using **"Create
+  a merge commit"**. Squash or rebase merges rewrite the lower PR's commits, so
+  the next PR up would show them all again.
 
-The goal stays in status until it's **finished**. Every two minutes the
+The goal stays in the nav until it's **finished**. Every two minutes the
 scheduler checks whether `origin/main` holds all of the goal's changes and
-whether vex's checks on it have passed. A failing check keeps the goal visible
-and shows the failing checks in red. When it finishes, the goal leaves the list
-and its worktrees are removed. Then `git pull` in vex. The `diatom/<goal>/…`
-branches are kept; delete them whenever you like.
+whether vex's checks on it have passed. A failing check keeps the goal in view
+and shows the failing checks in red. When it finishes, the goal folds away
+under Finished, its worktrees are removed, and the goals waiting for it start.
+Then `git pull` in vex. The `diatom/<goal>/…` branches are kept; delete them
+whenever you like.
 
-Then start Phase 2: create `mass-mutation-sweep` and repeat steps 4–7.
-
-## Things to watch on this first real run
+## Things to watch
 
 - **Gate runs.** vex's `ci:check` runs every linter and the 100%-coverage tests,
   in each worktree, on every commit. Watch the first few gate runs in the
-  scheduler log before raising `maxSessions`.
+  scheduler's log before raising `maxSessions`.
 - **Cost.** diatom has no spending cap; `maxSessions` is the only limit.
   Grilling runs on Opus at high effort, and implementation on Opus at medium.
-  Each task's usage is recorded in its file under `.diatom/goals/<goal>/tasks/`.
-- **`docs/todo-agent.md` edits.** vex's AGENTS.md tells agents to delete
-  finished items from this file, so each goal edits its own section of it. The
-  goals touch different parts of the file, so they should land without
-  conflicting.
+  The footer and the window's title show the total, and each goal's page its
+  own and each task's.

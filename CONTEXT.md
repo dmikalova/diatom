@@ -7,7 +7,7 @@ A harness that runs coding agents continuously through a priority queue of work 
 ### Planning
 
 **Goal**:
-A unit of intent submitted by the human, such as "implement the new set". A goal owns its plan, workstreams, integration branch and tasks, and ends as one or more pull requests.
+A unit of intent submitted by the human, such as "implement the new set". A goal owns its plan, workstreams, integration branch and tasks, and ends as one or more pull requests. Its description says in a line what it is for.
 _Avoid_: prompt, job, project
 
 **Parked**:
@@ -83,6 +83,10 @@ _Avoid_: prompt, query, blocker
 **Answer**:
 The human's reply to a question. It makes the parked task ready again.
 _Avoid_: response, reply
+
+**Next**:
+Everything waiting on the human, across every goal, taken one item at a time: plans to sign off, questions, goals ready to finish, then hunks to review.
+_Avoid_: inbox, notifications, to-do
 
 ### Branches
 

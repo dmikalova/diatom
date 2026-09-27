@@ -13,7 +13,7 @@ Run `mage ci:fix && mage ci:check` before calling work done. It must print
 
 | Package                  | Role                                                     |
 | ------------------------ | -------------------------------------------------------- |
-| `cmd/diatom`             | The CLI: scheduler, goals, tasks, the task tool, hooks   |
+| `cmd/diatom`             | Opening the window, the task tool and the hooks          |
 | `internal/harness`       | The scheduler loop and the lifecycle of one batch        |
 | `internal/schedule`      | Pure priority and batching decisions (ADR 0004)          |
 | `internal/queue`         | Goals, tasks and questions as files (ADR 0002)           |
@@ -24,9 +24,8 @@ Run `mage ci:fix && mage ci:check` before calling work done. It must print
 | `internal/runner`        | The runner interface, and `claude/` its first backend    |
 | `internal/commitmsg`     | Commit messages on the cheapest profile (ADR 0005)       |
 | `internal/review`        | Hunks, review decisions and the review queue (ADR 0001)  |
-| `internal/reviewui`      | The native reviewer, a Bubble Tea app (ADR 0008)         |
-| `internal/panes`         | The workspace's status, questions and intake panes       |
-| `internal/focus`         | The goal the panes follow (ADR 0007)                     |
+| `internal/reviewui`      | The native reviewer, part of the window (ADR 0008)       |
+| `internal/ui`            | The window: nav, Next, goal pages, intake (ADR 0007)     |
 | `internal/intake`        | Free-form input waiting for triage (ADR 0009)            |
 | `internal/tui`           | Styling in the terminal's own 16 colors                  |
 | `internal/config`        | The config walk-up (ADR 0007)                            |

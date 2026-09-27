@@ -14,11 +14,10 @@ The scheduler core runs:
 - priority order and batching (ADR 0004)
 - the gate and git hooks (ADR 0005)
 - the Claude Code runner (ADR 0006)
-- one scheduler per repo (ADR 0007)
+- one window per repo, with its scheduler inside (ADR 0007)
 - questions that park tasks (ADR 0009)
 - sessions with only explicit context (ADR 0011)
 - the reviewer, with revisions landing as fixups (ADRs 0001 and 0008)
-- the zellij workspace and its panes (ADR 0007)
 - triage of intake, and grilling with plan sign-off (ADRs 0009 and 0010)
 - landing done goals as a stack of pull requests (ADR 0003)
 - suspending and resuming sessions, and updating itself (ADR 0012)
@@ -50,79 +49,64 @@ repos, run two diatoms.
 
 ```bash
 cd ~/Code/github.com/dmikalova/vex
-diatom              # one window with the scheduler inside; quitting suspends its sessions
-diatom workspace    # the older zellij session, until the window covers review
+diatom
 ```
 
-The window has a nav down the left: Next, with what waits on you; the intake;
-the repo's goals; and the intake box at its foot. The main pane shows what the
-nav has selected. Next is one item at a time, across every goal: plans to sign
-off, then questions, then goals ready to finish, then hunks to review, each in
-the nav's order of goals. An item shows what its goal is for above it, and
-enter there opens the goal; answering moves on to the first item left. Tab
-moves between the nav, the parts of the main pane and the intake box, and `i`
-jumps to the intake box. What you send goes with what the main pane showed, as
-a clue for triage. Hunks are reviewed in Next, or from a goal's page.
+That opens diatom's window, which runs the repo's scheduler too. Quitting with
+`q` or ctrl+c, or closing the terminal, suspends the running sessions, and they
+carry on the next time diatom opens: nothing runs while it is closed. A second
+diatom on the same repo only views, and answering and reviewing still work
+there.
 
-Outside a text box: `h` hides the nav, and dragging its edge resizes it; `L`
-opens the scheduler's log, as clicking the nav's footer does; `y` copies what
-has the keyboard, as cmd+c does in Ghostty with
-`keybind = performable:super+c=copy_to_clipboard`. When a new release or build
-is installed, the footer says so and `U` restarts on it. With the terminal in
-the background, a notification says when something comes to wait on you. Quitting with `q` or ctrl+c, or closing the
-terminal, suspends the running sessions, which carry on the next time diatom
-opens: nothing runs while it is closed. A second diatom on the same repo only
-views.
+The nav down the left lists Next, the intake and the repo's goals, with the
+intake box at its foot. The main pane shows what the nav selects.
 
-Type what you want into the intake pane, such as "Turn docs/todo-agent.md into
-goals, one per section". Triage, an agent, sorts every intake into the repo's
-goals: new goals, tasks on existing ones, feedback for a goal being planned, or
-questions back to you. A new goal is grilled first: answer its questions, then
-sign off its plan, which comes to the top of the questions pane. Work the intake
-already decides skips grilling and waits for your sign-off.
+- **Next** is what waits on you, across every goal, one item at a time: plans
+  to sign off, then questions, then goals ready to finish, then hunks to
+  review, each in the nav's order of goals. Above each item is what its goal is
+  for; enter there opens the goal. Answering moves on to the first item left.
+- **The intake box** takes anything you want done, such as "Turn
+  docs/todo.md into goals, one per section". Triage, an agent, sorts it into
+  the repo's goals: new goals, tasks on existing ones, feedback for a goal
+  being planned, or questions back to you. What the main pane showed goes with
+  it, as a clue. A new goal is grilled first: answer its questions in Next,
+  then sign off its plan there. Work the intake already decides skips grilling
+  and waits for your sign-off.
+- **A goal's page** says where it stands and what it is for, then offers its
+  actions, its review, its plan and its tasks, each task opening to its Claude
+  sessions and their steps.
 
-The same from the command line:
+Tab moves between the nav, the parts of the main pane and the intake box, and
+the mouse clicks and scrolls. Outside a text box:
 
-```bash
-diatom goal new new-set -title "Implement the new set" < goal.md   # grilled first
-diatom goal plan new-set
-diatom goal approve new-set
+- `i` goes to the intake box, and `h` hides the nav; dragging its edge resizes
+  it
+- `L` opens the scheduler's log, as clicking the nav's footer does
+- `y` copies what has the keyboard, as cmd+c does in Ghostty with
+  `keybind = performable:super+c=copy_to_clipboard`
+- `U` restarts on a new release or build, once the footer says one is installed
 
-diatom goal after sweep catalog   # the sweep waits until catalog is finished
+With the terminal in the background, a notification says when something comes
+to wait on you.
 
-# Or skip grilling and write the tasks by hand.
-diatom goal new hotfix -ws engine -active
-diatom task add -goal hotfix -ws engine "Fix ward stacking" < fix.md
+In review, `a`, `r` and `d` approve, reject and defer the hunk on screen, `c`
+comments on the line under the cursor, `n` and `p` move between hunks, `u` steps
+back through earlier decisions, and `v` shows a fixup folded into the commit it
+revises. A rejection's comments become a revision task within seconds, and the
+agent's fix lands as a `fixup!` commit that comes back for review.
 
-diatom run          # the scheduler; Ctrl-C suspends its sessions, which resume on the next run
-diatom stop         # the same from anywhere in the repo; -drain lets sessions finish instead
-diatom status       # every goal in the repo
-diatom review       # approve, reject or defer each hunk the agents committed
-diatom questions    # what the agents need decided
-diatom answer new-set 0001 "Ward does not stack."   # or `intake 0001` for triage's
-diatom goal done new-set   # refuses while hunks are unreviewed or deferred
-diatom goal finish new-set -prs   # or -push, straight to the base branch
-```
+A goal ready to finish comes up in Next. Finishing it with `d` lays it out on
+`diatom/<goal>/final`: its commits replayed onto the base branch without the
+merges, fixups squashed into the commits they revise, and split into one pull
+request per workstream on `diatom/<goal>/pr/<ws>`, each stacked on the one
+before. `F` pushes those branches and opens the stack with `gh`, and `P` pushes
+the lot straight to the base branch. The goal stays in the nav until it is
+finished: diatom watches the base branch on the remote and finishes the goal
+once it holds all of the goal's changes and its checks pass.
 
-In the reviewer, `a`, `r` and `d` approve, reject and defer the hunk on screen,
-`c` comments on the line under the cursor, `u` steps back through earlier
-decisions, and `v` shows a fixup folded into the commit it revises. A
-rejection's comments become a revision task within seconds, and the agent's fix
-lands as a `fixup!` commit that comes back for review.
-
-A done goal is laid out on `diatom/<goal>/final`: its commits replayed onto the
-base branch without the merges, fixups squashed into the commits they revise,
-and split into one pull request per workstream on `diatom/<goal>/pr/<ws>`, each
-stacked on the one before. `goal finish -prs` pushes those branches and opens
-the stack with `gh`; `-push` pushes the lot straight to the base branch.
-The goal stays in the status pane, which does the same with `d`, `F` and `P`,
-until it is finished: `diatom run` watches the base branch on the remote and
-finishes the goal once it holds all of the goal's changes and its checks pass.
-
-Stopping the scheduler never loses work. Each agent stops within seconds with
-its files as they are, and the next `diatom run` carries its own Claude session
-on where it stopped. Replacing the diatom binary, by an update or a new build,
-restarts the scheduler and the panes on it the same way.
+Stopping never loses work. Each agent stops within seconds with its files as
+they are, and the next time diatom opens it carries the agent's own Claude
+session on where it stopped.
 
 Each workstream gets a worktree under `.diatom/goals/<goal>/worktrees/` on the
 branch `diatom/<goal>/ws/<workstream>`. Every commit that passes the gate merges
@@ -138,8 +122,8 @@ wins. The built-in defaults are in
 Every repo needs a gate, the check every commit must pass. A repo that sets
 none gets the one `[gates]` names for its kind of project: go (a `go.mod`),
 node (`package.json`), deno (`deno.json`), rust (`Cargo.toml`) or python
-(`pyproject.toml`). With neither, `diatom workspace` and `diatom run` ask for
-one and save it in the repo's `.diatom/config.toml`.
+(`pyproject.toml`). With neither, diatom asks for one when it opens and saves
+it in the repo's `.diatom/config.toml`.
 
 ```toml
 gate = "mage ci:check"            # this repo's gate
@@ -168,7 +152,7 @@ lists.
 Only `~/.config/diatom/config.toml` may set these:
 
 ```toml
-autoUpdate = true                 # install new releases and restart on them
+autoUpdate = true                 # install new releases; U restarts on one
 
 [profiles.implementation]
 model = "opus"
