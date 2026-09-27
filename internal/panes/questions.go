@@ -192,7 +192,7 @@ func (m *Questions) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sel = min(m.sel+1, max(len(m.rows)-1, 0))
 		case "k", "up":
 			m.sel = max(m.sel-1, 0)
-		case "enter", "right", "l":
+		case "enter", "space", " ", "right", "l":
 			if m.sel < len(m.rows) {
 				m.open()
 				return m, m.area.Focus()

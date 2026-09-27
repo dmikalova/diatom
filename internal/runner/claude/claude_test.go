@@ -22,8 +22,10 @@ import (
 const stream = `{"type":"system","subtype":"init","session_id":"abc"}
 {"type":"rate_limit_event","rate_limit_info":{"status":"allowed"}}
 {"type":"assistant","message":{"content":[{"type":"thinking","thinking":""},{"type":"text","text":"Looking at ward."}]}}
-{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"go test ./...\nmore","description":"x"}}]}}
-{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"engine/ward.go"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"go test ./...\nmore","description":"Run the tests"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"FAIL ward","is_error":true}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t2","name":"Edit","input":{"file_path":"engine/ward.go"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t2","content":[{"type":"text","text":"edited"}]}]}}
 not json at all
 {"type":"result","subtype":"success","is_error":false,"session_id":"abc","num_turns":3,"result":"Done.","total_cost_usd":0.0142,"usage":{"input_tokens":9,"cache_creation_input_tokens":6552,"cache_read_input_tokens":100,"output_tokens":40}}
 `
@@ -60,8 +62,12 @@ func TestParse(t *testing.T) {
 	}
 	wantEvents := []runner.Event{
 		{Type: runner.EventText, Text: "Looking at ward."},
-		{Type: runner.EventTool, Text: "Bash go test ./..."},
-		{Type: runner.EventTool, Text: "Edit engine/ward.go"},
+		{Type: runner.EventTool, Text: "Bash go test ./...", ID: "t1", Summary: "Run the tests",
+			Detail: "go test ./...\nmore"},
+		{Type: runner.EventResult, ID: "t1", Detail: "FAIL ward", Failed: true},
+		{Type: runner.EventTool, Text: "Edit engine/ward.go", ID: "t2", Summary: "Edit ward.go",
+			Detail: "{\n  \"file_path\": \"engine/ward.go\"\n}"},
+		{Type: runner.EventResult, ID: "t2", Detail: "edited"},
 	}
 	if !slices.Equal(events, wantEvents) {
 		t.Errorf("events = %+v", events)
@@ -285,7 +291,7 @@ func TestRun(t *testing.T) {
 		Dir: t.TempDir(), Prompt: "Do the tasks.", Env: []string{"DIATOM_SESSION=/s/1"},
 		Profile: config.Profile{Model: "sonnet"},
 	}, func(runner.Event) { n++ })
-	if err != nil || res.Outcome != runner.Completed || n != 3 {
+	if err != nil || res.Outcome != runner.Completed || n != 5 {
 		t.Fatalf("Run = %+v, %v, %d events", res, err, n)
 	}
 	for file, want := range map[string]string{"stdin": "Do the tasks.", "env": "/s/1", "args": "--model sonnet"} {
@@ -338,5 +344,25 @@ func TestUnattended(t *testing.T) {
 	}
 	if env := unattended(runner.Spec{}); len(env) != 1 {
 		t.Errorf("without a timeout, env = %v", env)
+	}
+}
+
+func TestDescribe(t *testing.T) {
+	for _, c := range []struct{ tool, input, want string }{
+		{"Grep", `{"pattern":"PromptSource"}`, "Search for PromptSource"},
+		{"WebFetch", `{"url":"https://x"}`, "Fetch https://x"},
+		{"Bash", `{"command":"ls"}`, "Bash ls"},
+		{"Task", `{}`, "Task"},
+	} {
+		if got := describe(c.tool, []byte(c.input)); got != c.want {
+			t.Errorf("describe(%s, %s) = %q, want %q", c.tool, c.input, got, c.want)
+		}
+	}
+	long := strings.Repeat("x", detailBytes+10)
+	if got := clipEnd(long); !strings.HasPrefix(got, "…\n") || len(got) > detailBytes+5 {
+		t.Errorf("clipEnd kept %d bytes", len(got))
+	}
+	if got := clip(long); !strings.HasSuffix(got, "\n…") {
+		t.Errorf("clip ends %q", got[len(got)-5:])
 	}
 }

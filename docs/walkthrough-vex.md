@@ -56,15 +56,25 @@ cd ~/Code/github.com/dmikalova/vex && diatom workspace
 - **Work tab:**
   - **Reviewer** on the left, 60% wide.
   - **Status** lists the intake triage is sorting, then every goal; its title
-    shows the repo and the focus. `enter` opens one: a menu of what can be
-    done with it now (sign off, mark done, open PRs, push, park, pin), then
-    its tasks, each running one with the agent's latest step. `enter` on a
-    task shows its session step by step as it runs, with its questions and
-    text. `esc` backs out, and at the top focuses the repo itself. `f`
-    focuses a goal without opening it. Each menu entry shows its key, which
-    also works straight from the list.
-  - **Questions** is where you answer the agents and sign off plans.
-  - **Intake** is where you type new work or notes.
+    shows the repo and the focus. Every menu opens its selection with
+    `enter` or `space`, and `esc` backs out one level:
+    - A goal opens to a menu of what can be done with it now (sign off, mark
+      done, open PRs, push, park, pin), then its tasks, each running one with
+      its latest step. Each menu entry shows its key, which also works
+      straight from the list.
+    - A task opens to the Claude sessions that worked on it, newest first:
+      running, or how each ended, its cost, and why diatom couldn't commit
+      its work if it couldn't.
+    - A session opens to its steps, one line each in Claude's own words, and
+      the gate's runs. It follows the latest step while the session runs.
+    - A step opens to its full command and the end of its output.
+
+```
+At the top, `esc` focuses the repo itself, and `f` focuses a goal
+without opening it.
+```
+- **Questions** is where you answer the agents and sign off plans.
+- **Intake** is where you type new work or notes.
 - **Scheduler tab:** `diatom run` and its log. It starts sessions as soon as
   work is ready.
 

@@ -508,7 +508,7 @@ func (h *Harness) finish(
 		if err != nil {
 			return err
 		}
-		passed, output, gateErr = h.check(ctx, repo, wt, st.Passed)
+		passed, output, gateErr = h.check(ctx, repo, wt, dir, st.Passed)
 		if ctx.Err() != nil {
 			return errSuspended
 		}
@@ -583,7 +583,7 @@ func (h *Harness) check(
 	ctx context.Context,
 	repo Repo,
 	wt git.Repo,
-	hookPassed string,
+	dir, hookPassed string,
 ) (bool, string, error) {
 	dirty, err := wt.Dirty(ctx)
 	if err != nil {
@@ -602,7 +602,12 @@ func (h *Harness) check(
 	if fp, err := wt.Fingerprint(ctx); err != nil || fp == hookPassed {
 		return err == nil, "", err
 	}
+	start := h.now()
 	r, err := h.runGate(ctx, wt.Dir, repo.Config)
+	if err == nil {
+		err = session.AppendEvent(dir, session.GateEvent(h.now(), repo.Config.Gate,
+			h.now().Sub(start), r.Passed, r.Output))
+	}
 	return r.Passed, r.Output, err
 }
 

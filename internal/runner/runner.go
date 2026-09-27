@@ -76,8 +76,9 @@ type EventType string
 
 // The event types.
 const (
-	EventText EventType = "text"
-	EventTool EventType = "tool"
+	EventText   EventType = "text"
+	EventTool   EventType = "tool"
+	EventResult EventType = "result"
 )
 
 // Event is one piece of a session's progress.
@@ -86,6 +87,15 @@ type Event struct {
 	// Text is the agent's words, or for a tool the tool's name and a short
 	// summary of its input.
 	Text string `json:"text"`
+	// ID links a tool call to its result.
+	ID string `json:"id,omitempty"`
+	// Summary says in a few words what a tool call does.
+	Summary string `json:"summary,omitempty"`
+	// Detail is a tool call's whole input, or the end of a result's
+	// output.
+	Detail string `json:"detail,omitempty"`
+	// Failed marks a result that is an error.
+	Failed bool `json:"failed,omitempty"`
 }
 
 // Outcome is how a session ended.

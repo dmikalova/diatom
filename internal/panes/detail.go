@@ -1,27 +1,19 @@
 package panes
 
 import (
-	"bufio"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io/fs"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
-	"github.com/dmikalova/diatom/internal/session"
 	"github.com/dmikalova/diatom/internal/tui"
 )
 
-// detail is a goal, or the intake, opened from the status list: its tasks,
-// and one task opened from those with what its agent is doing.
+// detail is a goal, or the intake, opened from the status list: what can be
+// done with it and its tasks, and one task opened from those.
 type detail struct {
 	goal  string
 	title string
@@ -29,36 +21,8 @@ type detail struct {
 	// sel runs over the goal's actions, then its tasks; top is the first
 	// line on screen.
 	sel, top int
-	// task is the task opened, with its latest session; nil shows the list.
+	// task is the task opened; nil shows the goal.
 	task *taskView
-}
-
-// taskView is one task and the session that last worked on it.
-type taskView struct {
-	id        string
-	task      *queue.Task
-	questions []*queue.Question
-	session   *sessionView
-}
-
-// sessionView is what a session's directory says about it.
-type sessionView struct {
-	id     string
-	events []event
-	// ended is set once the agent's part is over, with how it went.
-	ended   bool
-	outcome string
-	turns   int
-	costUSD float64
-	err     string
-	settled bool
-}
-
-// event is one step of a session, as runSession logs it.
-type event struct {
-	Time time.Time `json:"time"`
-	Type string    `json:"type"`
-	Text string    `json:"text"`
 }
 
 // openDetail opens a row of the status list.
@@ -98,93 +62,8 @@ func (s *Status) reloadDetail() {
 		s.err = err
 		return
 	}
+	tv.keep(d.task)
 	d.task = tv
-}
-
-// loadTask reads a task, its questions and the last session that worked on
-// it.
-func loadTask(s *queue.Store, goal, id string) (*taskView, error) {
-	t, err := s.Task(goal, id)
-	if err != nil {
-		return nil, err
-	}
-	tv := &taskView{id: id, task: t}
-	for _, st := range []queue.QuestionState{queue.QuestionOpen, queue.QuestionClosed} {
-		qs, err := s.Questions(goal, st)
-		if err != nil {
-			return nil, err
-		}
-		for _, q := range qs {
-			if q.Task == id {
-				tv.questions = append(tv.questions, q)
-			}
-		}
-	}
-	tv.session, err = lastSession(s.SessionsDir(goal), id)
-	return tv, err
-}
-
-// lastSession finds the newest session that worked on task, or nil.
-func lastSession(root, task string) (*sessionView, error) {
-	dirs, err := os.ReadDir(root)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	// Newest first: the names start with the time.
-	for _, d := range slices.Backward(dirs) {
-		dir := filepath.Join(root, d.Name())
-		spec, err := session.Load(dir)
-		if err != nil || !slices.Contains(spec.Tasks, task) {
-			continue
-		}
-		sv := &sessionView{id: spec.ID}
-		if sv.events, err = readEvents(filepath.Join(dir, "events.jsonl")); err != nil {
-			return nil, err
-		}
-		var res struct {
-			Outcome string `json:"outcome"`
-			Turns   int    `json:"turns"`
-			Usage   struct {
-				CostUSD float64 `json:"costUSD"`
-			} `json:"usage"`
-			Error string `json:"error"`
-		}
-		if sv.ended, err = session.ReadResult(dir, &res); err != nil {
-			return nil, err
-		}
-		sv.outcome, sv.turns, sv.costUSD, sv.err = res.Outcome, res.Turns, res.Usage.CostUSD, res.Error
-		st, err := session.LoadState(dir)
-		if err != nil {
-			return nil, err
-		}
-		sv.settled = st.Settled
-		return sv, nil
-	}
-	return nil, nil
-}
-
-func readEvents(path string) ([]event, error) {
-	f, err := os.Open(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = f.Close() }()
-	var events []event
-	sc := bufio.NewScanner(f)
-	sc.Buffer(nil, 1<<20)
-	for sc.Scan() {
-		var e event
-		if json.Unmarshal(sc.Bytes(), &e) == nil {
-			events = append(events, e)
-		}
-	}
-	return events, sc.Err()
 }
 
 // detailRow is the status row of the goal open, nil for the intake or a
@@ -200,39 +79,41 @@ func (s *Status) detailRow() *goalRow {
 
 func (s *Status) detailActions() []action { return actions(s.detailRow()) }
 
-// updateDetail handles keys while a goal or task is open: enter does the
-// action or opens the task selected, a goal's keys work as in the list, and
-// esc backs out one level.
+// updateDetail handles keys while a goal or anything in it is open: enter or
+// space does the action or opens what is selected, a goal's keys work as in
+// the list, and esc backs out one level.
 func (s *Status) updateDetail(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	d := s.detail
-	acts := s.detailActions()
 	key := msg.String()
-	if row := s.detailRow(); row != nil && d.task == nil {
+	if key == "q" || key == "ctrl+c" {
+		return s, tea.Quit
+	}
+	if d.task != nil {
+		if d.task.update(s, key) {
+			d.task = nil
+		}
+		return s, nil
+	}
+	acts := s.detailActions()
+	if row := s.detailRow(); row != nil {
 		if cmd, ok := s.act(row, key); ok {
 			return s, cmd
 		}
 	}
-	if key != "enter" {
+	if !isEnter(key) {
 		s.confirm = ""
 	}
 	switch key {
-	case "q", "ctrl+c":
-		return s, tea.Quit
 	case "esc", "left", "h":
-		if d.task != nil {
-			d.task = nil
-		} else {
-			s.detail = nil
-		}
+		s.detail = nil
 	case "j", "down":
 		d.sel = min(d.sel+1, max(len(acts)+len(d.tasks)-1, 0))
 	case "k", "up":
 		d.sel = max(d.sel-1, 0)
-	case "enter", "right", "l":
+	case "enter", "space", " ", "right", "l":
 		switch {
-		case d.task != nil:
 		case d.sel < len(acts):
-			if key == "enter" {
+			if isEnter(key) {
 				cmd, _ := s.act(s.detailRow(), acts[d.sel].key)
 				return s, cmd
 			}
@@ -248,19 +129,23 @@ func (s *Status) updateDetail(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return s, nil
 }
 
+// isEnter reports whether key chooses what a menu has selected: enter, or
+// space.
+func isEnter(key string) bool { return key == "enter" || key == "space" || key == " " }
+
 func (s *Status) renderDetail() string {
 	d := s.detail
 	var b strings.Builder
 	b.WriteString(tui.Dim("‹ ") + tui.Bold(d.title))
 	if d.task != nil {
-		b.WriteString(tui.Dim(" › ") + tui.Bold(d.task.id) + " " + d.task.task.Title)
+		b.WriteString(d.task.crumbs())
 	}
 	b.WriteString("\n\n")
 	foot := s.foot()
+	room := max(s.height-2-len(foot), 3)
 	if d.task != nil {
-		s.renderTask(&b, d.task)
+		b.WriteString(d.task.render(s, room))
 	} else {
-		room := max(s.height-2-len(foot), 3)
 		b.WriteString(s.renderMenu(d, room))
 	}
 	if len(foot) > 0 {
@@ -308,107 +193,33 @@ func (s *Status) renderMenu(d *detail, room int) string {
 		lines = append(lines, tui.Dim("No tasks."))
 	}
 	for i, t := range d.tasks {
-		var b strings.Builder
 		mark := "  "
 		if len(actions(row))+i == d.sel {
 			mark, sel = tui.Color("› ", tui.Cyan), len(lines)
 		}
-		s.renderTaskLine(&b, d, t, mark)
-		lines = append(lines, b.String())
+		lines = append(lines, s.taskLine(d, t, mark))
 	}
 	return scroll(lines, sel, sel, &d.top, room)
 }
 
-// renderTaskLine is one of a goal's tasks, with its latest step while it
-// runs.
-func (s *Status) renderTaskLine(b *strings.Builder, d *detail, t *queue.Task, mark string) {
+// taskLine is one of a goal's tasks, with its latest step while it runs.
+func (s *Status) taskLine(d *detail, t *queue.Task, mark string) string {
 	ws := ""
 	if t.Workstream != "" {
 		ws = tui.Dim("[" + t.Workstream + "] ")
 	}
-	fmt.Fprintf(b, "%s%s %s %s%s", mark, stateMark(t.State), t.ID, ws, t.Title)
+	line := fmt.Sprintf("%s%s %s %s%s", mark, stateMark(t.State), t.ID, ws, t.Title)
 	switch t.State {
 	case queue.Active:
-		if sv, _ := lastSession(
-			s.env.Store.SessionsDir(d.goal),
-			t.ID,
-		); sv != nil &&
-			len(sv.events) > 0 {
-			b.WriteString(tui.Dim(" · " + oneLine(sv.events[len(sv.events)-1].Text, s.width/2)))
+		if sv, _ := latestSession(s.env.Store.SessionsDir(d.goal), t.ID); sv != nil {
+			if st := sv.latest(); st != "" {
+				line += tui.Dim(" · " + oneLine(st, s.width/2))
+			}
 		}
 	case queue.Blocked:
-		b.WriteString(tui.Color(" · waiting on your answer", tui.Magenta))
+		line += tui.Color(" · waiting on your answer", tui.Magenta)
 	}
-}
-
-// renderTask shows a task's session, as much of its steps as fit, then its
-// questions and text.
-func (s *Status) renderTask(b *strings.Builder, tv *taskView) {
-	t := tv.task
-	fmt.Fprintf(b, "%s %s · %s", stateMark(t.State), t.Kind, t.State)
-	if t.Profile != "" {
-		b.WriteString(tui.Dim(" · " + t.Profile))
-	}
-	b.WriteString("\n")
-
-	var tail []string
-	for _, q := range tv.questions {
-		state := tui.Color("open", tui.Magenta)
-		if q.Answer != "" {
-			state = tui.Dim("answered")
-		}
-		tail = append(tail, fmt.Sprintf("? %s %s", oneLine(q.Text, s.width-14), state))
-	}
-	if body := strings.TrimSpace(t.Body); body != "" {
-		tail = append(tail, "", tui.Dim("─── task"))
-		lines := strings.Split(body, "\n")
-		if len(lines) > 8 {
-			lines = append(lines[:8], "…")
-		}
-		tail = append(tail, lines...)
-	}
-
-	sv := tv.session
-	if sv == nil {
-		b.WriteString(tui.Dim("No session has worked on it yet.") + "\n")
-	} else {
-		b.WriteString(sessionLine(sv) + "\n")
-		// The steps get what the rest leaves of the pane, the latest last.
-		room := max(s.height-8-len(tail), 5)
-		events := sv.events[max(len(sv.events)-room, 0):]
-		if len(events) < len(sv.events) {
-			b.WriteString(
-				tui.Dim(fmt.Sprintf("  … %d earlier steps", len(sv.events)-len(events))) + "\n",
-			)
-		}
-		for _, e := range events {
-			text := oneLine(e.Text, s.width-14)
-			if e.Type == "tool" {
-				text = tui.Color(text, tui.Cyan)
-			}
-			fmt.Fprintf(b, "  %s %s\n", tui.Dim(e.Time.Local().Format("15:04:05")), text)
-		}
-	}
-	if len(tail) > 0 {
-		b.WriteString("\n" + strings.Join(tail, "\n") + "\n")
-	}
-}
-
-// sessionLine says whether a session is running or how it ended.
-func sessionLine(sv *sessionView) string {
-	steps := fmt.Sprintf("%d steps", len(sv.events))
-	switch {
-	case !sv.ended && !sv.settled:
-		since := ""
-		if len(sv.events) > 0 {
-			since = " for " + time.Since(sv.events[0].Time).Round(time.Second).String()
-		}
-		return tui.Color("▶ running"+since, tui.Green) + tui.Dim(" · "+steps+" · session "+sv.id)
-	case sv.err != "":
-		return tui.Color("✗ "+oneLine(sv.err, 80), tui.Red) + tui.Dim(" · "+steps)
-	}
-	return tui.Dim(fmt.Sprintf("ended %s · %d turns · $%.2f · %s · session %s",
-		sv.outcome, sv.turns, sv.costUSD, steps, sv.id))
+	return line
 }
 
 func stateMark(st queue.State) string {

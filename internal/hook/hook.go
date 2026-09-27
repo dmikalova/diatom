@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/dmikalova/diatom/internal/gate"
 	"github.com/dmikalova/diatom/internal/git"
@@ -113,8 +114,13 @@ func Stop(
 		return nil
 	}
 
+	start := time.Now()
 	res, err := runGate(ctx, spec.Worktree, spec.Gate)
 	if err != nil {
+		return err
+	}
+	if err := session.AppendEvent(dir, session.GateEvent(time.Now(), spec.Gate, time.Since(start),
+		res.Passed, res.Output)); err != nil {
 		return err
 	}
 	if !res.Passed {

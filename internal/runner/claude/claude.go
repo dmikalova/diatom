@@ -292,8 +292,13 @@ type streamEvent struct {
 		Content []struct {
 			Type  string          `json:"type"`
 			Text  string          `json:"text"`
+			ID    string          `json:"id"`
 			Name  string          `json:"name"`
 			Input json.RawMessage `json:"input"`
+			// A tool result's fields.
+			ToolUseID string          `json:"tool_use_id"`
+			Content   json.RawMessage `json:"content"`
+			IsError   bool            `json:"is_error"`
 		} `json:"content"`
 	} `json:"message"`
 	// The result event's fields.
@@ -338,22 +343,8 @@ func Parse(
 				started(ev.SessionID)
 				started = nil
 			}
-		case "assistant":
-			for _, c := range ev.Message.Content {
-				switch c.Type {
-				case "text":
-					if strings.TrimSpace(c.Text) != "" {
-						onEvent(runner.Event{Type: runner.EventText, Text: c.Text})
-					}
-				case "tool_use":
-					onEvent(
-						runner.Event{
-							Type: runner.EventTool,
-							Text: c.Name + " " + summarize(c.Input),
-						},
-					)
-				}
-			}
+		case "assistant", "user":
+			contentEvents(ev, onEvent)
 		case "result":
 			sawResult = true
 			res = runner.Result{
@@ -377,6 +368,32 @@ func Parse(
 	return res, sawResult, nil
 }
 
+// contentEvents reports what a message holds: the agent's words and tool
+// calls, or the results the tools gave back.
+func contentEvents(ev streamEvent, onEvent func(runner.Event)) {
+	for _, c := range ev.Message.Content {
+		switch {
+		case ev.Type == "assistant" && c.Type == "text" && strings.TrimSpace(c.Text) != "":
+			onEvent(runner.Event{Type: runner.EventText, Text: c.Text})
+		case ev.Type == "assistant" && c.Type == "tool_use":
+			onEvent(runner.Event{
+				Type:    runner.EventTool,
+				Text:    c.Name + " " + summarize(c.Input),
+				ID:      c.ID,
+				Summary: describe(c.Name, c.Input),
+				Detail:  detail(c.Input),
+			})
+		case ev.Type == "user" && c.Type == "tool_result":
+			onEvent(runner.Event{
+				Type:   runner.EventResult,
+				ID:     c.ToolUseID,
+				Detail: resultText(c.Content),
+				Failed: c.IsError,
+			})
+		}
+	}
+}
+
 func outcome(ev streamEvent) runner.Outcome {
 	switch {
 	case ev.Subtype == "error_max_turns":
@@ -386,6 +403,92 @@ func outcome(ev streamEvent) runner.Outcome {
 	default:
 		return runner.Completed
 	}
+}
+
+// detailBytes caps what a step keeps of a tool call's input or output.
+const detailBytes = 8 << 10
+
+// describe says in a few words what a tool call does: the description the
+// agent gave it, or its tool and target.
+func describe(name string, input json.RawMessage) string {
+	var fields map[string]any
+	_ = json.Unmarshal(input, &fields)
+	str := func(k string) string { v, _ := fields[k].(string); return v }
+	if d := str("description"); d != "" {
+		return d
+	}
+	switch name {
+	case "Read", "Edit", "MultiEdit", "Write", "NotebookEdit":
+		if p := str("file_path"); p != "" {
+			return name + " " + filepath.Base(p)
+		}
+	case "Grep":
+		return "Search for " + str("pattern")
+	case "Glob":
+		return "Find " + str("pattern")
+	case "WebFetch":
+		return "Fetch " + str("url")
+	case "WebSearch":
+		return "Search the web for " + str("query")
+	case "TodoWrite":
+		return "Update the todo list"
+	}
+	if s := summarize(input); s != "" {
+		return name + " " + s
+	}
+	return name
+}
+
+// detail is a tool call's whole input: a command as it is, anything else as
+// indented JSON.
+func detail(input json.RawMessage) string {
+	var fields map[string]any
+	if json.Unmarshal(input, &fields) == nil {
+		if c, ok := fields["command"].(string); ok {
+			return clip(c)
+		}
+	}
+	var b bytes.Buffer
+	if json.Indent(&b, input, "", "  ") != nil {
+		return clip(string(input))
+	}
+	return clip(b.String())
+}
+
+// resultText is a tool result's text, which comes as a string or as blocks.
+func resultText(content json.RawMessage) string {
+	var s string
+	if json.Unmarshal(content, &s) == nil {
+		return clipEnd(s)
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	_ = json.Unmarshal(content, &blocks)
+	var parts []string
+	for _, b := range blocks {
+		if b.Type == "text" {
+			parts = append(parts, b.Text)
+		}
+	}
+	return clipEnd(strings.Join(parts, "\n"))
+}
+
+// clip keeps the start of s, and clipEnd the end: an input says what it is
+// first, and an output how it ended last.
+func clip(s string) string {
+	if len(s) > detailBytes {
+		return strings.ToValidUTF8(s[:detailBytes], "") + "\n…"
+	}
+	return s
+}
+
+func clipEnd(s string) string {
+	if len(s) > detailBytes {
+		return "…\n" + strings.ToValidUTF8(s[len(s)-detailBytes:], "")
+	}
+	return s
 }
 
 // summarize shortens a tool call's input to the field that says what it does.

@@ -5,11 +5,8 @@
 package panes
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -25,6 +22,7 @@ import (
 	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/review"
+	"github.com/dmikalova/diatom/internal/session"
 	"github.com/dmikalova/diatom/internal/tui"
 )
 
@@ -292,7 +290,7 @@ func (s *Status) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		s.sel = min(s.sel+1, max(len(s.rows)-1, 0))
 	case "k", "up":
 		s.sel = max(s.sel-1, 0)
-	case "enter", "right", "l":
+	case "enter", "space", " ", "right", "l":
 		if row != nil {
 			if !row.intake {
 				s.setFocus(focus.Focus{Goal: row.goal.Name})
@@ -746,35 +744,22 @@ func stateColor(st queue.GoalState) string {
 	return tui.Color(string(st), c)
 }
 
-// lastEvent is the latest progress line of a workstream's running session.
+// lastEvent is the latest step of a workstream's running session.
 func lastEvent(repo, goal, ws string) string {
 	dirs, err := filepath.Glob(filepath.Join(queue.Open(repo).SessionsDir(goal), "*-"+ws))
 	if err != nil || len(dirs) == 0 {
 		return ""
 	}
 	slices.Sort(dirs)
-	f, err := os.Open(filepath.Join(dirs[len(dirs)-1], "events.jsonl"))
+	events, err := session.ReadEvents(dirs[len(dirs)-1])
 	if err != nil {
 		return ""
 	}
-	defer func() { _ = f.Close() }()
-	var last string
-	sc := bufio.NewScanner(f)
-	sc.Buffer(nil, 1<<20)
-	for sc.Scan() {
-		last = sc.Text()
-	}
-	var ev struct {
-		Text string `json:"text"`
-	}
-	if json.Unmarshal([]byte(last), &ev) != nil {
+	st := steps(events)
+	if len(st) == 0 {
 		return ""
 	}
-	text, _, _ := strings.Cut(strings.TrimSpace(ev.Text), "\n")
-	if len(text) > 90 {
-		text = text[:90] + "…"
-	}
-	return text
+	return oneLine(st[len(st)-1].summary, 90)
 }
 
 // Editing reports whether a job, such as laying a goal out, is still

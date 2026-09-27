@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -275,8 +276,10 @@ func TestStatusShowsIntakeBeingSorted(t *testing.T) {
 		t.Fatal(err)
 	}
 	write(t, filepath.Join(dir, "events.jsonl"),
-		`{"time":"2026-01-01T00:00:01Z","type":"tool","text":"Bash cat docs/todo.md"}`+"\n"+
-			`{"time":"2026-01-01T00:00:02Z","type":"text","text":"Two goals, then."}`+"\n")
+		`{"time":"2026-01-01T00:00:01Z","type":"tool","text":"Bash cat docs/todo.md","id":"t1",`+
+			`"summary":"Read the todo list","detail":"cat docs/todo.md"}`+"\n"+
+			`{"time":"2026-01-01T00:00:03Z","type":"result","id":"t1","detail":"## Poison\n## Ward"}`+"\n"+
+			`{"time":"2026-01-01T00:00:04Z","type":"text","text":"Two goals, then."}`+"\n")
 	s.reload()
 	key(s, "enter")
 	out = ansi.Strip(s.render())
@@ -285,25 +288,70 @@ func TestStatusShowsIntakeBeingSorted(t *testing.T) {
 		!strings.Contains(out, "0002 Triage: web · waiting on your answer") {
 		t.Fatalf("intake opened:\n%s", out)
 	}
+	// The task lists its Claude sessions; space opens one like enter.
 	key(s, "enter")
 	out = ansi.Strip(s.render())
-	if !strings.Contains(out, "▶ running") || !strings.Contains(out, "Bash cat docs/todo.md") ||
-		!strings.Contains(out, "Two goals, then.") {
+	if !strings.Contains(out, "› ▶ Claude running") || !strings.Contains(out, "2 steps") {
 		t.Fatalf("task opened:\n%s", out)
 	}
-	// It follows the session live.
-	write(
-		t,
-		filepath.Join(dir, "events.jsonl"),
-		`{"time":"2026-01-01T00:00:03Z","type":"tool","text":"Bash diatom task new-goal 0001"}`+"\n",
-	)
-	s.Update(tickMsg{})
-	if !strings.Contains(ansi.Strip(s.render()), "diatom task new-goal") {
-		t.Error("the open task didn't follow the session")
+	key(s, " ")
+	out = ansi.Strip(s.render())
+	if !strings.Contains(out, "✓ Read the todo list · 2s") || !strings.Contains(out, "› ") ||
+		!strings.Contains(out, "“ Two goals, then.") || strings.Contains(out, "cat docs/todo.md") {
+		t.Fatalf("session opened:\n%s", out)
 	}
-	key(s, "esc", "esc")
+	// It follows the session live, keeping to the latest step.
+	if err := session.AppendEvent(dir, session.Event{
+		Time:    time.Unix(1767225605, 0),
+		Type:    "tool",
+		ID:      "t2",
+		Summary: "Start the poison goal",
+		Detail:  "diatom task new-goal 0001",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s.Update(tickMsg{})
+	out = ansi.Strip(s.render())
+	if !regexp.MustCompile(`› \d\d:\d\d:\d\d ▶ Start the poison goal`).MatchString(out) {
+		t.Errorf("the open session didn't follow it:\n%s", out)
+	}
+	// A step opens to its command and output.
+	key(s, "k", "k", "enter")
+	out = ansi.Strip(s.render())
+	if !strings.Contains(out, "cat docs/todo.md") || !strings.Contains(out, "output after 2s") ||
+		!strings.Contains(out, "## Ward") {
+		t.Errorf("step opened:\n%s", out)
+	}
+	key(s, "esc", "esc", "esc", "esc")
 	if s.detail != nil || !strings.Contains(ansi.Strip(s.render()), "intake 1 being sorted") {
-		t.Errorf("esc twice didn't reach the list:\n%s", s.render())
+		t.Errorf("esc four times didn't reach the list:\n%s", s.render())
+	}
+}
+
+func TestSessionShowsWhyItWasntSettled(t *testing.T) {
+	f := newFixture(t)
+	dir := filepath.Join(f.store.SessionsDir("set"), "20260101T000000Z-engine")
+	if err := session.Create(dir, session.Spec{ID: "20260101T000000Z-engine",
+		Tasks: []string{"0001"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.WriteResult(
+		dir,
+		map[string]any{"outcome": "completed", "turns": 4},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.UpdateState(dir, func(st *session.State) {
+		st.Settled, st.Error = true, "no gate is configured"
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s := NewStatus(context.Background(), f.env)
+	key(s, "enter", "j", "j", "j", "enter")
+	out := ansi.Strip(s.render())
+	if !strings.Contains(out, "✗ Claude completed") ||
+		!strings.Contains(out, "no gate is configured") {
+		t.Errorf("task:\n%s", out)
 	}
 }
 
