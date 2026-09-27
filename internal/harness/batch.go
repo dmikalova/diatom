@@ -62,6 +62,13 @@ func (h *Harness) runBatch(ctx context.Context, repo Repo, b schedule.Batch) err
 	if planningKind(b.Kind) {
 		return h.runPlanning(ctx, repo, g, b)
 	}
+	if strings.TrimSpace(repo.Config.Gate) == "" {
+		// Without a gate nothing can be checked or committed, so a session
+		// would only be thrown away.
+		return h.askAll(s, g.Name, b.Tasks, "No gate is configured for this repo, so diatom can't "+
+			"check or commit any work. Set `gate` in .diatom/config.yaml to the command every commit "+
+			"must pass, such as `gate: mage ci:check`, then answer this to carry on.")
+	}
 	main := git.Repo{Dir: s.Repo()}
 	wt := git.Repo{Dir: s.WorktreeDir(g.Name, b.Workstream)}
 	unlock := h.lockRepo(s.Repo())
@@ -141,7 +148,9 @@ func (h *Harness) settleSession(
 	if errors.Is(err, errSuspended) {
 		return err
 	}
-	return errors.Join(err, session.UpdateState(dir, func(st *session.State) { st.Settled = true }))
+	return errors.Join(err, session.UpdateState(dir, func(st *session.State) {
+		st.Settled, st.Error = true, errString(err)
+	}))
 }
 
 type sessionResult struct {
@@ -295,7 +304,7 @@ func (h *Harness) newSession(
 		return "", spec, err
 	}
 	in := PromptInput{
-		Goal: g, Batch: b, Gate: cfg.Gate,
+		Goal: g, Batch: b, Gate: cfg.Gate, Timeout: cfg.CommandTimeout,
 		TaskDir: filepath.Join(s.GoalDir(g.Name), "tasks", string(queue.Active)),
 		Merging: wt.MergeInProgress(ctx),
 		Guides:  guides,
@@ -776,7 +785,28 @@ func (h *Harness) requeue(
 ) error {
 	for _, t := range tasks {
 		to := queue.Pending
-		if asked[t.ID] {
+		t.Attempts++
+		switch {
+		case asked[t.ID]:
+			to = queue.Blocked
+		case t.Attempts >= maxIncomplete:
+			// The same error again would only repeat: more effort doesn't
+			// help with what diatom itself couldn't do.
+			t.Attempts = 0
+			if err := s.AddQuestion(goal, &queue.Question{
+				Task:    t.ID,
+				Created: h.now(),
+				Text: fmt.Sprintf(
+					"Sessions on task %s (%q) keep ending in an error diatom can't get "+
+						"past, so it has stopped retrying:\n\n%v\n\nFix what it says, then answer this to try "+
+						"again.",
+					t.ID,
+					t.Title,
+					cause,
+				),
+			}); err != nil {
+				return errors.Join(cause, err)
+			}
 			to = queue.Blocked
 		}
 		if err := s.Move(goal, t, to); err != nil {
@@ -784,6 +814,23 @@ func (h *Harness) requeue(
 		}
 	}
 	return cause
+}
+
+// askAll blocks each task on a question saying why none of them can run.
+func (h *Harness) askAll(s *queue.Store, goal string, tasks []*queue.Task, text string) error {
+	for _, t := range tasks {
+		if err := s.AddQuestion(
+			goal,
+			&queue.Question{Task: t.ID, Created: h.now(), Text: text},
+		); err != nil {
+			return err
+		}
+		if err := s.Move(goal, t, queue.Blocked); err != nil {
+			return err
+		}
+	}
+	h.log().Warn("tasks blocked", "goal", goal, "reason", text)
+	return nil
 }
 
 // integrate merges a workstream into the integration branch, queueing a

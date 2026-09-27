@@ -1,6 +1,7 @@
 // Package hook implements the two Claude Code hooks diatom gives every agent
 // session (ADR 0005). PreToolUse blocks git commands that change the
-// repository, because the harness does every git operation. Stop runs the gate
+// repository, because the harness does every git operation, and commands
+// that background or sleep to wait out the command time limit. Stop runs the gate
 // before the session may end and sends a failure back to the agent, which
 // keeps fixing in the same session: the cheapest retry, because nothing has to
 // be reloaded.
@@ -28,7 +29,8 @@ type toolInput struct {
 }
 
 // PreToolUse reads a PreToolUse event from in and, when it is a Bash command
-// that changes the repository through git, writes a deny decision to out.
+// that changes the repository through git, or backgrounds or sleeps to wait
+// out the command time limit, writes a deny decision to out.
 func PreToolUse(in io.Reader, out io.Writer) error {
 	var ev toolInput
 	if err := json.NewDecoder(in).Decode(&ev); err != nil {
@@ -37,16 +39,26 @@ func PreToolUse(in io.Reader, out io.Writer) error {
 	if ev.ToolName != "Bash" {
 		return nil
 	}
-	blocked := BlockedGit(ev.ToolInput.Command)
-	if blocked == "" {
+	var reason string
+	if blocked := BlockedGit(ev.ToolInput.Command); blocked != "" {
+		reason = fmt.Sprintf(
+			"diatom runs every git operation that changes the repository, so `%s` is blocked. "+
+				"Only edit files: when you finish, the harness runs the gate and commits your work. "+
+				"Read-only git commands such as status, diff, log and show are allowed.",
+			blocked,
+		)
+	} else if waits := BlockedWait(ev.ToolInput.Command); waits != "" {
+		reason = fmt.Sprintf(
+			"`%s` is blocked: commands run in the foreground, and nothing may be backgrounded or "+
+				"slept on to get round the command time limit. Run a narrower check that finishes in "+
+				"time, such as one package's tests or one linter. diatom runs the whole gate itself when "+
+				"you finish and sends any failure back to you.",
+			waits,
+		)
+	}
+	if reason == "" {
 		return nil
 	}
-	reason := fmt.Sprintf(
-		"diatom runs every git operation that changes the repository, so `%s` is blocked. "+
-			"Only edit files: when you finish, the harness runs the gate and commits your work. "+
-			"Read-only git commands such as status, diff, log and show are allowed.",
-		blocked,
-	)
 	return json.NewEncoder(out).Encode(map[string]any{
 		"hookSpecificOutput": map[string]string{
 			"hookEventName":            "PreToolUse",

@@ -2,6 +2,7 @@ package harness
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -611,9 +612,10 @@ func TestPrompt(t *testing.T) {
 			Tasks:      []*queue.Task{{ID: "0001", Title: "Fix", Body: "Keep both sides.\n"}},
 		},
 		Gate:    "mage check",
+		Timeout: 30 * time.Second,
 		TaskDir: "/r/tasks/active",
 	})
-	for _, want := range []string{"1 task", "`mage check`", "diatom task done", "A merge is in progress", "/r/tasks/active/0001.md", "### Task 0001: Fix", "Keep both sides."} {
+	for _, want := range []string{"1 task", "`mage check`", "each is stopped after 30s", "diatom task done", "A merge is in progress", "/r/tasks/active/0001.md", "### Task 0001: Fix", "Keep both sides."} {
 		if !strings.Contains(p, want) {
 			t.Errorf("prompt lacks %q", want)
 		}
@@ -673,5 +675,49 @@ func TestSessionContext(t *testing.T) {
 	if !strings.Contains(spec.Prompt, "`internal/cards/AGENTS.md`") ||
 		strings.Contains(spec.Prompt, "- `AGENTS.md`") {
 		t.Errorf("prompt does not list the nested guide alone:\n%s", spec.Prompt)
+	}
+}
+
+func TestNoGateAsksInsteadOfRunning(t *testing.T) {
+	f := newFixture(t)
+	writeFile(t, f.store.Repo(), ".diatom/config.yaml", "maxSessions: 2\n")
+	task := f.add("engine", "Add ward")
+	f.step()
+	qs, _ := f.store.Questions("set", queue.QuestionOpen)
+	if got := f.task(task.ID); got.State != queue.Blocked || f.agent.sessions != 0 ||
+		len(qs) != 1 || !strings.Contains(qs[0].Text, "No gate is configured") {
+		t.Errorf("task %s after %d sessions, questions %+v", got.State, f.agent.sessions, qs)
+	}
+}
+
+func TestRepeatedErrorsStopRetrying(t *testing.T) {
+	f := newFixture(t)
+	task := f.add("engine", "Add ward")
+	f.agent.act = func(t *testing.T, wt string, s agentSession) {
+		writeFile(t, wt, "ward.txt", "ward\n")
+		s.report("done", task.ID, "")
+	}
+	f.h.Gate = func(context.Context, string, string) (gate.Result, error) {
+		return gate.Result{}, errors.New("gate would not start")
+	}
+	ctx := context.Background()
+	for range 2 {
+		batches, repos, err := f.h.plan(ctx, nil)
+		if err != nil || len(batches) != 1 {
+			t.Fatalf("plan = %v, %v", batches, err)
+		}
+		if err := f.h.RunBatch(ctx, repos[batches[0].Repo], batches[0]); err == nil {
+			t.Fatal("a gate that won't start settled the batch")
+		}
+	}
+	qs, _ := f.store.Questions("set", queue.QuestionOpen)
+	if got := f.task(task.ID); got.State != queue.Blocked || len(qs) != 1 ||
+		!strings.Contains(qs[0].Text, "gate would not start") {
+		t.Errorf("after two errors, task %s, questions %+v", got.State, qs)
+	}
+	dirs, _ := filepath.Glob(filepath.Join(f.store.SessionsDir("set"), "*"))
+	st, _ := session.LoadState(dirs[len(dirs)-1])
+	if !strings.Contains(st.Error, "gate would not start") {
+		t.Errorf("session state = %+v", st)
 	}
 }

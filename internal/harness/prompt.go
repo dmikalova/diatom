@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
@@ -16,6 +17,8 @@ type PromptInput struct {
 	Goal  *queue.Goal
 	Batch schedule.Batch
 	Gate  string
+	// Timeout is how long each command the agent runs may take.
+	Timeout time.Duration
 	// TaskDir holds the batch's task files while it runs.
 	TaskDir string
 	// Merging is set when a merge is in progress in the worktree.
@@ -50,6 +53,10 @@ func Prompt(in PromptInput) string {
 			"If it fails you get its output back and keep fixing. When it passes, diatom commits your work.\n",
 		in.Gate,
 	)
+	fmt.Fprintf(&b, "- **Commands run in the foreground, and each is stopped after %s.** "+
+		"Backgrounding a command, with `&` or `nohup`, and sleeping to wait for one are refused. "+
+		"Run the narrowest check that tells you what you need, such as one package's tests; diatom "+
+		"runs the whole gate itself when you finish.\n", in.Timeout)
 	b.WriteString("- **Report each task with the task tool**, a shell command:\n")
 	b.WriteString("  - `diatom task done <id>` once the task is finished.\n")
 	b.WriteString(

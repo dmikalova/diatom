@@ -263,6 +263,9 @@ type State struct {
 	Settled bool `json:"settled,omitempty"`
 	// Resumes counts the times the session was resumed after a stop.
 	Resumes int `json:"resumes,omitempty"`
+	// Error is why diatom couldn't settle the session's work, such as a
+	// gate that couldn't run; its tasks went back to the queue.
+	Error string `json:"error,omitempty"`
 }
 
 // LoadState reads a session's state; a session without one has just begun.
