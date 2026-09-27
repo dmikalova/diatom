@@ -892,8 +892,8 @@ func count(n int, thing string) string {
 func navGlyph(r goalRow) string {
 	name, c := goalStatus(r)
 	g, ok := map[string]string{
-		"active": "▶", "queued": "◷", "blocked": "🔗", "reviewing": "✎", "ready to finish": "✓",
-		"planning": "◌", "parked": "‖", "done": "✓",
+		"active": "🟢", "queued": "⏳", "blocked": "🔗", "reviewing": "🔎", "ready to finish": "📩",
+		"planning": "📝", "parked": "⏸️", "done": "✅",
 	}[name]
 	if !ok {
 		g = "·"
