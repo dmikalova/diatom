@@ -200,8 +200,8 @@ twice or its key twice:
   the one before. Use this when you want CI per PR. Merge them bottom-up using
   **"Create a merge commit"**. Squash or rebase merges rewrite the lower PR's
   commits, so the next PR up would show them all again.
-- **`d`, Mark it done and lay it out**, to land later with `P` or `F`. `D`
-  on its page marks it done even with work left.
+- **`d`, Mark it done**, to land later with `P` or `F`. `D` on its page marks
+  it done even with work left.
 
 First the goal catches up with `main`, fetched from origin. What `main` gained
 since the goal started is merged in. When that conflicts, landing stops there:
@@ -211,7 +211,10 @@ to review. Once they're reviewed, the goal is ready to finish again.
 
 Then diatom replays the goal's commits onto `main` without the merge commits,
 with each fixup squashed into its target, runs the gate on each PR's tip, and
-lands it. If the workstreams can't be put in stack order, you get one PR, and
+lands it. When `main` changed the goal's own code, the commits are replayed
+where the goal started instead, and a last merge commit joins them to `main`
+with the agent's resolution. A landing that fails leaves the goal active, with
+the reason on screen. If the workstreams can't be put in stack order, you get one PR, and
 the goal's page says why. What landing came to stays on screen until you press
 a key or move on.
 

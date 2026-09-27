@@ -69,9 +69,12 @@ type Result struct {
 	// leaving the goal as one pull request in the order its commits were made.
 	Unstacked string `yaml:"unstacked,omitempty"`
 	// Carried is set when the last commit carries what the goal's merges
-	// changed.
-	Carried bool      `yaml:"carried,omitempty"`
-	Built   time.Time `yaml:"built"`
+	// changed, and MergesBase when the base moved on in the goal's own code:
+	// the commits then sit where the goal started, and the last is a merge
+	// into the base.
+	Carried    bool      `yaml:"carried,omitempty"`
+	MergesBase bool      `yaml:"mergesBase,omitempty"`
+	Built      time.Time `yaml:"built"`
 	// Landing is how far the goal is on its way upstream.
 	Landing *Landing `yaml:"landing,omitempty"`
 }
@@ -152,10 +155,20 @@ func Build(ctx context.Context, s *queue.Store, g *queue.Goal, opts Options) (*R
 	}()
 
 	res := &Result{Base: base, Integration: integration, Final: FinalBranch(g)}
-	stack, err := replay(ctx, wt, base, arrange(commits, owner, workstreamOrder(g)))
+	stack, err := replayOnto(ctx, wt, base, commits, owner, g, res)
 	if conflict := (*ConflictError)(nil); errors.As(err, &conflict) {
-		res.Unstacked = conflict.Error()
-		stack, err = replay(ctx, wt, base, arrange(commits, nil, []string{""}))
+		// The base moved on in the goal's own code, so its commits don't
+		// apply on its tip. They go where the goal started instead, and a
+		// merge joins them to the base with the resolution the goal's
+		// catch-up reached.
+		start, ferr := forkPoint(ctx, repo, base, integration)
+		if ferr != nil {
+			return nil, ferr
+		}
+		res.Unstacked = ""
+		if stack, err = replayOnto(ctx, wt, start, commits, owner, g, res); err == nil {
+			res.MergesBase = true
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -164,7 +177,16 @@ func Build(ctx context.Context, s *queue.Store, g *queue.Goal, opts Options) (*R
 		return nil, fmt.Errorf("every commit of goal %s is already on %s", g.Name, g.Base)
 	}
 	last := &stack[len(stack)-1]
-	if tree, err := repo.Run(ctx, "rev-parse", last.Tip+"^{tree}"); err != nil {
+	if res.MergesBase {
+		msg := fmt.Sprintf("Merge %s into %s\n\n%s moved on in the goal's own code while it ran; "+
+			"this merge holds how the two were reconciled.", g.Title, g.Base, g.Base)
+		sha, err := repo.Run(ctx, "commit-tree", want, "-p", base, "-p", last.Tip, "-m", msg)
+		if err != nil {
+			return nil, err
+		}
+		last.Tip = sha
+		last.Commits = append(last.Commits, firstLine(msg))
+	} else if tree, err := repo.Run(ctx, "rev-parse", last.Tip+"^{tree}"); err != nil {
 		return nil, err
 	} else if tree != want {
 		sha, err := wt.CommitTree(ctx, want, carryMessage)
@@ -229,6 +251,41 @@ func expectedTree(
 		)
 	}
 	return tree, err
+}
+
+// replayOnto replays the goal's commits onto base, one pull request per
+// workstream, or when a workstream's commits don't apply on the ones before,
+// as one pull request in the order they were made, saying why in res.
+func replayOnto(
+	ctx context.Context,
+	wt git.Repo,
+	base string,
+	commits []commit,
+	owner map[string]string,
+	g *queue.Goal,
+	res *Result,
+) ([]PR, error) {
+	stack, err := replay(ctx, wt, base, arrange(commits, owner, workstreamOrder(g)))
+	if conflict := (*ConflictError)(nil); errors.As(err, &conflict) {
+		res.Unstacked = conflict.Error()
+		stack, err = replay(ctx, wt, base, arrange(commits, nil, []string{""}))
+	}
+	return stack, err
+}
+
+// forkPoint is where the goal's integration branch started from its base:
+// the first parent of the oldest commit on its first-parent line that the
+// base lacks. Merging the base in later keeps it there.
+func forkPoint(ctx context.Context, repo git.Repo, base, integration string) (string, error) {
+	out, err := repo.Run(ctx, "rev-list", "--first-parent", integration, "--not", base)
+	if err != nil {
+		return "", err
+	}
+	line := strings.Fields(out)
+	if len(line) == 0 {
+		return base, nil
+	}
+	return repo.Run(ctx, "rev-parse", line[len(line)-1]+"^1")
 }
 
 // commit is one of the goal's commits.

@@ -35,7 +35,7 @@ func push(ctx context.Context, s *queue.Store, g *queue.Goal, res *Result, remot
 	_, err := repo.Run(ctx, "push", remote, res.Tip()+":refs/heads/"+g.Base)
 	if gitErr := (*git.Error)(nil); errors.As(err, &gitErr) &&
 		strings.Contains(gitErr.Stderr, "non-fast-forward") {
-		return fmt.Errorf("%s on %s moved on while goal %s was being laid out: merge it again",
+		return fmt.Errorf("%s on %s moved on while goal %s was being prepared: merge it again",
 			g.Base, remote, g.Name)
 	}
 	return err
@@ -137,57 +137,6 @@ func prBody(g *queue.Goal, res *Result, i int, before []string) string {
 	return b.String()
 }
 
-// Describe says what the layout holds and how to land it.
-func Describe(g *queue.Goal, res *Result) string {
-	var b strings.Builder
-	n := 0
-	for _, pr := range res.Stack {
-		n += len(pr.Commits)
-	}
-	fmt.Fprintf(&b, "goal %s is laid out on %s: %d commits on %s\n", g.Name, res.Final, n, g.Base)
-	if res.Unstacked != "" {
-		fmt.Fprintf(&b, "The workstreams can't go one after another (%s), so it is one pull "+
-			"request in the order the work was done.\n", res.Unstacked)
-	}
-	for i, pr := range res.Stack {
-		fmt.Fprintf(
-			&b,
-			"  %d. %s: %d commits%s\n",
-			i+1,
-			pr.Branch,
-			len(pr.Commits),
-			gateNote(pr.Gate),
-		)
-	}
-	if res.Carried {
-		b.WriteString("The last commit carries what resolving the goal's merges changed.\n")
-	}
-	if res.Landing != nil && res.Landing.How != "" {
-		fmt.Fprintf(&b, "Landing: %s\n", Summary(g, res))
-	}
-	fmt.Fprintf(&b, "Land it with one of:\n"+
-		"  diatom goal finish %s -prs    push the branches and open %s\n"+
-		"  diatom goal finish %s -push   push %s straight to %s\n",
-		g.Name, plural(len(res.Stack), "a pull request", "a stack of pull requests"),
-		g.Name, res.Final, g.Base)
-	return b.String()
-}
-
-func gateNote(r *Gate) string {
-	switch {
-	case r == nil:
-		return ""
-	case r.Passed:
-		return ", gate passes"
-	}
-	return ", gate FAILS:\n" + indent(r.Output, "       ")
-}
-
-func indent(s, prefix string) string {
-	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
-	return prefix + strings.Join(lines, "\n"+prefix)
-}
-
 func plural(n int, one, many string) string {
 	if n == 1 {
 		return one
@@ -198,20 +147,14 @@ func plural(n int, one, many string) string {
 // Summary says in one line how far a done goal is on its way upstream.
 func Summary(g *queue.Goal, res *Result) string {
 	if res == nil {
-		return "not laid out: landing it with F or P lays it out first"
+		return "not ready to land yet: P merges it into " + g.Base + ", F opens its pull requests"
 	}
 	l := res.Landing
 	var line string
 	switch {
 	case l == nil || l.How == "":
-		line = fmt.Sprintf(
-			"laid out as %s, not landed yet",
-			plural(
-				len(res.Stack),
-				"1 pull request",
-				fmt.Sprintf("%d pull requests", len(res.Stack)),
-			),
-		)
+		line = "ready to land as " + plural(len(res.Stack), "1 pull request",
+			fmt.Sprintf("%d pull requests", len(res.Stack)))
 	case l.Merged != "":
 		line = "merged into " + l.Upstream(g) + " · " + checksNote(l)
 	case l.How == PRs:

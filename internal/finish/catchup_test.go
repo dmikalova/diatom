@@ -71,3 +71,42 @@ func TestBaseTipFollowsUpstreamWhenAhead(t *testing.T) {
 		t.Errorf("behind its upstream: %q", got)
 	}
 }
+
+func TestBuildMergesAConflictingBase(t *testing.T) {
+	f := newFixture(t)
+	f.task("engine", f.work("engine", "engine.txt", "ward\n", "feat: add ward"))
+	f.task("cards", f.work("cards", "cards.txt", "warden\n", "feat: add warden"))
+	// main changes the goal's own file, and the catch-up's resolution lands
+	// on the integration branch, as an agent's would.
+	f.git("checkout", "--quiet", "main")
+	f.write("engine.txt", "not ward\n")
+	f.commitAll("feat: something else")
+	f.on("")
+	if _, err := f.repo.Run(f.ctx, "merge", "--no-edit", "main"); err == nil {
+		t.Fatal("the merge didn't conflict")
+	}
+	f.write("engine.txt", "ward, not ward\n")
+	f.git("add", "-A")
+	f.git("commit", "--quiet", "--no-edit")
+	f.git("checkout", "--quiet", "main")
+
+	res := f.build(Options{})
+	if !res.MergesBase || res.Unstacked != "" || len(res.Stack) != 2 {
+		t.Fatalf("laid out as %+v", res)
+	}
+	tip := res.Tip()
+	if parents := strings.Fields(f.git("rev-list", "--parents", "-n1", tip)); len(parents) != 3 ||
+		parents[1] != f.git("rev-parse", "main") {
+		t.Errorf("the tip's parents = %v, want main first", parents)
+	}
+	if !f.sameTree(tip, f.goal.IntegrationBranch()) {
+		t.Error("the tip doesn't hold the resolution")
+	}
+	if ok, _ := f.repo.IsAncestor(f.ctx, "main", tip); !ok {
+		t.Error("merging into main wouldn't be a fast-forward")
+	}
+	// The goal's own commits are kept, one pull request per workstream.
+	if subjects := f.subjects(res.Stack[0].Tip); subjects[0] != "feat: add ward" {
+		t.Errorf("the first pull request = %v", subjects)
+	}
+}

@@ -40,7 +40,7 @@ func TestAppNav(t *testing.T) {
 	}
 	a, _ := newApp(t, f)
 	out := ansi.Strip(a.render())
-	for _, want := range []string{"»  Next", "+  Intake", "⏳ Implement the next set", "    1 question",
+	for _, want := range []string{"⏩ Next", "➕ Intake", "⏳ Implement the next set", "    1 question",
 		"$0.00 · 0 running", "─ intake ─"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("app lacks %q:\n%s", want, out)

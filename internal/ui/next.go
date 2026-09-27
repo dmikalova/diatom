@@ -203,7 +203,7 @@ func (n *Next) questions(r *goalRow) []item {
 }
 
 // readyToFinish reports whether a goal waits on the human to finish it: all
-// its work done and reviewed, or done and laid out but not landed.
+// its work done and reviewed, or done but not landed.
 func readyToFinish(r goalRow) bool {
 	if r.intake {
 		return false
@@ -622,7 +622,7 @@ func (n *Next) finishText(it item) string {
 	} else {
 		fmt.Fprintf(&b, "Every task is done and every hunk reviewed. Landing it first merges in "+
 			"what %s gained since: an agent resolves anything that conflicts, and its resolution comes back "+
-			"for review. It is then laid out on %s's tip, the gate runs, and it lands.\n\n", g.Base, g.Base)
+			"for review. Its commits then go onto %s's tip, the gate runs, and it lands.\n\n", g.Base, g.Base)
 	}
 	if stat := n.stats[g.Name]; stat != "" {
 		fmt.Fprintf(&b, "%s against %s: %s\n", g.IntegrationBranch(), g.Base, stat)

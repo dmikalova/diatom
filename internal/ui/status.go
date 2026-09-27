@@ -97,7 +97,7 @@ type Status struct {
 	// confirm names the key and goal a first press asked to confirm, such
 	// as a sign-off.
 	confirm string
-	// busy says what a background job, such as laying a goal out, is
+	// busy says what a background job, such as preparing a goal to land, is
 	// doing; it takes no other job until that one ends.
 	busy string
 
@@ -325,7 +325,28 @@ func (s *Status) toReview(store *queue.Store, goal string, commits []string) (in
 	return total, nil
 }
 
-// jobDone ends a background job, such as laying a goal out.
+// prepare returns the goal's commits ready to land, building them again
+// when the goal's branches have moved since.
+func prepare(
+	ctx context.Context,
+	s *queue.Store,
+	paths config.Paths,
+	g *queue.Goal,
+) (*finish.Result,
+	error,
+) {
+	res, err := finish.Ready(ctx, s, g)
+	if err != nil || res != nil {
+		return res, err
+	}
+	cfg, err := config.Load(s.Repo(), paths)
+	if err != nil {
+		return nil, err
+	}
+	return finish.Build(ctx, s, g, finish.Options{Gate: cfg.Gate, Timeout: cfg.GateTimeout})
+}
+
+// jobDone ends a background job, such as preparing a goal to land.
 func (s *Status) jobDone(msg jobMsg) {
 	s.reload()
 	s.busy, s.flash, s.err = "", msg.flash, msg.err
@@ -377,7 +398,7 @@ func actions(r *goalRow) []action {
 			a = append(a,
 				action{"P", "Merge it into " + g.Base},
 				action{"F", "Open its stacked pull requests"},
-				action{"d", "Mark it done and lay it out, to land later"})
+				action{"d", "Mark it done, to land later"})
 		} else {
 			a = append(a, action{"D", fmt.Sprintf(
 				"Mark it done with work left: %d tasks not done, %d hunks to review",
@@ -446,9 +467,9 @@ type jobMsg struct {
 
 // finishKey handles the keys that end and land a goal (ADR 0003), each
 // confirmed with a second press: P merges it into its base branch, F opens
-// its pull requests, d marks it done and lays it out, and D does so with
+// its pull requests, d marks it done ready to land, and D does so with
 // hunks unreviewed or tasks not done. Landing an active goal marks it done
-// first. Laying out runs the gate, so the job runs in the background.
+// first. Preparing it runs the gate, so the job runs in the background.
 func (s *Status) finishKey(row *goalRow, key string) tea.Cmd {
 	if s.busy != "" {
 		s.flash = "still " + s.busy
@@ -465,7 +486,7 @@ func (s *Status) finishKey(row *goalRow, key string) tea.Cmd {
 			return nil
 		}
 		prompt = fmt.Sprintf(
-			"press %s again to mark %s done and lay it out for landing",
+			"press %s again to mark %s done, ready to land",
 			key,
 			g.Name,
 		)
@@ -485,7 +506,7 @@ func (s *Status) finishKey(row *goalRow, key string) tea.Cmd {
 	if !s.confirmed(key, name, prompt) {
 		return nil
 	}
-	s.busy = "laying " + g.Name + " out and running the gate"
+	s.busy = "preparing " + g.Name + " to land and running the gate"
 	store, paths, ctx := queue.Open(row.repo), s.env.Paths, s.ctx
 	return func() tea.Msg {
 		flash, err := runFinish(ctx, store, paths, g, key)
@@ -516,24 +537,19 @@ func runFinish(
 		return fmt.Sprintf("%s has moved on and conflicts with %s: an agent is merging it in, and "+
 			"its resolution comes back for review before the goal lands", g.Base, g.Name), nil
 	}
-	if g.State == queue.GoalActive {
+	wasActive := g.State == queue.GoalActive
+	if wasActive {
 		if err := finish.MarkDone(ctx, s, g, key == "D"); err != nil {
 			return "", err
 		}
 	}
-	res, err := finish.Ready(ctx, s, g)
-	if err == nil && res == nil {
-		var cfg *config.Config
-		if cfg, err = config.Load(s.Repo(), paths); err == nil {
-			res, err = finish.Build(
-				ctx,
-				s,
-				g,
-				finish.Options{Gate: cfg.Gate, Timeout: cfg.GateTimeout},
-			)
-		}
-	}
+	res, err := prepare(ctx, s, paths, g)
 	if err != nil {
+		if wasActive {
+			// Nothing is ready to land, so the goal isn't done after all.
+			g.State = queue.GoalActive
+			err = errors.Join(err, s.SaveGoal(g))
+		}
 		return "", err
 	}
 	switch key {
@@ -544,7 +560,8 @@ func runFinish(
 		_, err := finish.Land(ctx, s, g, res, finish.Push, remote, false, nil)
 		return fmt.Sprintf("merged %s into %s on %s", g.Name, g.Base, remote), err
 	}
-	return fmt.Sprintf("%s is done and laid out as %d pull requests", g.Name, len(res.Stack)), nil
+	return fmt.Sprintf("%s is done, ready to land as %s", g.Name,
+		count(len(res.Stack), "pull request")), nil
 }
 
 // toggleParked parks an active goal or resumes a parked one. Parking stops

@@ -205,7 +205,7 @@ func TestNavScrolls(t *testing.T) {
 		key(a, "j")
 	}
 	out := ansi.Strip(a.render())
-	if !strings.Contains(out, "g15") || strings.Contains(out, "»  Next") {
+	if !strings.Contains(out, "g15") || strings.Contains(out, "⏩ Next") {
 		t.Errorf("the nav after moving down 18, in 12 lines:\n%s", out)
 	}
 	lines, _ := a.navLines()
@@ -543,7 +543,7 @@ func TestGoalPageEndsAndLandsAGoal(t *testing.T) {
 	if g, _ := f.store.Goal("set"); g.State != queue.GoalDone ||
 		!strings.Contains(
 			out,
-			"laid out as 1 pull request, not landed yet · P merge into main · F open PRs",
+			"ready to land as 1 pull request · P merge into main · F open PRs",
 		) {
 		t.Fatalf("after two D, goal is %s: %v\n%s", g.State, s.err, out)
 	}
@@ -780,5 +780,22 @@ func TestLandingOntoAConflictingMainGoesToAnAgent(t *testing.T) {
 	}
 	if g, _ := f.store.Goal("set"); g.State != queue.GoalActive {
 		t.Errorf("the goal is %s", g.State)
+	}
+}
+
+func TestAFailedLandingLeavesTheGoalActive(t *testing.T) {
+	f := newFixture(t)
+	// An integration branch with nothing main lacks has nothing to land.
+	if _, err := (git.Repo{Dir: f.repo}).Run(context.Background(), "branch",
+		"diatom/set/integration"); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := newApp(t, f)
+	openGoal(t, a, "set")
+	press(t, a, "D")
+	press(t, a, "D")
+	if g, _ := f.store.Goal("set"); a.status.err == nil ||
+		!strings.Contains(a.status.err.Error(), "no commits") || g.State != queue.GoalActive {
+		t.Errorf("after a failed landing the goal is %s: %v", g.State, a.status.err)
 	}
 }

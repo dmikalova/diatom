@@ -219,11 +219,9 @@ func TestBuildStacksWorkstreams(t *testing.T) {
 		!Current(f.ctx, f.store, f.goal, saved) {
 		t.Errorf("saved = %+v, %v", saved, err)
 	}
-	desc := Describe(f.goal, res)
-	for _, want := range []string{"2. diatom/set/pr/cards: 1 commits, gate passes", "goal finish set -prs"} {
-		if !strings.Contains(desc, want) {
-			t.Errorf("Describe lacks %q:\n%s", want, desc)
-		}
+	if pr := res.Stack[1]; pr.Branch != "diatom/set/pr/cards" || len(pr.Commits) != 1 ||
+		pr.Gate == nil || !pr.Gate.Passed {
+		t.Errorf("the second pull request = %+v", pr)
 	}
 }
 
@@ -251,8 +249,8 @@ func TestBuildFallsBackToOrderOfWork(t *testing.T) {
 	if f.repo.BranchExists(f.ctx, "diatom/set/pr/old") {
 		t.Error("a stale pull request branch was kept")
 	}
-	if !strings.Contains(Describe(f.goal, res), "one pull request in the order the work was done") {
-		t.Error("Describe doesn't say why there's no stack")
+	if res.Unstacked == "" {
+		t.Error("the layout doesn't say why there's no stack")
 	}
 }
 

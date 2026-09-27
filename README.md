@@ -97,13 +97,16 @@ agent's fix lands as a `fixup!` commit that comes back for review.
 
 A goal ready to finish comes up in Next. `P` merges it into the base branch,
 and `F` opens it as a stack of pull requests instead, one per workstream on
-`diatom/<goal>/pr/<ws>`, each stacked on the one before; `d` only lays it out,
-to land later. Either way, the goal first catches up with the base branch,
+`diatom/<goal>/pr/<ws>`, each stacked on the one before; `d` only marks it
+done, to land later. Either way, the goal first catches up with the base branch,
 fetched from the remote: what the base gained is merged in, and when that
 conflicts, an agent resolves it and the resolution comes back for review before
-the goal can land. The goal is then laid out on `diatom/<goal>/final`, its
-commits replayed onto the base branch's tip without the merges and fixups
-squashed into the commits they revise. It stays in the nav until it is
+the goal can land. The goal's commits are then replayed onto the base branch's
+tip on `diatom/<goal>/final`, without the merges and with fixups squashed into
+the commits they revise. When the base changed the goal's own code, so the
+commits no longer apply on its tip, they're replayed where the goal started
+instead, and a last merge commit joins them to the base with the agent's
+resolution. A landing that fails leaves the goal active. It stays in the nav until it is
 finished: diatom watches the base branch on the remote and finishes the goal
 once it holds all of the goal's changes and its checks pass.
 

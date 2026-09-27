@@ -39,7 +39,7 @@ func TestNextOrdersPlansQuestionsFinishReview(t *testing.T) {
 		t.Errorf("items = %v, want %v", got, want)
 	}
 	out := ansi.Strip(a.render())
-	if !regexp.MustCompile(`»  Next +4 `).MatchString(out) {
+	if !regexp.MustCompile(`⏩ Next +4 `).MatchString(out) {
 		t.Errorf("the nav doesn't count Next's items:\n%s", out)
 	}
 }
@@ -238,7 +238,7 @@ func TestNextOffersToFinishAGoal(t *testing.T) {
 	out := ansi.Strip(a.render())
 	for _, want := range []string{"All its work is done and reviewed", "Finishing unblocks: poison",
 		"› P  Merge it into main", "F  Open its stacked pull requests",
-		"d  Mark it done and lay it out, to land later"} {
+		"d  Mark it done, to land later"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the finish item lacks %q:\n%s", want, out)
 		}

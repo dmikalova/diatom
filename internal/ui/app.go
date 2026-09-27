@@ -838,12 +838,12 @@ func (a *App) navEntry(i int, e entry) []string {
 	var glyph, name, badge, under string
 	switch e.kind {
 	case entryNext:
-		glyph, name = tui.Color("»", tui.Cyan), "Next"
+		glyph, name = "⏩", "Next"
 		if n := len(a.next.items); n > 0 {
 			badge = tui.Color(strconv.Itoa(n), tui.Magenta)
 		}
 	case entryIntake:
-		glyph, name = tui.Color("+", tui.Blue), "Intake"
+		glyph, name = "➕", "Intake"
 		if e.row != nil {
 			under = relevant(*e.row)
 		}
