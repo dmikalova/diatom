@@ -75,7 +75,7 @@ func TestBaseTipFollowsUpstreamWhenAhead(t *testing.T) {
 	}
 }
 
-func TestBuildSquashesOntoAConflictingBase(t *testing.T) {
+func TestBuildRebasesOntoAConflictingBase(t *testing.T) {
 	f := newFixture(t)
 	f.task("engine", f.work("engine", "engine.txt", "ward\n", "feat: add ward"))
 	f.task("cards", f.work("cards", "cards.txt", "warden\n", "feat: add warden"))
@@ -94,34 +94,69 @@ func TestBuildSquashesOntoAConflictingBase(t *testing.T) {
 	f.git("checkout", "--quiet", "main")
 
 	var progress strings.Builder
-	var gotSubjects []string
-	res := f.build(Options{Progress: &progress, Message: func(_ context.Context, stat, _ string,
-		subjects []string,
-	) (string, error) {
-		gotSubjects = subjects
-		if !strings.Contains(stat, "engine.txt") {
-			t.Errorf("stat = %q", stat)
-		}
-		return "feat: add ward and warden\n", nil
-	}})
-	if !res.Squashed || len(res.Stack) != 1 || res.Stack[0].Branch != res.Final {
+	res := f.build(Options{Progress: &progress})
+	if !res.Rebased || res.Squashed || !res.Carried || len(res.Stack) != 2 {
 		t.Fatalf("laid out as %+v", res)
 	}
 	tip := res.Tip()
-	// One commit on main's tip, so landing keeps the history linear.
-	if parents := strings.Fields(f.git("rev-list", "--parents", "-n1", tip)); len(parents) != 2 ||
-		parents[1] != f.git("rev-parse", "main") {
-		t.Errorf("the tip's parents = %v, want main alone", parents)
+	// The goal's own commits, on main's tip with no merge, then the reviewed
+	// resolution.
+	if merges := f.git("rev-list", "--merges", "main.."+tip); merges != "" {
+		t.Errorf("merges on the way: %s", merges)
+	}
+	if ok, _ := f.repo.IsAncestor(f.ctx, "main", tip); !ok {
+		t.Error("the commits aren't on main's tip")
+	}
+	want := []string{
+		"feat: add ward",
+		"feat: add warden",
+		"fix: keep the reviewed resolution of main's changes",
+	}
+	if got := f.subjects(tip); strings.Join(got[len(got)-3:], "|") != strings.Join(want, "|") {
+		t.Errorf("subjects = %v", got)
 	}
 	if !f.sameTree(tip, f.goal.IntegrationBranch()) {
-		t.Error("the tip doesn't hold the resolution")
+		t.Error("the tip doesn't hold the reviewed resolution")
 	}
-	if got := f.git("log", "-1", "--format=%s", tip); got != "feat: add ward and warden" ||
-		strings.Join(gotSubjects, ",") != "feat: add ward,feat: add warden" {
-		t.Errorf("subject %q from %v", got, gotSubjects)
-	}
-	if !strings.Contains(progress.String(), "squashing them into one commit") {
+	if !strings.Contains(progress.String(), "rebasing them onto it") {
 		t.Errorf("progress:\n%s", progress.String())
+	}
+}
+
+func TestBuildRebasesWhatNoLineSettles(t *testing.T) {
+	f := newFixture(t)
+	// main and the goal both have engine.txt; the goal changes it, and main
+	// deletes it.
+	f.git("checkout", "--quiet", "main")
+	f.write("engine.txt", "v0\n")
+	f.commitAll("feat: add the engine")
+	f.on("")
+	f.git("merge", "--quiet", "--no-edit", "main")
+	f.git("checkout", "--quiet", "main")
+	f.task("engine", f.work("engine", "engine.txt", "ward\n", "feat: add ward"))
+	f.git("checkout", "--quiet", "main")
+	f.git("rm", "--quiet", "engine.txt")
+	f.git("commit", "--quiet", "-m", "refactor: drop the engine")
+	f.on("")
+	if _, err := f.repo.Run(f.ctx, "merge", "--no-edit", "main"); err == nil {
+		t.Fatal("the merge didn't conflict")
+	}
+	f.write("engine.txt", "ward\n")
+	f.git("add", "-A")
+	f.git("commit", "--quiet", "--no-edit")
+	f.git("checkout", "--quiet", "main")
+
+	// No line settles a file changed on one side and deleted on the other:
+	// the rebase takes it as the reviewed resolution has it.
+	res := f.build(Options{})
+	if !res.Rebased || res.Squashed || len(res.Stack) != 1 {
+		t.Fatalf("laid out as %+v", res)
+	}
+	if got := f.subjects(res.Tip()); got[len(got)-1] != "feat: add ward" {
+		t.Errorf("subjects = %v", got)
+	}
+	if !f.sameTree(res.Tip(), f.goal.IntegrationBranch()) {
+		t.Error("the tip doesn't hold the reviewed resolution")
 	}
 }
 
@@ -171,5 +206,27 @@ func TestAFailingGateGoesToAnAgent(t *testing.T) {
 	}
 	if g, _ := f.store.Goal("set"); g.State != queue.GoalActive {
 		t.Errorf("the goal is %s", g.State)
+	}
+}
+
+func TestALayoutThatCantLandIsMadeAgain(t *testing.T) {
+	f := newFixture(t)
+	f.task("engine", f.work("engine", "engine.txt", "ward\n", "feat: add ward"))
+	f.git("checkout", "--quiet", "main")
+	res := f.build(Options{})
+	if !Current(f.ctx, f.store, f.goal, res) {
+		t.Fatal("a fresh layout isn't current")
+	}
+	// Once the repo signs its commits, unsigned ones are laid out again.
+	f.git("config", "commit.gpgSign", "true")
+	if Current(f.ctx, f.store, f.goal, res) {
+		t.Error("a layout of unsigned commits is current in a repo that signs")
+	}
+	f.git("config", "commit.gpgSign", "false")
+	// A layout ending in a merge, as an older diatom made, is too.
+	merge := f.git("commit-tree", res.Tip()+"^{tree}", "-p", res.Tip(), "-p", "main", "-m", "Merge")
+	res.Stack[len(res.Stack)-1].Tip = merge
+	if Current(f.ctx, f.store, f.goal, res) {
+		t.Error("a layout with a merge is current")
 	}
 }
