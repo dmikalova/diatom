@@ -58,12 +58,16 @@ carry on the next time diatom opens: nothing runs while it is closed. A second
 diatom on the same repo only views, and answering and reviewing still work
 there.
 
-The nav down the left lists Next, the intake and the repo's goals, with the
-intake box at its foot. The main pane shows what the nav selects.
+The nav down the left lists Next, the intake and the repo's goals, then a
+menu with the finished goals and the scheduler's log, and the intake box at its
+foot. The main pane shows what the nav selects. The footer shows what sessions
+cost today, over the last 7 days and over the last 30, as `$22D · $80W · $200M`,
+red where it spends the repo's budget.
 
 - **Next** is what waits on you, across every goal, one item at a time: plans
-  to sign off, then questions, then goals ready to finish, then hunks to
-  review, each in the nav's order of goals. Above each item is what its goal is
+  to sign off, then questions, then goals ready to finish with the hunks
+  finishing them brought, then the other hunks to review, each in the nav's
+  order of goals. Above each item is what its goal is
   for; enter there opens the goal. Answering moves on to the first item left.
 - **The intake box** takes anything you want done, such as "Turn
   docs/todo.md into goals, one per section". Triage, an agent, sorts it into
@@ -157,6 +161,11 @@ maxSessions = 1                   # sessions at once in this repo
 maxBatch = 5                      # tasks per session, following chains of dependent tasks
 commitCheck = "project-standards commit-msg"   # lints a commit message file
 instructions = ["~/AGENTS.md"]    # appended to every agent's system prompt
+
+[budget]                          # dollars; once one is spent, nothing new starts
+day = 50                          # today
+week = 200                        # the last 7 days
+month = 600                       # the last 30 days
 
 [gates]                           # the gate of each kind of repo that sets none
 go = "mage ci:check"

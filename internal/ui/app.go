@@ -56,9 +56,9 @@ const (
 	entryNext entryKind = iota
 	entryIntake
 	entryGoal
+	// entryFinished lists the finished goals, and entryLog is the
+	// scheduler's log, both in the menu at the nav's foot.
 	entryFinished
-	entryFinishedGoal
-	// entryLog is the scheduler's log, in the menu at the nav's foot.
 	entryLog
 )
 
@@ -68,16 +68,11 @@ type entry struct {
 	// row is the goal's, or the intake's; nil for the intake before anything
 	// is sent.
 	row *goalRow
-	// goal is a finished goal's.
-	goal *queue.Goal
 }
 
 func (e entry) key() string {
-	switch {
-	case e.row != nil:
+	if e.row != nil {
 		return e.row.goal.Name
-	case e.goal != nil:
-		return e.goal.Name
 	}
 	return "entry " + strconv.Itoa(int(e.kind))
 }
@@ -103,10 +98,10 @@ type App struct {
 	// fromNext is set while a goal opened from Next's context is shown:
 	// going back from it returns to Next.
 	fromNext bool
-	// finished are the goals landed upstream, listed under their fold when
-	// it is open.
-	finished []*queue.Goal
-	unfolded bool
+	// finished are the goals landed upstream, the latest first, and
+	// finishedTop how far down their list is scrolled.
+	finished    []finishedGoal
+	finishedTop int
 	// quitting is set once the sessions are suspending, and atOnce when the
 	// human quit without waiting for them.
 	quitting, atOnce bool
@@ -190,19 +185,12 @@ func (a *App) reload() {
 	a.status.reload()
 	a.next.reload()
 	a.intake.reload()
-	a.finished = nil
-	if goals, err := a.env.Store.Goals(); err == nil {
-		for _, g := range goals {
-			if g.State == queue.GoalFinished {
-				a.finished = append(a.finished, g)
-			}
-		}
-	}
+	a.finished = a.loadFinished()
 	a.sel = min(a.sel, len(a.entries())-1)
 }
 
 // entries are the nav's lines: Next, the intake, the goals being worked on,
-// and the finished ones under a fold.
+// and the menu: the finished goals and the scheduler's log.
 func (a *App) entries() []entry {
 	es := []entry{{kind: entryNext}, {kind: entryIntake}}
 	for i := range a.status.rows {
@@ -215,11 +203,6 @@ func (a *App) entries() []entry {
 	}
 	if len(a.finished) > 0 {
 		es = append(es, entry{kind: entryFinished})
-		if a.unfolded {
-			for _, g := range a.finished {
-				es = append(es, entry{kind: entryFinishedGoal, goal: g})
-			}
-		}
 	}
 	return append(es, entry{kind: entryLog})
 }
@@ -236,7 +219,7 @@ func (a *App) show() {
 		return
 	}
 	a.shown = e.key()
-	a.status.detail, a.review, a.logBack = nil, nil, 0
+	a.status.detail, a.review, a.logBack, a.finishedTop = nil, nil, 0, 0
 	a.clearNotices()
 	if e.row != nil {
 		a.status.openDetail(e.row)
@@ -424,11 +407,7 @@ func (a *App) navKey(key string) (tea.Model, tea.Cmd) {
 		a.sel = (a.sel + n - 1) % n
 		a.fromNext = false
 	case "enter", "space", " ", "right", "l":
-		switch a.selected().kind {
-		case entryFinished:
-			a.unfolded = !a.unfolded
-			return a, nil
-		case entryNext:
+		if a.selected().kind == entryNext {
 			// An item opens on the item itself, to read before answering.
 			return a, a.focusMain(int(areaBody))
 		}
@@ -520,8 +499,14 @@ func (a *App) backToNext() tea.Cmd {
 func (a *App) mainKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	back := key == "esc" || key == "left"
-	if a.selected().kind == entryLog {
+	switch a.selected().kind {
+	case entryLog:
 		if a.logKey(key) {
+			return a, a.setFocus(partNav)
+		}
+		return a, nil
+	case entryFinished:
+		if a.finishedKey(key) {
 			return a, a.setFocus(partNav)
 		}
 		return a, nil
@@ -667,9 +652,6 @@ func (a *App) click(m tea.Mouse) (tea.Model, tea.Cmd) {
 		return a, a.setFocus(partMain)
 	case row >= 0:
 		a.sel = row
-		if a.selected().kind == entryFinished {
-			a.unfolded = !a.unfolded
-		}
 		a.show()
 	}
 	return a, a.setFocus(partNav)
@@ -767,11 +749,8 @@ func (a *App) View() tea.View {
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	v.ReportFocus = true
-	total := 0.0
-	for _, r := range a.status.rows {
-		total += r.cost
-	}
-	v.WindowTitle = fmt.Sprintf("diatom · %s · $%.2f", filepath.Base(a.env.Store.Repo()), total)
+	v.WindowTitle = fmt.Sprintf("diatom · %s · %s today", filepath.Base(a.env.Store.Repo()),
+		money(a.status.totals.Day))
 	return v
 }
 
@@ -828,7 +807,7 @@ func (a *App) navLines() navLayout {
 	lay := navLayout{menu: []navLine{{text: tui.Dim(strings.Repeat("─", a.nw())), entry: rowNone}}}
 	es := a.entries()
 	for i, e := range es {
-		if e.kind == entryLog {
+		if e.kind == entryFinished || e.kind == entryLog {
 			for _, l := range a.navEntry(i, e) {
 				lay.menu = append(lay.menu, navLine{text: l, entry: i})
 			}
@@ -920,12 +899,7 @@ func (a *App) navEntry(i int, e entry) []string {
 			under = tui.Color("▶ "+a.status.busy+"…", tui.Green)
 		}
 	case entryFinished:
-		glyph, name = tui.Dim("▸"), fmt.Sprintf("Finished (%d)", len(a.finished))
-		if a.unfolded {
-			glyph = tui.Dim("▾")
-		}
-	case entryFinishedGoal:
-		glyph, name = tui.Dim("✓"), e.goal.Title
+		glyph, name = "☑️", fmt.Sprintf("Finished (%d)", len(a.finished))
 	case entryLog:
 		glyph, name = "📒", "Scheduler log"
 	}
@@ -987,7 +961,11 @@ func (a *App) nextCounts() string {
 		}
 	}
 	if len(parts) == 0 {
-		return tui.Dim("nothing needs you")
+		parts = append(parts, tui.Dim("nothing needs you"))
+	}
+	// And the sessions running, which need nothing of the human.
+	if n := a.running(); n > 0 {
+		parts = append(parts, "🟢 "+strconv.Itoa(n))
 	}
 	return strings.Join(parts, "  ")
 }
@@ -1060,14 +1038,45 @@ func navGlyph(r goalRow) string {
 	return tui.Color(g, c)
 }
 
-// footer is the repo's health: the scheduler, what runs, and what it cost.
-func (a *App) footer() string {
-	total, running := 0.0, 0
+// running counts the sessions running.
+func (a *App) running() int {
+	n := 0
 	for _, r := range a.status.rows {
-		total += r.cost
-		running += len(r.activeWork)
+		n += len(r.activeWork)
 	}
-	parts := []string{fmt.Sprintf("$%.2f", total), fmt.Sprintf("%d running", running)}
+	return n
+}
+
+// money is an amount in dollars, to the cent while it is small.
+func money(usd float64) string {
+	if usd >= 10 {
+		return fmt.Sprintf("$%.0f", usd)
+	}
+	return fmt.Sprintf("$%.2f", usd)
+}
+
+// spending is what the repo's sessions cost today, this week and this month,
+// in red where it has spent the budget, and what that holds up.
+func (a *App) spending() []string {
+	var scales []string
+	for _, sc := range a.status.totals.Scales(a.status.budget) {
+		t := money(sc.Spent) + sc.Letter
+		if sc.Over() {
+			t = tui.Color(t, tui.Red)
+		}
+		scales = append(scales, t)
+	}
+	out := []string{strings.Join(scales, tui.Dim(" · "))}
+	if over := a.status.totals.Over(a.status.budget); over != "" {
+		out = append(out, tui.Color(over+" budget is spent: nothing new starts", tui.Red))
+	}
+	return out
+}
+
+// footer is the repo's health, a line for each thing: what it cost, and the
+// scheduler.
+func (a *App) footer() string {
+	parts := a.spending()
 	switch {
 	case a.quitting:
 		parts = append(parts, tui.Color("suspending…", tui.Yellow))
@@ -1082,7 +1091,7 @@ func (a *App) footer() string {
 	if a.flash != "" {
 		parts = append(parts, tui.Color(a.flash, tui.Cyan))
 	}
-	return strings.Join(parts, tui.Dim(" · "))
+	return strings.Join(parts, "\n")
 }
 
 func (a *App) renderMain() string {
@@ -1114,15 +1123,9 @@ func (a *App) renderMain() string {
 		}
 		return a.status.renderDetail()
 	case entryFinished:
-		return tui.Dim(fmt.Sprintf("%d goals are finished and landed upstream. enter lists them.",
-			len(a.finished)))
+		return a.renderFinished(a.mainWidth(), a.height)
 	}
-	g := e.goal
-	out := tui.Bold(g.Title) + "\n" + tui.Dim(g.Name+" · finished")
-	if g.Description != "" {
-		out += "\n\n" + g.Description
-	}
-	return out
+	return ""
 }
 
 // onScreen is what the main pane shows, for an intake sent now: the goal it
@@ -1134,8 +1137,8 @@ func (a *App) onScreen() (goal, context string) {
 		return a.next.onScreen()
 	case entryIntake:
 		return "", "the intake, with what triage is still sorting"
-	case entryFinishedGoal:
-		return "", fmt.Sprintf("the finished goal %s (%q)", e.goal.Name, e.goal.Title)
+	case entryFinished:
+		return "", "the list of finished goals"
 	case entryGoal:
 		g := e.row.goal
 		context = fmt.Sprintf("goal %s (%q)", g.Name, g.Title)

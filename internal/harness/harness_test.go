@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -867,5 +868,40 @@ func TestDependentTasksRunInOneSession(t *testing.T) {
 	}
 	if got := f.step(); len(got) != 1 || got[0].Tasks[0].ID != c.ID {
 		t.Errorf("then = %+v, want the cards task once ward is done", got)
+	}
+}
+
+func TestBudgetHoldsNewSessions(t *testing.T) {
+	f := newFixture(t)
+	f.add("engine", "Add ward")
+	var logged bytes.Buffer
+	f.h.Log = slog.New(slog.NewTextHandler(&logged, nil))
+	writeFile(t, f.store.Repo(), ".diatom/config.toml",
+		"gate = \"check\"\nmaxSessions = 2\n[budget]\nday = 5\n")
+	// A settled session that spent the day's budget.
+	dir := filepath.Join(f.store.SessionsDir("set"), "20260101T000000Z-cards")
+	if err := session.Create(dir, session.Spec{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.WriteResult(
+		dir,
+		map[string]any{"usage": map[string]any{"costUSD": 5}},
+	); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if batches, _, err := f.h.plan(ctx, nil); err != nil || len(batches) != 0 {
+		t.Fatalf("over budget planned %v, %v", batches, err)
+	}
+	if !bytes.Contains(logged.Bytes(), []byte("budget=today's")) {
+		t.Errorf("the budget going unlogged:\n%s", logged.String())
+	}
+	writeFile(t, f.store.Repo(), ".diatom/config.toml",
+		"gate = \"check\"\nmaxSessions = 2\n[budget]\nday = 50\n")
+	if batches, _, err := f.h.plan(ctx, nil); err != nil || len(batches) != 1 {
+		t.Fatalf("under budget planned %v, %v", batches, err)
+	}
+	if !bytes.Contains(logged.Bytes(), []byte("under the budget again")) {
+		t.Errorf("the budget clearing unlogged:\n%s", logged.String())
 	}
 }

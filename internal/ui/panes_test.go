@@ -157,7 +157,7 @@ func openGoal(t *testing.T, a *App, name string) {
 func TestGoalPage(t *testing.T) {
 	f := newFixture(t)
 	a, _ := newApp(t, f)
-	if title := a.View().WindowTitle; title != "diatom · vex · $0.00" {
+	if title := a.View().WindowTitle; title != "diatom · vex · $0.00 today" {
 		t.Errorf("titled %q", title)
 	}
 	openGoal(t, a, "set")
@@ -246,7 +246,7 @@ func TestGoalPageShowsRunningSession(t *testing.T) {
 	a, _ := newApp(t, f)
 	openGoal(t, a, "set")
 	if out := ansi.Strip(a.render()); !strings.Contains(out, "▶ engine") ||
-		!strings.Contains(out, "Bash go test ./...") || !strings.Contains(a.footer(), "1 running") {
+		!strings.Contains(out, "Bash go test ./...") || !strings.Contains(a.nextCounts(), "🟢 1") {
 		t.Errorf("running session missing:\n%s", out)
 	}
 }
@@ -698,8 +698,8 @@ func TestShowsCosts(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, _ := newApp(t, f)
-	if title := a.View().WindowTitle; title != "diatom · vex · $5.00" ||
-		!strings.Contains(ansi.Strip(a.footer()), "$5.00") {
+	if title := a.View().WindowTitle; title != "diatom · vex · $5.00 today" ||
+		!strings.Contains(ansi.Strip(a.footer()), "$5.00D · $5.00W · $5.00M") {
 		t.Errorf("titled %q, footer %q", title, a.footer())
 	}
 	openGoal(t, a, "set")

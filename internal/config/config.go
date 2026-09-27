@@ -69,6 +69,8 @@ type Repo struct {
 	MaxSessions int `toml:"maxSessions"`
 	// MaxBatch caps the tasks one session takes (ADR 0004).
 	MaxBatch int `toml:"maxBatch"`
+	// Budget caps what the repo's agent sessions cost.
+	Budget Budget `toml:"budget"`
 	// CommitCheck lints a commit message: it is run with `sh -c` and the path
 	// of a file holding the message appended, such as
 	// `project-standards commit-msg`. Empty checks only the Conventional
@@ -84,6 +86,16 @@ type Repo struct {
 	// MCPServers are the MCP servers agents may use, in Claude Code's
 	// mcpServers format. None of the user's own servers are loaded.
 	MCPServers map[string]any `toml:"mcpServers"`
+}
+
+// Budget caps what a repo's agent sessions cost, in US dollars: today, over
+// the last 7 days, and over the last 30. Once one is spent, no new session
+// starts until the spending falls back under it; sessions already running
+// carry on. Zero caps nothing.
+type Budget struct {
+	Day   float64 `toml:"day"`
+	Week  float64 `toml:"week"`
+	Month float64 `toml:"month"`
 }
 
 // ADR configures where ADRs go and what format they use.

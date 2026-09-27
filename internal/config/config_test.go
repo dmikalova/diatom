@@ -263,3 +263,13 @@ func TestOldYAMLIsAnError(t *testing.T) {
 		t.Errorf("Load = %v", err)
 	}
 }
+
+func TestBudget(t *testing.T) {
+	root, paths := tree(t)
+	write(t, paths.XDG, "[budget]\nmonth = 2000\n")
+	write(t, filepath.Join(root, DirName), "[budget]\nday = 220\nweek = 800.5\n")
+	cfg, err := Load(root, paths)
+	if err != nil || cfg.Budget != (Budget{Day: 220, Week: 800.5, Month: 2000}) {
+		t.Errorf("budget = %+v, %v", cfg.Budget, err)
+	}
+}

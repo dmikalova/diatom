@@ -253,6 +253,16 @@ func ReadResult(dir string, v any) (bool, error) {
 	return err == nil, err
 }
 
+// Ended is when the session's agent ended, as its result was written; false
+// while it runs.
+func Ended(dir string) (time.Time, bool) {
+	fi, err := os.Stat(filepath.Join(dir, "result.json"))
+	if err != nil {
+		return time.Time{}, false
+	}
+	return fi.ModTime(), true
+}
+
 // State is where a session stands, so one stopped midway can pick up where
 // it left off.
 type State struct {

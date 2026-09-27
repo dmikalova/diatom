@@ -22,6 +22,7 @@ import (
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/runner"
 	"github.com/dmikalova/diatom/internal/schedule"
+	"github.com/dmikalova/diatom/internal/spend"
 )
 
 // Harness runs the scheduler loop.
@@ -51,6 +52,10 @@ type Harness struct {
 	// autoApproved holds the commits autoApprove has looked at, each with
 	// the patterns it used: a commit's hunks never change.
 	autoApproved sync.Map
+	// spent adds up what the repo's sessions cost, for its budget, and
+	// spentNote is the budget last found spent, "" for none.
+	spent     *spend.Tally
+	spentNote string
 }
 
 // lockRepo takes the repo's git lock and returns its unlock.
@@ -205,11 +210,37 @@ func (h *Harness) plan(
 	if repo.Config == nil {
 		return nil, nil, err
 	}
+	if h.overBudget(repo) {
+		return nil, map[string]Repo{h.Root: repo}, err
+	}
 	lim := schedule.Limits{Repos: map[string]schedule.RepoLimits{h.Root: {
 		Sessions: repo.Config.MaxSessions,
 		Batch:    repo.Config.MaxBatch,
 	}}}
 	return schedule.Next(goals, busy, lim), map[string]Repo{h.Root: repo}, err
+}
+
+// overBudget reports whether one of the repo's budgets is spent, when no new
+// session may start: the ones running carry on. It logs each change.
+func (h *Harness) overBudget(repo Repo) bool {
+	if h.spent == nil {
+		h.spent = spend.New()
+	}
+	b := repo.Config.Budget
+	over := ""
+	if b != (config.Budget{}) {
+		over = h.spent.Repo(repo.Store, h.now()).Over(b)
+	}
+	switch {
+	case over == h.spentNote:
+	case over != "":
+		h.log().Warn("the budget is spent: no new session starts until spending falls under it",
+			"budget", over)
+	default:
+		h.log().Info("spending is under the budget again: sessions start")
+	}
+	h.spentNote = over
+	return over != ""
 }
 
 // load reads one repo's active goals and their ready tasks, applying answered

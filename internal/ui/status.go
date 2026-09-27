@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -29,6 +31,7 @@ import (
 	"github.com/dmikalova/diatom/internal/runner"
 	"github.com/dmikalova/diatom/internal/schedule"
 	"github.com/dmikalova/diatom/internal/session"
+	"github.com/dmikalova/diatom/internal/spend"
 	"github.com/dmikalova/diatom/internal/tui"
 )
 
@@ -48,6 +51,14 @@ type Env struct {
 	Exe    string
 }
 
+// now is the window's clock.
+func (e Env) now() time.Time {
+	if e.Now == nil {
+		return time.Now()
+	}
+	return e.Now()
+}
+
 type tickMsg struct{}
 
 func tick() tea.Cmd {
@@ -56,12 +67,16 @@ func tick() tea.Cmd {
 
 // goalRow is one goal in the status pane.
 type goalRow struct {
-	repo       string
-	goal       *queue.Goal
-	counts     map[queue.State]int
-	questions  int
-	toReview   int
-	activeWork []string
+	repo      string
+	goal      *queue.Goal
+	counts    map[queue.State]int
+	questions int
+	toReview  int
+	// landingReview counts the hunks of toReview that finishing the goal
+	// brought: catching up with its base, and settling a rebase's
+	// conflicts. They hold the goal's landing up, as its finishing does.
+	landingReview int
+	activeWork    []string
 	// plan is the plan waiting for sign-off, and grilling the grilling
 	// task's state, for a goal in planning.
 	plan     *plan.Plan
@@ -100,8 +115,11 @@ type Status struct {
 
 	// hunks caches each commit's hunk count; commits never change.
 	hunks map[string]int
-	// costs caches what each settled session cost, by its directory.
-	costs map[string]sessionCost
+	// spent reads what sessions cost, and totals is what the repo's cost
+	// over each of budget's scales, as of the last reload.
+	spent  *spend.Tally
+	totals spend.Totals
+	budget config.Budget
 
 	// confirm names the key and goal a first press asked to confirm, such
 	// as a sign-off.
@@ -134,7 +152,7 @@ type Status struct {
 // NewStatus loads the status pane.
 func NewStatus(ctx context.Context, env Env) *Status {
 	s := &Status{
-		ctx: ctx, env: env, hunks: map[string]int{}, costs: map[string]sessionCost{},
+		ctx: ctx, env: env, hunks: map[string]int{}, spent: spend.New(),
 		width: 80, height: 24,
 	}
 	s.reload()
@@ -145,6 +163,10 @@ func (s *Status) reload() {
 	s.loadErr = nil
 	store := s.env.Store
 	s.health = health(store)
+	s.totals = s.spent.Repo(store, s.env.now())
+	if cfg, err := config.Load(store.Repo(), s.env.Paths); err == nil {
+		s.budget = cfg.Budget
+	}
 	goals, err := store.Goals()
 	if err != nil {
 		s.loadErr = err
@@ -191,24 +213,10 @@ func (s *Status) row(store *queue.Store, g *queue.Goal) (goalRow, error) {
 			return row, err
 		}
 	}
-	var commits []string
 	if err := stage(store, &row); err != nil {
 		return row, err
 	}
-	for _, t := range tasks {
-		if t.Kind == queue.Grilling {
-			row.grilling = t.State
-		}
-		row.counts[t.State]++
-		if t.State == queue.Active {
-			row.activeWork = append(row.activeWork, t.Workstream)
-		}
-		for _, sha := range t.Commits {
-			if !slices.Contains(commits, sha) {
-				commits = append(commits, sha)
-			}
-		}
-	}
+	commits, landing := countTasks(&row, tasks)
 	qs, err := store.Questions(g.Name, queue.QuestionOpen)
 	if err != nil {
 		return row, err
@@ -219,6 +227,9 @@ func (s *Status) row(store *queue.Store, g *queue.Goal) (goalRow, error) {
 		}
 	}
 	if row.toReview, err = s.toReview(store, g.Name, commits); err != nil {
+		return row, err
+	}
+	if row.landingReview, err = s.toReview(store, g.Name, landing); err != nil {
 		return row, err
 	}
 	slices.Sort(row.activeWork)
@@ -232,7 +243,7 @@ func (s *Status) row(store *queue.Store, g *queue.Goal) (goalRow, error) {
 		}
 		row.latest[ws] = lastEvent(store.Repo(), g.Name, dir)
 	}
-	row.cost, row.taskCost = s.goalCost(store.SessionsDir(g.Name))
+	row.cost, row.taskCost = s.goalCost(g.Name)
 	if g.State == queue.GoalActive && len(row.waiting) == 0 {
 		for _, t := range schedule.Ready(tasks) {
 			if !slices.Contains(row.activeWork, t.Workstream) {
@@ -241,6 +252,29 @@ func (s *Status) row(store *queue.Store, g *queue.Goal) (goalRow, error) {
 		}
 	}
 	return row, nil
+}
+
+// countTasks counts a goal's tasks by state, and what runs, and returns their
+// commits: all of them, and those finishing the goal brought.
+func countTasks(row *goalRow, tasks []*queue.Task) (commits, landing []string) {
+	for _, t := range tasks {
+		if t.Kind == queue.Grilling {
+			row.grilling = t.State
+		}
+		row.counts[t.State]++
+		if t.State == queue.Active {
+			row.activeWork = append(row.activeWork, t.Workstream)
+		}
+		for _, sha := range t.Commits {
+			if !slices.Contains(commits, sha) {
+				commits = append(commits, sha)
+			}
+			if (finish.IsLanding(t) || t.Merge != "") && !slices.Contains(landing, sha) {
+				landing = append(landing, sha)
+			}
+		}
+	}
+	return commits, landing
 }
 
 // stage loads what a goal's state waits on: a plan in planning, whether the
@@ -264,46 +298,15 @@ func stage(store *queue.Store, row *goalRow) error {
 	return err
 }
 
-// sessionCost is what one session cost and the tasks it worked on.
-type sessionCost struct {
-	usd   float64
-	tasks []string
-}
-
-// goalCost adds up what the sessions in root have cost, in all and for each
+// goalCost adds up what the goal's sessions have cost, in all and for each
 // task: a session's cost is shared evenly among its tasks. A session still
-// running has no cost yet; one stopped and resumed counts only what it cost
-// after its last start.
-func (s *Status) goalCost(root string) (float64, map[string]float64) {
-	dirs, _ := filepath.Glob(filepath.Join(root, "*"))
+// running has no cost yet.
+func (s *Status) goalCost(goal string) (float64, map[string]float64) {
 	total, perTask := 0.0, map[string]float64{}
-	for _, dir := range dirs {
-		c, ok := s.costs[dir]
-		if !ok {
-			spec, err := session.Load(dir)
-			if err != nil {
-				continue
-			}
-			var res struct {
-				Usage struct {
-					CostUSD float64 `json:"costUSD"`
-				} `json:"usage"`
-			}
-			ended, err := session.ReadResult(dir, &res)
-			if err != nil || !ended {
-				continue
-			}
-			c = sessionCost{usd: res.Usage.CostUSD, tasks: spec.Tasks}
-			if st, err := session.LoadState(dir); err == nil {
-				c.usd += st.CommitCostUSD
-				if st.Settled {
-					s.costs[dir] = c
-				}
-			}
-		}
-		total += c.usd
-		for _, t := range c.tasks {
-			perTask[t] += c.usd / float64(len(c.tasks))
+	for _, c := range s.spent.Goal(s.env.Store, goal) {
+		total += c.USD
+		for _, t := range c.Tasks {
+			perTask[t] += c.USD / float64(len(c.Tasks))
 		}
 	}
 	return total, perTask
@@ -393,7 +396,8 @@ func reviewSettlements(
 const resolveProfile = "mechanical"
 
 // resolveConflict has an agent settle the conflicts rebasing a goal's commit
-// left in dir, telling log what it does.
+// left in dir, telling log what it does. It returns how the agent ended, nil
+// when it didn't run.
 func resolveConflict(
 	ctx context.Context,
 	run runner.Runner,
@@ -404,7 +408,7 @@ func resolveConflict(
 	dir string,
 	c finish.Conflict,
 	log io.Writer,
-) error {
+) (*runner.Result, error) {
 	prompt := fmt.Sprintf(
 		`You are settling a merge conflict. diatom is rebasing the commits of the goal %q onto
 %s, which changed the same code while the goal ran. Git applied commit %s, %q, onto %s's
@@ -450,13 +454,48 @@ commands that change the repository are blocked. End once every file is resolved
 		}
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	_, _ = fmt.Fprintf(log, "  the agent %s, $%.2f\n", res.Outcome, res.Usage.CostUSD)
 	if res.Outcome != runner.Completed {
-		return fmt.Errorf("the agent settling %s ended %s", tui.Short(c.Commit), res.Outcome)
+		return &res, fmt.Errorf("the agent settling %s ended %s", tui.Short(c.Commit), res.Outcome)
 	}
-	return nil
+	return &res, nil
+}
+
+// recordSession keeps what an agent run outside the scheduler cost, as a
+// settled session of the goal's in root, so the goal and the repo's budget
+// count it.
+func recordSession(root string, at time.Time, profile string, res runner.Result) error {
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return err
+	}
+	base := at.UTC().Format("20060102T150405Z") + "-landing"
+	for n := 0; ; n++ {
+		id := base
+		if n > 0 {
+			id = fmt.Sprintf("%s-%d", base, n)
+		}
+		dir := filepath.Join(root, id)
+		err := os.Mkdir(dir, 0o755)
+		if errors.Is(err, fs.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if err := session.Create(dir, session.Spec{ID: id, Kind: queue.Conflict,
+			Profile: profile}); err != nil {
+			return err
+		}
+		if err := session.UpdateState(
+			dir,
+			func(st *session.State) { st.Settled = true },
+		); err != nil {
+			return err
+		}
+		return session.WriteResult(dir, res)
+	}
 }
 
 // feedbackNote is what the human said of the last settlement, for the agent
@@ -508,7 +547,17 @@ func prepare(
 			return nil, err
 		}
 		opts.Resolve = func(ctx context.Context, dir string, c finish.Conflict) error {
-			return resolveConflict(ctx, run, profile, cfg, exe, g, dir, c, log)
+			res, err := resolveConflict(ctx, run, profile, cfg, exe, g, dir, c, log)
+			if res != nil {
+				if rerr := recordSession(s.SessionsDir(g.Name), time.Now(), resolveProfile,
+					*res); rerr != nil {
+					_, _ = fmt.Fprintln(
+						log,
+						"  recording what the agent cost failed: "+rerr.Error(),
+					)
+				}
+			}
+			return err
 		}
 	}
 	return finish.Build(ctx, s, g, opts)

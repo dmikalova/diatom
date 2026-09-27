@@ -26,3 +26,4 @@ A task waiting on an answer from the human is not ready and is skipped (ADR 0009
   - **Among work of the same kind, the older goal goes first.** There is no pinning: work worth doing runs, work that should wait is parked, and work that depends on another goal waits for it (ADR 0003).
 - **Planned work is split into small tasks at planning time**, so batches of planned work have the right size too.
 - **Batches never span workstreams**, because a session runs in exactly one worktree.
+- **A spent budget starts nothing new.** A repo can cap what its sessions cost today, over the last 7 days and over the last 30. Once one is spent, no session starts until the spending falls back under it, and the sessions running carry on, as they would for a new task. A session counts from when its agent ended, whatever goal it belonged to, so a finished goal's sessions count until they are 30 days old.

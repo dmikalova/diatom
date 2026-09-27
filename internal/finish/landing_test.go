@@ -123,8 +123,8 @@ func TestWatchFinishesOnceMergedAndPassing(t *testing.T) {
 	if !watch(now) {
 		t.Fatal("not finished with the checks passing")
 	}
-	if g, _ := f.store.Goal("set"); g.State != queue.GoalFinished {
-		t.Errorf("goal state = %s", g.State)
+	if g, _ := f.store.Goal("set"); g.State != queue.GoalFinished || !g.Finished.Equal(now) {
+		t.Errorf("goal state = %s, finished %v", g.State, g.Finished)
 	}
 }
 

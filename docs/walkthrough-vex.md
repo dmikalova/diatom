@@ -209,7 +209,9 @@ First the goal catches up with `main`, fetched from origin. What `main` gained
 since the goal started is merged in. When that conflicts, landing stops there:
 an agent merges `main` into the goal's last workstream and resolves the
 conflicts, the goal is active again, and the resolution comes to Next as hunks
-to review. Once they're reviewed, the goal is ready to finish again.
+to review, beside the goals ready to finish rather than behind the other
+reviews, since they hold up the landing. Once they're reviewed, the goal is
+ready to finish again.
 
 Then diatom replays the goal's commits onto `main` without the merge commits,
 with each fixup squashed into its target, runs the gate on each PR's tip, and
@@ -219,7 +221,8 @@ conflict git leaves, keeping both `main`'s change and the commit's, with the
 merge you reviewed as its guide. If the result differs from that merge, a last
 commit brings it there, so `main`'s history stays linear and every commit on
 it is signed. The page's log shows each conflict as the agent settles it. What
-the agent changed then comes to Next for review before anything lands, just
+the agent changed then comes to Next for review, beside the goals ready to
+finish, before anything lands, just
 its edits to the files git left conflicted; rejecting a hunk has it settle
 that commit again with your comments. `P` merges into `origin/main`, then
 fast-forwards your local `main` unless it has commits of its own or your
@@ -236,7 +239,7 @@ The goal stays in the nav until it's **finished**. Every two minutes the
 scheduler checks whether `origin/main` holds all of the goal's changes and
 whether vex's checks on it have passed. A failing check keeps the goal in view
 and shows the failing checks in red. When it finishes, the goal folds away
-under Finished, its worktrees are removed, and the goals waiting for it start.
+under ☑️ Finished, its worktrees are removed, and the goals waiting for it start.
 Then `git pull` in vex. The `diatom/<goal>/…` branches are kept; delete them
 whenever you like.
 
@@ -245,7 +248,9 @@ whenever you like.
 - **Gate runs.** vex's `ci:check` runs every linter and the 100%-coverage tests,
   in each worktree, on every commit. Watch the first few gate runs in the
   scheduler's log before raising `maxSessions`.
-- **Cost.** diatom has no spending cap; `maxSessions` is the only limit.
-  Grilling runs on Opus at high effort, and implementation on Opus at medium.
-  The footer and the window's title show the total, and each goal's page its
-  own and each task's.
+- **Cost.** `[budget]` caps what sessions cost today, over the last 7 days
+  and over the last 30. Once one is spent, the footer shows it in red and no
+  new session starts; the ones running finish. Grilling runs on Opus at high
+  effort, and implementation on Opus at medium. The window's title shows
+  today's cost, and each goal's page its own and each task's. A finished
+  goal's sessions count until they are 30 days old.

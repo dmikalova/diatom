@@ -62,8 +62,9 @@ const (
 )
 
 // Next is everything waiting on the human across the repo, one item at a
-// time: plans to sign off, questions, goals ready to finish, then hunks to
-// review, each level in the nav's order of goals. Answering one moves on to
+// time: plans to sign off, questions, goals ready to finish and the hunks
+// finishing them brought, then the other hunks to review, each level in the
+// nav's order of goals. Answering one moves on to
 // the first left; nothing else changes the item shown.
 type Next struct {
 	ctx    context.Context
@@ -146,7 +147,12 @@ func (n *Next) reload() {
 			tiers[itemFinish] = append(tiers[itemFinish], item{kind: itemFinish, row: r})
 			n.stats[r.goal.Name] = n.diffStat(r.goal)
 		}
-		if r.toReview > 0 && !r.intake {
+		switch {
+		case r.landingReview > 0:
+			// What finishing the goal brought holds its landing up, as a
+			// goal ready to finish does.
+			tiers[itemFinish] = append(tiers[itemFinish], item{kind: itemReview, row: r})
+		case r.toReview > 0 && !r.intake:
 			tiers[itemReview] = append(tiers[itemReview], item{kind: itemReview, row: r})
 		}
 	}

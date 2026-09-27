@@ -65,8 +65,10 @@ type Goal struct {
 	Description string    `yaml:"description,omitempty"`
 	State       GoalState `yaml:"state"`
 	// Base is the branch the integration branch started from.
-	Base        string       `yaml:"base"`
-	Created     time.Time    `yaml:"created"`
+	Base    string    `yaml:"base"`
+	Created time.Time `yaml:"created"`
+	// Finished is when the goal was found landed upstream.
+	Finished    time.Time    `yaml:"finished,omitempty"`
 	Workstreams []Workstream `yaml:"workstreams,omitempty"`
 	// After names the goals this one waits for: none of its work starts,
 	// grilling included, until each is finished, merged upstream with its

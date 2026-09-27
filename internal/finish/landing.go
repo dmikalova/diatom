@@ -157,7 +157,7 @@ func Watch(ctx context.Context, s *queue.Store, g *queue.Goal, gh GH, now time.T
 	if !finished {
 		return false, err
 	}
-	g.State = queue.GoalFinished
+	g.State, g.Finished = queue.GoalFinished, now
 	return true, s.SaveGoal(g)
 }
 

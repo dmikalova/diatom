@@ -42,7 +42,7 @@ func TestAppNav(t *testing.T) {
 	a, _ := newApp(t, f)
 	out := ansi.Strip(a.render())
 	for _, want := range []string{"⏩ Next", "➕ Intake", "⏳ Implement the next set", "    1 question",
-		"$0.00 · 0 running", "─ intake ─"} {
+		"$0.00D · $0.00W · $0.00M", "─ intake ─"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("app lacks %q:\n%s", want, out)
 		}
@@ -167,8 +167,7 @@ func TestAppViewer(t *testing.T) {
 	f := newFixture(t)
 	a := NewApp(context.Background(), f.env, Scheduler{Viewer: "diatom is open elsewhere"})
 	a.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
-	if out := ansi.Strip(a.render()); !strings.Contains(out, "viewer:") ||
-		!strings.Contains(out, "diatom is open elsewhere") {
+	if out := ansi.Strip(a.footer()); !strings.Contains(out, "viewer: diatom is open elsewhere") {
 		t.Errorf("a viewer doesn't say so:\n%s", ansi.Strip(a.render()))
 	}
 	if _, cmd := a.Update(tea.KeyPressMsg{Code: 'q', Text: "q"}); cmd == nil || a.quitting {
