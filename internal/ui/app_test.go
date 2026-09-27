@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -155,6 +156,7 @@ func TestAppMouse(t *testing.T) {
 		t.Errorf("clicking the intake box gave focus to %d", a.focus)
 	}
 	a.Update(tea.MouseWheelMsg{X: 3, Y: 3, Button: tea.MouseWheelUp})
+	a.Update(wheelMsg{})
 	if a.sel != 1 {
 		t.Errorf("the wheel over the nav moved to %d", a.sel)
 	}
@@ -170,5 +172,41 @@ func TestAppViewer(t *testing.T) {
 	}
 	if _, cmd := a.Update(tea.KeyPressMsg{Code: 'q', Text: "q"}); cmd == nil || a.quitting {
 		t.Error("a viewer doesn't quit straight away")
+	}
+}
+
+func TestAppGathersTheWheel(t *testing.T) {
+	f := newFixture(t)
+	for i := range 12 {
+		if err := f.store.CreateGoal(&queue.Goal{Name: fmt.Sprintf("g%02d", i),
+			State: queue.GoalActive}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a, _ := newApp(t, f)
+	a.View()
+	// A fast spin schedules one scroll, and draws nothing until it lands.
+	var scheduled int
+	for range 8 {
+		if _, cmd := a.Update(
+			tea.MouseWheelMsg{X: 3, Y: 3, Button: tea.MouseWheelDown},
+		); cmd != nil {
+			scheduled++
+		}
+	}
+	if scheduled != 1 || a.dirty || a.sel != 0 {
+		t.Fatalf("spinning scheduled %d scrolls, dirty %v, moved to %d", scheduled, a.dirty, a.sel)
+	}
+	a.Update(wheelMsg{})
+	if a.sel != 8 || !a.dirty {
+		t.Errorf("the spin scrolled to %d", a.sel)
+	}
+	a.View()
+	// Up and down in the same frame cancel out.
+	a.Update(tea.MouseWheelMsg{X: 3, Y: 3, Button: tea.MouseWheelUp})
+	a.Update(tea.MouseWheelMsg{X: 3, Y: 3, Button: tea.MouseWheelDown})
+	a.Update(wheelMsg{})
+	if a.sel != 8 {
+		t.Errorf("up then down moved to %d", a.sel)
 	}
 }

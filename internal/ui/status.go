@@ -76,6 +76,9 @@ type goalRow struct {
 	taskCost map[string]float64
 	// description says what the goal is for, in a paragraph.
 	description string
+	// latest is the latest step of each workstream's running session, read
+	// once a reload rather than each time the window is drawn.
+	latest map[string]string
 }
 
 // Status is where the repo's goals, and the intake triage is sorting, stand:
@@ -206,6 +209,15 @@ func (s *Status) row(store *queue.Store, g *queue.Goal) (goalRow, error) {
 	}
 	slices.Sort(row.activeWork)
 	row.activeWork = slices.Compact(row.activeWork)
+	row.latest = map[string]string{}
+	for _, ws := range row.activeWork {
+		dir := ws
+		if dir == "" {
+			// Triage and grilling run on no workstream, in planning sessions.
+			dir = "planning"
+		}
+		row.latest[ws] = lastEvent(store.Repo(), g.Name, dir)
+	}
 	row.cost, row.taskCost = s.goalCost(store.SessionsDir(g.Name))
 	if g.State == queue.GoalActive && len(row.waiting) == 0 {
 		for _, t := range schedule.Ready(tasks) {
@@ -652,15 +664,9 @@ func (s *Status) renderActive(b *strings.Builder, r goalRow) {
 	for _, ws := range r.activeWork {
 		name := ws
 		if ws == "" {
-			// Triage and grilling run on no workstream, in planning sessions.
-			name, ws = "planning", "planning"
+			name = "planning"
 		}
-		fmt.Fprintf(
-			b,
-			"      %s %s\n",
-			tui.Color("▶ "+name, tui.Green),
-			tui.Dim(lastEvent(r.repo, r.goal.Name, ws)),
-		)
+		fmt.Fprintf(b, "      %s %s\n", tui.Color("▶ "+name, tui.Green), tui.Dim(r.latest[ws]))
 	}
 }
 

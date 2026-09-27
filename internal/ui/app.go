@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -122,6 +123,11 @@ type App struct {
 	// logBack lines.
 	logOpen bool
 	logBack int
+	// spin is the wheel events waiting to scroll; frame is the window as last
+	// drawn, and dirty says it has changed since.
+	spin  spin
+	frame string
+	dirty bool
 	// update is a newer diatom, and restart the one to run once quit.
 	update  *UpdateMsg
 	restart string
@@ -233,9 +239,21 @@ func (a *App) show() {
 // Init implements tea.Model.
 func (a *App) Init() tea.Cmd { return tea.Batch(tick(), tea.RequestBackgroundColor) }
 
-// Update implements tea.Model.
+// Update implements tea.Model. Bubble Tea draws the window after every
+// message, so wheel events only gather, to scroll once a frame, and a message
+// that changes nothing is drawn from the last frame.
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m, ok := msg.(tea.MouseWheelMsg); ok {
+		return a, a.gather(m.Mouse())
+	}
+	a.dirty = true
+	return a.handle(msg)
+}
+
+func (a *App) handle(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case wheelMsg:
+		a.spinOut()
 	case tea.WindowSizeMsg:
 		a.width, a.height = msg.Width, msg.Height
 		a.layout()
@@ -275,8 +293,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.dragging = false
 			a.saveUI()
 		}
-	case tea.MouseWheelMsg:
-		return a.wheel(msg.Mouse())
 	case tea.PasteMsg:
 		return a.toFocused(msg)
 	default:
@@ -521,7 +537,8 @@ func (a *App) mainKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case res.open != "":
 			return a, a.openFromNext(res.open)
 		}
-		a.next.reload()
+		// Next reloads itself after whatever changes what waits, so a key
+		// that only moves or scrolls costs nothing more.
 		return a, res.cmd
 	case entryIntake, entryGoal:
 		if a.status.detail == nil || back && a.status.detail.task == nil {
@@ -647,36 +664,83 @@ func (a *App) click(m tea.Mouse) (tea.Model, tea.Cmd) {
 	return a, a.setFocus(partNav)
 }
 
-// wheel scrolls what is under the pointer, as its arrow keys do.
-func (a *App) wheel(m tea.Mouse) (tea.Model, tea.Cmd) {
-	var code rune
+// wheelFrame is how long wheel events gather before they scroll: a fast spin
+// scrolls once a frame, by all of it, rather than once an event.
+const wheelFrame = 16 * time.Millisecond
+
+// wheelMsg scrolls by the wheel events gathered.
+type wheelMsg struct{}
+
+// spin is the wheel events gathered since the last scroll: over the nav or
+// the main pane, and how many steps, down positive.
+type spin struct {
+	nav       bool
+	steps     int
+	scheduled bool
+}
+
+// gather adds a wheel event to the spin, scrolling at the end of the frame.
+func (a *App) gather(m tea.Mouse) tea.Cmd {
+	step := 0
 	switch m.Button {
 	case tea.MouseWheelDown:
-		code = tea.KeyDown
+		step = 1
 	case tea.MouseWheelUp:
-		code = tea.KeyUp
+		step = -1
 	default:
-		return a, nil
+		return nil
+	}
+	nav := m.X < a.nw()
+	if a.spin.steps != 0 && a.spin.nav != nav {
+		// The pointer moved to the other part: what went before scrolls first.
+		a.spinOut()
+		a.dirty = true
+	}
+	a.spin.nav = nav
+	a.spin.steps += step
+	if a.spin.scheduled {
+		return nil
+	}
+	a.spin.scheduled = true
+	return tea.Tick(wheelFrame, func(time.Time) tea.Msg { return wheelMsg{} })
+}
+
+// spinOut scrolls what was under the pointer by the steps gathered, as its
+// arrow keys do.
+func (a *App) spinOut() {
+	steps, nav := a.spin.steps, a.spin.nav
+	a.spin = spin{}
+	if steps == 0 {
+		return
+	}
+	code := tea.KeyDown
+	if steps < 0 {
+		code = tea.KeyUp
 	}
 	key := tea.KeyPressMsg{Code: code}
-	if m.X < a.nw() {
-		return a.navKey(key.String())
+	n := max(steps, -steps)
+	if nav {
+		a.sel = max(min(a.sel+steps, len(a.entries())-1), 0)
+		a.fromNext = false
+		a.show()
+		return
 	}
 	if it := a.next.shown(); a.selected().kind == entryNext && !a.logOpen && it != nil &&
 		it.kind != itemReview {
-		if code == tea.KeyDown {
-			a.next.scrollBy(3)
-		} else {
-			a.next.scrollBy(-3)
-		}
-		return a, nil
+		a.next.scrollBy(3 * steps)
+		return
 	}
-	return a.mainKey(key)
+	for range n {
+		a.mainKey(key)
+	}
 }
 
-// View implements tea.Model.
+// View implements tea.Model, drawing again only after a change.
 func (a *App) View() tea.View {
-	v := tea.NewView(a.render())
+	if a.dirty || a.frame == "" {
+		a.frame, a.dirty = a.render(), false
+	}
+	v := tea.NewView(a.frame)
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	v.ReportFocus = true

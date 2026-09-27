@@ -24,6 +24,9 @@ type detail struct {
 	sel, top int
 	// task is the task opened; nil shows the goal.
 	task *taskView
+	// latest is the latest step of each running task's session, from the
+	// last reload.
+	latest map[string]string
 }
 
 // openDetail opens a row of the status list.
@@ -58,6 +61,15 @@ func (s *Status) reloadDetail() {
 	)
 	d.tasks = tasks
 	d.sel = min(d.sel, max(len(s.detailActions())+len(tasks)-1, 0))
+	d.latest = map[string]string{}
+	for _, t := range tasks {
+		if t.State != queue.Active {
+			continue
+		}
+		if sv, _ := latestSession(store.SessionsDir(d.goal), t.ID); sv != nil {
+			d.latest[t.ID] = sv.latest()
+		}
+	}
 	if d.task == nil {
 		return
 	}
@@ -253,10 +265,8 @@ func (s *Status) taskLine(d *detail, t *queue.Task, mark string) string {
 	fmt.Fprintf(&line, "%s%s %s %s%s", mark, stateMark(t.State), t.ID, ws, t.Title)
 	switch t.State {
 	case queue.Active:
-		if sv, _ := latestSession(s.env.Store.SessionsDir(d.goal), t.ID); sv != nil {
-			if st := sv.latest(); st != "" {
-				line.WriteString(tui.Dim(" · " + oneLine(st, s.width/2)))
-			}
+		if st := d.latest[t.ID]; st != "" {
+			line.WriteString(tui.Dim(" · " + oneLine(st, s.width/2)))
 		}
 	case queue.Blocked:
 		line.WriteString(tui.Color(" · waiting on your answer", tui.Magenta))

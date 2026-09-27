@@ -84,8 +84,9 @@ type Next struct {
 	act     int
 	// earlier counts each goal's answered questions, from the last reload.
 	earlier map[string]int
-	// stats caches a diff stat by the commit it is of.
-	stats map[string]string
+	// stats is each finishing goal's diff stat, from the last reload, and
+	// statCache each stat by the commit it is of.
+	stats, statCache map[string]string
 	// reviews are the reviewers of the goals whose hunks Next has shown.
 	reviews map[string]*reviewui.Model
 	// bounds are the lines each area started on at the last render.
@@ -113,8 +114,16 @@ func NewNext(ctx context.Context, env Env, status *Status) *Next {
 	editKeys(&area)
 	area.SetStyles(plainStyles())
 	n := &Next{
-		ctx: ctx, env: env, status: status, answer: area, area: areaBody,
-		stats: map[string]string{}, reviews: map[string]*reviewui.Model{}, width: 80, height: 24,
+		ctx:       ctx,
+		env:       env,
+		status:    status,
+		answer:    area,
+		area:      areaBody,
+		stats:     map[string]string{},
+		statCache: map[string]string{},
+		reviews:   map[string]*reviewui.Model{},
+		width:     80,
+		height:    24,
 	}
 	n.reload()
 	return n
@@ -135,6 +144,7 @@ func (n *Next) reload() {
 		}
 		if readyToFinish(*r) {
 			tiers[itemFinish] = append(tiers[itemFinish], item{kind: itemFinish, row: r})
+			n.stats[r.goal.Name] = n.diffStat(r.goal)
 		}
 		if r.toReview > 0 && !r.intake {
 			tiers[itemReview] = append(tiers[itemReview], item{kind: itemReview, row: r})
@@ -423,10 +433,20 @@ func (n *Next) finishKey(it item, k string) tea.Cmd {
 			"enter again",
 			1,
 		)
+		n.acted()
 		return cmd
 	}
-	cmd, _ := n.status.act(it.row, k)
+	cmd, ok := n.status.act(it.row, k)
+	if ok {
+		n.acted()
+	}
 	return cmd
+}
+
+// acted reloads what waits once an action has changed a goal.
+func (n *Next) acted() {
+	n.status.reload()
+	n.reload()
 }
 
 // render shows the item: what it is about, the item, and the answer box or
@@ -604,7 +624,7 @@ func (n *Next) finishText(it item) string {
 			"what %s gained since: an agent resolves anything that conflicts, and its resolution comes back "+
 			"for review. It is then laid out on %s's tip, the gate runs, and it lands.\n\n", g.Base, g.Base)
 	}
-	if stat := n.diffStat(g); stat != "" {
+	if stat := n.stats[g.Name]; stat != "" {
 		fmt.Fprintf(&b, "%s against %s: %s\n", g.IntegrationBranch(), g.Base, stat)
 	}
 	var unblocks []string
@@ -626,15 +646,15 @@ func (n *Next) diffStat(g *queue.Goal) string {
 	if err != nil {
 		return ""
 	}
-	if s, ok := n.stats[sha]; ok {
+	if s, ok := n.statCache[sha]; ok {
 		return s
 	}
 	out, err := repo.Run(n.ctx, "diff", "--shortstat", g.Base+"..."+sha)
 	if err != nil {
 		return ""
 	}
-	n.stats[sha] = strings.TrimSpace(out)
-	return n.stats[sha]
+	n.statCache[sha] = strings.TrimSpace(out)
+	return n.statCache[sha]
 }
 
 // areaAt is the area on line y of the last render.
