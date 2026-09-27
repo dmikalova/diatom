@@ -481,7 +481,7 @@ func (n *Next) render(focused bool, foot []string) string {
 		for i, a := range actions(it.row) {
 			mark := "  "
 			if i == n.act {
-				mark = tui.Color("› ", tui.Cyan)
+				mark = tui.Color("› ", tui.Accent)
 			}
 			lower = append(lower, mark+tui.Color(a.key, tui.Yellow)+"  "+a.label)
 		}
@@ -512,7 +512,7 @@ func (n *Next) render(focused bool, foot []string) string {
 		n.bounds[a] = len(out)
 		bar := "  "
 		if focused && n.area == a {
-			bar = tui.Color("▌ ", tui.Cyan)
+			bar = tui.Color("▌ ", tui.Accent)
 		}
 		for _, l := range lines {
 			out = append(out, bar+l)

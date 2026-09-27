@@ -64,8 +64,10 @@ ready. The nav down the left lists:
   `2 questions`, `48 hunks to review` or `waits for effect-catalog`. Finished
   goals fold away at the
   bottom.
+- **A menu** at the foot, for now with the scheduler's log, which `L` opens
+  too.
 - **The footer**: what the work has cost, the sessions running, and anything
-  wrong with the scheduler. Clicking it, or `L`, opens the scheduler's log.
+  wrong with the scheduler. Clicking it opens the scheduler's log.
 - **The intake box**, at the foot.
 
 The main pane shows what the nav selects. Tab moves between the nav, the parts

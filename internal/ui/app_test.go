@@ -11,6 +11,7 @@ import (
 
 	"github.com/dmikalova/diatom/internal/intake"
 	"github.com/dmikalova/diatom/internal/queue"
+	"github.com/dmikalova/diatom/internal/tui"
 )
 
 // newApp opens the fixture's repo in an app whose scheduler only records
@@ -136,11 +137,11 @@ func TestAppQuitSuspends(t *testing.T) {
 func TestAppMouse(t *testing.T) {
 	f := newFixture(t)
 	a, _ := newApp(t, f)
-	lines, _ := a.navLines()
+	a.renderNav()
 	goalLine := -1
-	for i, l := range lines {
-		if l.entry >= 0 && a.entries()[l.entry].kind == entryGoal {
-			goalLine = i
+	for y, e := range a.rowEntry {
+		if e >= 0 && a.entries()[e].kind == entryGoal {
+			goalLine = y
 		}
 	}
 	a.Update(tea.MouseClickMsg{X: 3, Y: goalLine, Button: tea.MouseLeft})
@@ -208,5 +209,34 @@ func TestAppGathersTheWheel(t *testing.T) {
 	a.Update(wheelMsg{})
 	if a.sel != 8 {
 		t.Errorf("up then down moved to %d", a.sel)
+	}
+}
+
+func TestAppNavLooksAndWraps(t *testing.T) {
+	f := newFixture(t)
+	a, _ := newApp(t, f)
+	// Up from the top comes round to the bottom, and down from there back.
+	key(a, "k")
+	if a.selected().kind != entryLog {
+		t.Errorf("up from Next selected %+v", a.selected())
+	}
+	key(a, "j")
+	if a.selected().kind != entryNext {
+		t.Errorf("down from the bottom selected %+v", a.selected())
+	}
+	// The selected entry has a green bar down its left, not inverse video.
+	out := a.render()
+	bar := tui.Color("▌", tui.Accent)
+	if !strings.Contains(out, bar+tui.SGR(1)+"⏩ Next") || strings.Contains(out, tui.SGR(7)) {
+		t.Errorf("the selected entry:\n%q", out)
+	}
+	// The intake box's rule joins the border, green beside the box.
+	key(a, "i")
+	lines := strings.Split(ansi.Strip(a.render()), "\n")
+	if row := lines[a.labelRow]; !strings.Contains(row, "─┤") {
+		t.Errorf("the intake rule = %q", row)
+	}
+	if !strings.Contains(strings.Split(a.render(), "\n")[a.labelRow], tui.Color("┤", tui.Accent)) {
+		t.Error("the border beside the intake box isn't green")
 	}
 }

@@ -81,7 +81,8 @@ the mouse clicks and scrolls. Outside a text box:
 
 - `i` goes to the intake box, and `h` hides the nav; dragging its edge resizes
   it
-- `L` opens the scheduler's log, as clicking the nav's footer does
+- `L` opens the scheduler's log, which is also in the menu at the nav's foot
+  and opens from its footer
 - `y` copies what has the keyboard, as cmd+c does in Ghostty with
   `keybind = performable:super+c=copy_to_clipboard`
 - `U` restarts on a new release or build, once the footer says one is installed

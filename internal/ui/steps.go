@@ -352,7 +352,7 @@ func (tv *taskView) render(s *Status, room int) string {
 	for i, sv := range tv.sessions {
 		mark := "  "
 		if i == tv.sel {
-			mark, sel = tui.Color("› ", tui.Cyan), len(lines)
+			mark, sel = tui.Color("› ", tui.Accent), len(lines)
 		}
 		lines = append(lines, mark+sv.line(s.width-4))
 	}
@@ -452,7 +452,7 @@ func (sv *sessionView) render(width, room int) string {
 	for i, st := range sv.steps {
 		mark := "  "
 		if i == sv.sel {
-			mark, sel = tui.Color("› ", tui.Cyan), len(lines)
+			mark, sel = tui.Color("› ", tui.Accent), len(lines)
 		}
 		lines = append(lines, mark+tui.Dim(st.at.Local().Format("15:04:05"))+" "+
 			st.line(width-14, !sv.settled && i == len(sv.steps)-1))

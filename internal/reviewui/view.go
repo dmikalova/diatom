@@ -191,7 +191,7 @@ func (m *Model) row(l line, cursor bool, gutter, width int) []string {
 	}
 	mark := " "
 	if cursor {
-		mark = sgr(1, fgCode(cyan)) + "›" + reset
+		mark = sgr(1, fgCode(tui.Accent)) + "›" + reset
 	}
 	sign, signColor := " ", noColor
 	switch l.op {

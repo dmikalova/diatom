@@ -199,7 +199,7 @@ func (s *Status) renderMenu(d *detail, room int) string {
 	for i, a := range acts {
 		mark := "  "
 		if i == d.sel {
-			mark, sel = tui.Color("› ", tui.Cyan), len(lines)
+			mark, sel = tui.Color("› ", tui.Accent), len(lines)
 		}
 		lines = append(lines, mark+tui.Color(a.key, tui.Yellow)+"  "+a.label)
 	}
@@ -220,7 +220,7 @@ func (s *Status) renderMenu(d *detail, room int) string {
 	for i, t := range d.tasks {
 		mark := "  "
 		if len(acts)+i == d.sel {
-			mark, sel = tui.Color("› ", tui.Cyan), len(lines)
+			mark, sel = tui.Color("› ", tui.Accent), len(lines)
 		}
 		lines = append(lines, s.taskLine(d, t, mark))
 	}

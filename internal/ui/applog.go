@@ -64,12 +64,12 @@ func (a *App) renderLog(w, h int) string {
 	return head + "\n\n" + strings.Join(lines[max(end-room, 0):end], "\n")
 }
 
-// logKey scrolls the log, or closes it.
-func (a *App) logKey(key string) {
+// logKey scrolls the log, and reports whether the key goes back to the nav.
+func (a *App) logKey(key string) bool {
 	room := max(a.height-3, 1)
 	switch key {
 	case "esc", "left", "L":
-		a.logOpen, a.logBack = false, 0
+		return true
 	case "k", "up":
 		a.logBack++
 	case "j", "down":
@@ -81,4 +81,5 @@ func (a *App) logKey(key string) {
 	case "G", "end":
 		a.logBack = 0
 	}
+	return false
 }

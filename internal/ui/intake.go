@@ -58,6 +58,7 @@ func plainStyles() textarea.Styles {
 		Selection:   lipgloss.NewStyle().Reverse(true),
 	}
 	s.Focused, s.Blurred = plain, plain
+	s.Cursor.Color = lipgloss.Color(strconv.Itoa(tui.Accent))
 	return s
 }
 

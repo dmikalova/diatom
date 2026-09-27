@@ -61,15 +61,23 @@ func TestAppShowsTheLog(t *testing.T) {
 		t.Errorf("L shows:\n%s", out)
 	}
 	key(a, "esc")
-	if a.logOpen || a.focus != partNav {
-		t.Errorf("esc left the log open %v, focus %d", a.logOpen, a.focus)
+	if a.selected().kind != entryLog || a.focus != partNav {
+		t.Errorf("esc from the log selected %+v, focus %d", a.selected(), a.focus)
 	}
-	// The footer opens it too.
-	_, foot := a.navLines()
-	a.Update(
-		tea.MouseClickMsg{X: 3, Y: a.height - a.intakeHeight() - len(foot), Button: tea.MouseLeft},
-	)
-	if !a.logOpen {
+	// It is in the menu at the nav's foot, and the footer opens it too.
+	if out := ansi.Strip(a.render()); !strings.Contains(out, "📜 Scheduler log") {
+		t.Errorf("the nav has no log:\n%s", out)
+	}
+	a.sel = 0
+	a.show()
+	footer := -1
+	for y, e := range a.rowEntry {
+		if e == rowFooter && footer < 0 {
+			footer = y
+		}
+	}
+	a.Update(tea.MouseClickMsg{X: 3, Y: footer, Button: tea.MouseLeft})
+	if a.selected().kind != entryLog {
 		t.Error("clicking the footer doesn't open the log")
 	}
 }

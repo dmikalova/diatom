@@ -30,7 +30,7 @@ func (a *App) focusedText() (text, what string) {
 			"the nav's line"
 	}
 	it := a.next.shown()
-	if a.selected().kind != entryNext || a.logOpen || it == nil {
+	if a.selected().kind != entryNext || it == nil {
 		return ansi.Strip(a.renderMain()), "the main pane"
 	}
 	switch a.next.area {

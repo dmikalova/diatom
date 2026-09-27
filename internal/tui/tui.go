@@ -19,6 +19,10 @@ const (
 	Gray    = 8
 )
 
+// Accent marks what has the keyboard and what is selected: focus bars,
+// borders, cursors and selection marks.
+const Accent = Green
+
 // Reset clears every attribute.
 const Reset = "\x1b[0m"
 

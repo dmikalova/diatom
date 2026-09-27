@@ -58,6 +58,8 @@ const (
 	entryGoal
 	entryFinished
 	entryFinishedGoal
+	// entryLog is the scheduler's log, in the menu at the nav's foot.
+	entryLog
 )
 
 // entry is one line of the nav.
@@ -119,10 +121,12 @@ type App struct {
 	// arrive while the human is elsewhere, the terminal tells them.
 	blurred bool
 	waiting int
-	// logOpen shows the scheduler's log in the main pane, scrolled back
-	// logBack lines.
-	logOpen bool
+	// logBack is how many lines the log is scrolled back.
 	logBack int
+	// rowEntry is what each row of the nav selects, as last drawn: an entry,
+	// or rowNone, rowFooter or rowIntake; labelRow is the intake box's rule.
+	rowEntry []int
+	labelRow int
 	// spin is the wheel events waiting to scroll; frame is the window as last
 	// drawn, and dirty says it has changed since.
 	spin  spin
@@ -214,7 +218,7 @@ func (a *App) entries() []entry {
 			}
 		}
 	}
-	return es
+	return append(es, entry{kind: entryLog})
 }
 
 func (a *App) selected() entry {
@@ -229,7 +233,7 @@ func (a *App) show() {
 		return
 	}
 	a.shown = e.key()
-	a.status.detail, a.review, a.logOpen = nil, nil, false
+	a.status.detail, a.review, a.logBack = nil, nil, 0
 	a.clearNotices()
 	if e.row != nil {
 		a.status.openDetail(e.row)
@@ -379,11 +383,8 @@ func (a *App) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "y":
 			return a, a.copyFocused()
 		case "L":
-			a.logOpen, a.logBack = !a.logOpen, 0
-			if a.logOpen {
-				return a, a.setFocus(partMain)
-			}
-			return a, nil
+			a.openLog()
+			return a, a.setFocus(partMain)
 		case "U":
 			if a.update != nil {
 				a.restart = a.update.Bin
@@ -408,10 +409,12 @@ func (a *App) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 func (a *App) navKey(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "j", "down":
-		a.sel = min(a.sel+1, len(a.entries())-1)
+		// Past either end, the nav comes round to the other.
+		a.sel = (a.sel + 1) % len(a.entries())
 		a.fromNext = false
 	case "k", "up":
-		a.sel = max(a.sel-1, 0)
+		n := len(a.entries())
+		a.sel = (a.sel + n - 1) % n
 		a.fromNext = false
 	case "enter", "space", " ", "right", "l":
 		switch a.selected().kind {
@@ -456,14 +459,14 @@ func (a *App) tab(step int) tea.Cmd {
 // mainAreas is how many areas of the main pane take the keyboard, and
 // mainArea the one that has it.
 func (a *App) mainAreas() int {
-	if a.selected().kind == entryNext && !a.logOpen {
+	if a.selected().kind == entryNext {
 		return a.next.areas()
 	}
 	return 1
 }
 
 func (a *App) mainArea() int {
-	if a.selected().kind == entryNext && !a.logOpen {
+	if a.selected().kind == entryNext {
 		return int(a.next.area)
 	}
 	return 0
@@ -510,9 +513,8 @@ func (a *App) backToNext() tea.Cmd {
 func (a *App) mainKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	back := key == "esc" || key == "left"
-	if a.logOpen {
-		a.logKey(key)
-		if !a.logOpen {
+	if a.selected().kind == entryLog {
+		if a.logKey(key) {
 			return a, a.setFocus(partNav)
 		}
 		return a, nil
@@ -640,28 +642,40 @@ func (a *App) click(m tea.Mouse) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 	if m.X > nw || nw == 0 {
-		if a.selected().kind == entryNext && !a.logOpen {
+		if a.selected().kind == entryNext {
 			return a, a.focusMain(int(a.next.areaAt(m.Y)))
 		}
 		return a, a.setFocus(partMain)
 	}
-	lines, foot := a.navLines()
-	if m.Y >= a.height-a.intakeHeight() {
+	a.renderNav()
+	row := rowNone
+	if m.Y >= 0 && m.Y < len(a.rowEntry) {
+		row = a.rowEntry[m.Y]
+	}
+	switch {
+	case row == rowIntake:
 		return a, a.setFocus(partIntake)
-	}
-	if m.Y >= a.height-a.intakeHeight()-len(foot) {
-		// The footer opens the log.
-		a.logOpen, a.logBack = true, 0
+	case row == rowFooter:
+		a.openLog()
 		return a, a.setFocus(partMain)
-	}
-	if y := m.Y + a.navTop; y < len(lines) && lines[y].entry >= 0 {
-		a.sel = lines[y].entry
+	case row >= 0:
+		a.sel = row
 		if a.selected().kind == entryFinished {
 			a.unfolded = !a.unfolded
 		}
 		a.show()
 	}
 	return a, a.setFocus(partNav)
+}
+
+// openLog selects the scheduler's log.
+func (a *App) openLog() {
+	for i, e := range a.entries() {
+		if e.kind == entryLog {
+			a.sel = i
+		}
+	}
+	a.show()
 }
 
 // wheelFrame is how long wheel events gather before they scroll: a fast spin
@@ -725,7 +739,7 @@ func (a *App) spinOut() {
 		a.show()
 		return
 	}
-	if it := a.next.shown(); a.selected().kind == entryNext && !a.logOpen && it != nil &&
+	if it := a.next.shown(); a.selected().kind == entryNext && it != nil &&
 		it.kind != itemReview {
 		a.next.scrollBy(3 * steps)
 		return
@@ -762,12 +776,22 @@ func (a *App) render() string {
 	}
 	nav := lipgloss.NewStyle().Width(nw).MaxWidth(nw).Height(a.height).
 		MaxHeight(a.height).Render(a.renderNav())
-	sep := tui.Dim("│")
-	if a.focus == partMain || a.dragging {
-		sep = tui.Color("│", tui.Cyan)
+	// The border lights up beside what has the keyboard, and the intake box's
+	// rule joins it.
+	border := make([]string, a.height)
+	for y := range border {
+		ch := "│"
+		if y == a.labelRow {
+			ch = "┤"
+		}
+		on := a.focus == partMain || a.dragging || a.focus == partIntake && y >= a.labelRow
+		if on {
+			border[y] = tui.Color(ch, tui.Accent)
+		} else {
+			border[y] = tui.Dim(ch)
+		}
 	}
-	border := strings.TrimSuffix(strings.Repeat(sep+"\n", a.height), "\n")
-	return lipgloss.JoinHorizontal(lipgloss.Top, nav, border, main)
+	return lipgloss.JoinHorizontal(lipgloss.Top, nav, strings.Join(border, "\n"), main)
 }
 
 // navLine is one line of the nav, and the entry it selects, or -1.
@@ -776,40 +800,59 @@ type navLine struct {
 	entry int
 }
 
-// navLines are the nav's entries, and the lines under them: its footer and
-// the intake box.
-func (a *App) navLines() ([]navLine, []string) {
-	var lines []navLine
-	for i, e := range a.entries() {
-		if e.kind == entryGoal && (i == 0 || a.entries()[i-1].kind != entryGoal) {
-			lines = append(lines, navLine{text: "", entry: -1})
+// What a row of the nav selects, besides an entry.
+const (
+	rowNone   = -1
+	rowFooter = -2
+	rowIntake = -3
+)
+
+// navLayout is the nav's parts: the list that scrolls, the menu at its foot,
+// and under that the footer and the intake box's rule.
+type navLayout struct {
+	list, menu []navLine
+	foot       []string
+}
+
+// navLines lays the nav out.
+func (a *App) navLines() navLayout {
+	lay := navLayout{menu: []navLine{{text: tui.Dim(strings.Repeat("─", a.nw())), entry: rowNone}}}
+	es := a.entries()
+	for i, e := range es {
+		if e.kind == entryLog {
+			for _, l := range a.navEntry(i, e) {
+				lay.menu = append(lay.menu, navLine{text: l, entry: i})
+			}
+			continue
+		}
+		if e.kind == entryGoal && (i == 0 || es[i-1].kind != entryGoal) {
+			lay.list = append(lay.list, navLine{text: "", entry: rowNone})
 		}
 		for _, l := range a.navEntry(i, e) {
-			lines = append(lines, navLine{text: l, entry: i})
+			lay.list = append(lay.list, navLine{text: l, entry: i})
 		}
 	}
-	var foot []string
 	for l := range strings.SplitSeq(ansi.Wordwrap(a.footer(), a.nw()-1, ""), "\n") {
-		foot = append(foot, " "+l)
+		lay.foot = append(lay.foot, " "+l)
 	}
 	label := "─ intake "
 	label += strings.Repeat("─", max(a.nw()-ansi.StringWidth(label), 0))
 	if a.focus == partIntake {
-		label = tui.Color(label, tui.Cyan)
+		label = tui.Color(label, tui.Accent)
 	} else {
 		label = tui.Dim(label)
 	}
-	foot = append(foot, label)
-	return lines, foot
+	lay.foot = append(lay.foot, label)
+	return lay
 }
 
 func (a *App) renderNav() string {
-	lines, foot := a.navLines()
+	lay := a.navLines()
 	box := strings.Split(strings.TrimRight(a.intake.render(), "\n"), "\n")
-	room := max(a.height-len(foot)-len(box), 1)
+	room := max(a.height-len(lay.menu)-len(lay.foot)-len(box), 1)
 	// Scrolled just enough to show the selected entry, all its lines.
 	first, last := -1, 0
-	for i, l := range lines {
+	for i, l := range lay.list {
 		if l.entry == a.sel {
 			if first < 0 {
 				first = i
@@ -817,18 +860,33 @@ func (a *App) renderNav() string {
 			last = i
 		}
 	}
-	first = max(first, 0)
+	if first >= 0 {
+		a.navTop = min(max(a.navTop, last-room+1), first)
+	}
+	a.navTop = max(min(a.navTop, len(lay.list)-room), 0)
+	shown := lay.list[a.navTop:min(a.navTop+room, len(lay.list))]
 	var out []string
-	for _, l := range lines {
-		out = append(out, l.text)
+	a.rowEntry = a.rowEntry[:0]
+	for _, l := range shown {
+		out, a.rowEntry = append(out, l.text), append(a.rowEntry, l.entry)
 	}
-	a.navTop = min(max(a.navTop, last-room+1), first)
-	a.navTop = max(min(a.navTop, len(out)-room), 0)
-	out = out[a.navTop:min(a.navTop+room, len(out))]
 	for len(out) < room {
-		out = append(out, "")
+		out, a.rowEntry = append(out, ""), append(a.rowEntry, rowNone)
 	}
-	return strings.Join(append(append(out, foot...), box...), "\n")
+	for _, l := range lay.menu {
+		out, a.rowEntry = append(out, l.text), append(a.rowEntry, l.entry)
+	}
+	for i, l := range lay.foot {
+		row := rowFooter
+		if i == len(lay.foot)-1 {
+			row, a.labelRow = rowIntake, len(out)
+		}
+		out, a.rowEntry = append(out, l), append(a.rowEntry, row)
+	}
+	for _, l := range box {
+		out, a.rowEntry = append(out, l), append(a.rowEntry, rowIntake)
+	}
+	return strings.Join(out, "\n")
 }
 
 // navEntry renders one entry: a glyph for where it stands and its name cut
@@ -859,6 +917,8 @@ func (a *App) navEntry(i int, e entry) []string {
 		}
 	case entryFinishedGoal:
 		glyph, name = tui.Dim("✓"), e.goal.Title
+	case entryLog:
+		glyph, name = "📜", "Scheduler log"
 	}
 	// Glyphs take two columns, as an emoji does.
 	glyph += strings.Repeat(" ", max(2-ansi.StringWidth(glyph), 0))
@@ -878,18 +938,14 @@ func (a *App) navEntry(i int, e entry) []string {
 	if i != a.sel {
 		return lines
 	}
+	// The selected entry has a bar down its left, bright while the nav has
+	// the keyboard.
+	bar := tui.Dim("▌")
+	if a.focus == partNav {
+		bar = tui.Color("▌", tui.Accent)
+	}
 	for j, l := range lines {
-		if a.focus == partNav {
-			l = ansi.Strip(l)
-			lines[j] = tui.SGR(
-				7,
-			) + l + strings.Repeat(
-				" ",
-				max(a.nw()-ansi.StringWidth(l), 0),
-			) + tui.Reset
-		} else {
-			lines[j] = tui.Bold(l)
-		}
+		lines[j] = bar + tui.Bold(strings.TrimPrefix(l, " "))
 	}
 	return lines
 }
@@ -915,11 +971,8 @@ func relevant(r goalRow) string {
 	case r.toReview > 0:
 		return tui.Color(count(r.toReview, "hunk")+" to review", tui.Yellow)
 	case name == "blocked":
-		waits := r.waiting[0]
-		if n := len(r.waiting) - 1; n > 0 {
-			waits += fmt.Sprintf(" and %d more", n)
-		}
-		return tui.Color("waits for "+waits, c)
+		// The goal's page names what it waits for.
+		return tui.Color("blocked", c)
 	case len(r.activeWork) > 0:
 		var ws []string
 		for _, w := range r.activeWork {
@@ -995,7 +1048,7 @@ func (a *App) renderMain() string {
 		return "Suspending the running sessions; they carry on where they stopped the next time " +
 			"diatom opens.\n\n" + tui.Dim("ctrl+c again stops at once, leaving any git work half done.")
 	}
-	if a.logOpen {
+	if a.selected().kind == entryLog {
 		return a.renderLog(a.mainWidth(), a.height)
 	}
 	if a.review != nil {
