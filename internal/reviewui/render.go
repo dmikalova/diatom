@@ -273,17 +273,49 @@ func markAll(cells []cell) {
 // tabWidth is how many columns a tab takes.
 const tabWidth = 4
 
-// renderCells renders a line's content into at most width columns. Deleted
-// lines are red throughout, so they read as gone; the changed words of a
-// changed line stand out on their side's color.
-func renderCells(cells []cell, op gitdiff.LineOp, width int) string {
+// renderCells renders a line's content in rows of at most width columns,
+// wrapping a long line at a space where it can. Deleted lines are red
+// throughout, so they read as gone; the changed words of a changed line
+// stand out on their side's color.
+func renderCells(cells []cell, op gitdiff.LineOp, width int) []string {
+	cells = expandTabs(cells)
+	width = max(width, 1)
+	var rows []string
+	for len(cells) > width {
+		cut := width
+		for i := width - 1; i > 0; i-- {
+			if cells[i].r == ' ' {
+				cut = i + 1
+				break
+			}
+		}
+		rows = append(rows, paint(cells[:cut], op))
+		cells = cells[cut:]
+	}
+	return append(rows, paint(cells, op))
+}
+
+// expandTabs turns each tab into the spaces it takes, keeping its colors.
+func expandTabs(cells []cell) []cell {
+	out := make([]cell, 0, len(cells))
+	for _, c := range cells {
+		if c.r != '\t' {
+			out = append(out, c)
+			continue
+		}
+		c.r = ' '
+		for range tabWidth - len(out)%tabWidth {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// paint renders cells with their colors.
+func paint(cells []cell, op gitdiff.LineOp) string {
 	var b strings.Builder
-	col := 0
 	state := ""
 	for _, c := range cells {
-		if col >= width {
-			break
-		}
 		fg := c.fg
 		if op == gitdiff.OpDelete {
 			fg = red
@@ -306,14 +338,7 @@ func renderCells(cells []cell, op gitdiff.LineOp, width int) string {
 			b.WriteString(want)
 			state = want
 		}
-		if c.r == '\t' {
-			n := min(tabWidth-col%tabWidth, width-col)
-			b.WriteString(strings.Repeat(" ", n))
-			col += n
-			continue
-		}
 		b.WriteRune(c.r)
-		col++
 	}
 	b.WriteString(reset)
 	return b.String()

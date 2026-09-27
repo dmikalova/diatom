@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/bluekeyes/go-gitdiff/gitdiff"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/dmikalova/diatom/internal/focus"
 	"github.com/dmikalova/diatom/internal/git"
@@ -61,11 +62,32 @@ func TestRenderCells(t *testing.T) {
 	cells := plain("a\tb")
 	cells[2].changed = true
 	out := renderCells(cells, gitdiff.OpAdd, 80)
-	if !strings.Contains(out, "a   ") || !strings.Contains(out, sgr(bgCode(green), fgCode(0))+"b") {
+	if len(out) != 1 || !strings.Contains(out[0], "a   ") ||
+		!strings.Contains(out[0], sgr(bgCode(green), fgCode(0))+"b") {
 		t.Errorf("renderCells = %q", out)
 	}
-	if out := renderCells(plain("abcdef"), gitdiff.OpContext, 3); strings.Contains(out, "d") {
-		t.Errorf("renderCells ignored the width: %q", out)
+	// A long line wraps at a space where it can, and anywhere where it can't.
+	got := renderCells(plain("out <- chooser.ChooseOption(src)"), gitdiff.OpContext, 16)
+	var rows []string
+	for _, r := range got {
+		rows = append(rows, ansi.Strip(r))
+	}
+	if strings.Join(rows, "|") != "out <- |chooser.ChooseOp|tion(src)" {
+		t.Errorf("wrapped = %q", rows)
+	}
+}
+
+func TestLongLinesWrap(t *testing.T) {
+	m := &Model{width: 40}
+	l := line{op: gitdiff.OpAdd, newN: 7, cells: plain(strings.Repeat("word ", 12))}
+	rows := m.row(l, false, 1, 40)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %q", rows)
+	}
+	first, second := ansi.Strip(rows[0]), ansi.Strip(rows[1])
+	if !strings.HasPrefix(first, "   7 + word") || !strings.HasPrefix(second, "     + word") ||
+		len(first) > 40 {
+		t.Errorf("rows:\n%s\n%s", first, second)
 	}
 }
 

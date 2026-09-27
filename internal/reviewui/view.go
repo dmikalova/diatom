@@ -136,12 +136,15 @@ func (m *Model) body() string {
 		}
 	}
 	var rows []string
-	cursorRow := 0
+	cursorRow, cursorEnd := 0, 0
 	for i, l := range ls {
 		if i == m.cursor {
 			cursorRow = len(rows)
 		}
-		rows = append(rows, m.row(l, i == m.cursor, gutter, width))
+		rows = append(rows, m.row(l, i == m.cursor, gutter, width)...)
+		if i == m.cursor {
+			cursorEnd = len(rows) - 1
+		}
 		if text, ok := comments[i]; ok {
 			rows = append(
 				rows,
@@ -149,11 +152,11 @@ func (m *Model) body() string {
 			)
 		}
 	}
-	// Keep the cursor in view even with comment rows added.
+	// Keep the cursor's line in view, wrapped rows and comments and all.
 	h := m.bodyHeight()
 	start := min(m.scroll, max(len(rows)-h, 0))
-	if cursorRow >= start+h {
-		start = cursorRow - h + 1
+	if cursorEnd >= start+h {
+		start = cursorEnd - h + 1
 	}
 	if cursorRow < start {
 		start = cursorRow
@@ -169,7 +172,9 @@ func (m *Model) body() string {
 	return b.String()
 }
 
-func (m *Model) row(l line, cursor bool, gutter, width int) string {
+// row renders one line of the hunk, wrapped to the width: the rows after
+// the first leave the line numbers blank and keep the sign.
+func (m *Model) row(l line, cursor bool, gutter, width int) []string {
 	num := func(n int) string {
 		if n == 0 {
 			return strings.Repeat(" ", gutter)
@@ -201,7 +206,16 @@ func (m *Model) row(l line, cursor bool, gutter, width int) string {
 		dim(num(newN)),
 		colored(sign, signColor),
 	)
-	return prefix + " " + renderCells(l.cells, l.op, width-2*gutter-5)
+	more := strings.Repeat(" ", 2*gutter+3) + colored(sign, signColor)
+	rows := renderCells(l.cells, l.op, width-2*gutter-5)
+	for i := range rows {
+		if i == 0 {
+			rows[i] = prefix + " " + rows[i]
+		} else {
+			rows[i] = more + " " + rows[i]
+		}
+	}
+	return rows
 }
 
 func (m *Model) footer() string {
