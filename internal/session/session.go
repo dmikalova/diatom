@@ -280,6 +280,15 @@ type State struct {
 	// CommitCostUSD is what writing the session's commit messages cost,
 	// beside the agent's own cost in its result.
 	CommitCostUSD float64 `json:"commitCostUSD,omitempty"`
+	// Earlier are the runs of the agent a stop cut short, before the one
+	// whose cost is in the result: resuming starts the count again.
+	Earlier []Run `json:"earlier,omitempty"`
+}
+
+// Run is one run of a session's agent: when it ended, and what it cost.
+type Run struct {
+	Ended   time.Time `json:"ended"`
+	CostUSD float64   `json:"costUSD"`
 }
 
 // LoadState reads a session's state; a session without one has just begun.

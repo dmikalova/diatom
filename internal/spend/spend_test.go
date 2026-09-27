@@ -99,3 +99,63 @@ func TestSessionCache(t *testing.T) {
 		t.Error("a missing session has a cost")
 	}
 }
+
+func TestSpreadOverTheDaysWorked(t *testing.T) {
+	s := queue.Open(t.TempDir())
+	now := time.Date(2026, 9, 27, 15, 0, 0, 0, time.Local)
+	yesterday := now.AddDate(0, 0, -1)
+	// A run stopped yesterday evening, and resumed today: 3 steps
+	// yesterday, then one yesterday and three today.
+	dir := ended(t, s, "set", "a", now.Add(-time.Hour), 8, 0, true)
+	if err := session.UpdateState(dir, func(st *session.State) {
+		st.Earlier = []session.Run{{Ended: yesterday.Add(time.Hour), CostUSD: 6}}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range []session.Event{
+		{Time: yesterday, Type: "tool"}, {Time: yesterday.Add(time.Minute), Type: "text"},
+		{Time: yesterday.Add(2 * time.Minute), Type: "tool"},
+		{Time: yesterday.Add(3 * time.Hour), Type: "text"},
+		{Time: now.Add(-3 * time.Hour), Type: "tool"}, {Time: now.Add(-2 * time.Hour), Type: "tool"},
+		// Gate runs and diatom's own steps aren't the agent's.
+		{Time: now.Add(-90 * time.Minute), Type: session.EventGate},
+		{Time: now.Add(-80 * time.Minute), Type: session.EventSettle},
+		{Time: now.Add(-70 * time.Minute), Type: "tool"},
+		{Type: "tool"},
+	} {
+		if err := session.AppendEvent(dir, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := New().Repo(s, now)
+	if fmt.Sprintf("%.2f %.2f", got.Day, got.Week) != "6.00 14.00" {
+		t.Errorf("totals = %+v, want 6 today of 14", got)
+	}
+}
+
+func TestSuspendedRunsCount(t *testing.T) {
+	s := queue.Open(t.TempDir())
+	now := time.Now()
+	dir := filepath.Join(s.SessionsDir("set"), "a")
+	if err := session.Create(dir, session.Spec{ID: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	tally := New()
+	if _, ok := tally.Session(dir); ok {
+		t.Error("a session that spent nothing yet has a cost")
+	}
+	if err := session.UpdateState(dir, func(st *session.State) {
+		st.Earlier = []session.Run{{Ended: now, CostUSD: 3}}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if c, ok := tally.Session(dir); !ok || usd(c) != "3.00" || c.Ended {
+		t.Errorf("a resumed session running = %+v, %v", c, ok)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "state.json"), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := tally.Session(dir); ok {
+		t.Error("a broken state has a cost")
+	}
+}

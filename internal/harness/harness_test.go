@@ -92,7 +92,8 @@ func (a *agent) Run(
 	}
 	a.act(a.t, spec.Dir, agentSession{dir: dir, spec: s, t: a.t, ctx: ctx, run: spec})
 	if ctx.Err() != nil {
-		return runner.Result{}, ctx.Err()
+		// Claude reports what it spent when it's stopped.
+		return runner.Result{Usage: runner.Usage{CostUSD: 0.25}}, ctx.Err()
 	}
 	return runner.Result{
 		Outcome: runner.Completed,

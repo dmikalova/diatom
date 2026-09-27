@@ -2,6 +2,7 @@ package harness
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -54,6 +55,12 @@ func TestStopMidSessionResumesIt(t *testing.T) {
 	st, _ := session.LoadState(dirs[0])
 	if len(dirs) != 1 || st.AgentSession != "agent-1" || st.Settled {
 		t.Fatalf("sessions %v, state %+v", dirs, st)
+	}
+	// What the stopped agent spent is kept, since the result counts only
+	// the resumed run.
+	if len(st.Earlier) != 1 || st.Earlier[0].Ended.IsZero() ||
+		fmt.Sprintf("%.2f", st.Earlier[0].CostUSD) != "0.25" {
+		t.Errorf("earlier runs = %+v", st.Earlier)
 	}
 	if _, err := os.Stat(filepath.Join(dirs[0], "result.json")); err == nil {
 		t.Error("a stopped agent's session has a result")

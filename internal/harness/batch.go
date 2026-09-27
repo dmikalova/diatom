@@ -114,6 +114,17 @@ func (h *Harness) runAgent(
 ) error {
 	res, runErr := h.runSession(ctx, repo, g, b, wt, dir, spec, resume)
 	if ctx.Err() != nil {
+		// What the agent spent before the stop is spent, though the
+		// session carries on.
+		if res.Usage.CostUSD > 0 {
+			run := session.Run{Ended: h.now(), CostUSD: res.Usage.CostUSD}
+			if err := session.UpdateState(dir, func(st *session.State) {
+				st.Earlier = append(st.Earlier, run)
+			}); err != nil {
+				h.log().
+					Warn("recording the stopped agent's cost failed", "session", spec.ID, "err", err)
+			}
+		}
 		return errSuspended
 	}
 	if err := session.WriteResult(

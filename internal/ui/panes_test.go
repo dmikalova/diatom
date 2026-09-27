@@ -246,7 +246,7 @@ func TestGoalPageShowsRunningSession(t *testing.T) {
 	a, _ := newApp(t, f)
 	openGoal(t, a, "set")
 	if out := ansi.Strip(a.render()); !strings.Contains(out, "▶ engine") ||
-		!strings.Contains(out, "Bash go test ./...") || !strings.Contains(a.nextCounts(), "🟢 1") {
+		!strings.Contains(out, "Bash go test ./...") || !strings.Contains(a.nextCounts(), "🤖 1") {
 		t.Errorf("running session missing:\n%s", out)
 	}
 }
@@ -925,5 +925,42 @@ func TestParagraphsHang(t *testing.T) {
 		if ansi.StringWidth(l) > 30 {
 			t.Errorf("%q is wider than 30", l)
 		}
+	}
+}
+
+func TestGlyphsForAgentsAndGitWork(t *testing.T) {
+	f := newFixture(t)
+	task, _ := f.store.Task("set", "0001")
+	if err := f.store.Move("set", task, queue.Active); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(f.store.SessionsDir("set"), "20260101T000000Z-engine")
+	write(t, filepath.Join(dir, "events.jsonl"), `{"type":"tool","text":"Bash go test ./..."}`+"\n")
+	a, _ := newApp(t, f)
+	r := a.status.rows[0]
+	r.questions, r.toReview = 0, 0
+	if g := navGlyph(r, false); g != "🤖" || ansi.Strip(relevant(r)) != "running engine" {
+		t.Errorf("an agent running = %s %q", g, ansi.Strip(relevant(r)))
+	}
+	if g := navGlyph(r, true); g != "🔀" {
+		t.Errorf("a goal landing = %s", g)
+	}
+	// Its agent has ended, and diatom commits its work.
+	write(t, filepath.Join(dir, "result.json"), `{"usage":{"costUSD":1}}`)
+	a.reload()
+	r = a.status.rows[0]
+	r.questions, r.toReview = 0, 0
+	if g := navGlyph(r, false); g != "🔀" || ansi.Strip(relevant(r)) != "committing engine" {
+		t.Errorf("committing = %s %q", g, ansi.Strip(relevant(r)))
+	}
+	if !strings.Contains(a.nextCounts(), "🔀 1") || strings.Contains(a.nextCounts(), "🤖") {
+		t.Errorf("next counts = %q", a.nextCounts())
+	}
+	r.activeWork, r.settling = []string{"cards", "engine"}, []string{"engine"}
+	if got := ansi.Strip(relevant(r)); got != "running cards; committing engine" {
+		t.Errorf("both = %q", got)
+	}
+	if settling("") {
+		t.Error("no session is settling")
 	}
 }

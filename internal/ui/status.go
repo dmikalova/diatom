@@ -72,6 +72,9 @@ type goalRow struct {
 	counts    map[queue.State]int
 	questions int
 	toReview  int
+	// settling are the workstreams of activeWork whose agent has ended,
+	// while diatom gates, commits and merges its work.
+	settling []string
 	// landingReview counts the hunks of toReview that finishing the goal
 	// brought: catching up with its base, and settling a rebase's
 	// conflicts. They hold the goal's landing up, as its finishing does.
@@ -236,12 +239,16 @@ func (s *Status) row(store *queue.Store, g *queue.Goal) (goalRow, error) {
 	row.activeWork = slices.Compact(row.activeWork)
 	row.latest = map[string]string{}
 	for _, ws := range row.activeWork {
-		dir := ws
-		if dir == "" {
+		name := ws
+		if name == "" {
 			// Triage and grilling run on no workstream, in planning sessions.
-			dir = "planning"
+			name = "planning"
 		}
-		row.latest[ws] = lastEvent(store.Repo(), g.Name, dir)
+		dir := newestSession(store, g.Name, name)
+		row.latest[ws] = lastEvent(dir)
+		if settling(dir) {
+			row.settling = append(row.settling, ws)
+		}
 	}
 	row.cost, row.taskCost = s.goalCost(g.Name)
 	if g.State == queue.GoalActive && len(row.waiting) == 0 {
@@ -300,7 +307,7 @@ func stage(store *queue.Store, row *goalRow) error {
 
 // goalCost adds up what the goal's sessions have cost, in all and for each
 // task: a session's cost is shared evenly among its tasks. A session still
-// running has no cost yet.
+// running counts what its runs that ended cost.
 func (s *Status) goalCost(goal string) (float64, map[string]float64) {
 	total, perTask := 0.0, map[string]float64{}
 	for _, c := range s.spent.Goal(s.env.Store, goal) {
@@ -1038,14 +1045,36 @@ var stateColors = map[queue.GoalState]int{
 	queue.GoalDone: tui.Magenta,
 }
 
-// lastEvent is the latest step of a workstream's running session.
-func lastEvent(repo, goal, ws string) string {
-	dirs, err := filepath.Glob(filepath.Join(queue.Open(repo).SessionsDir(goal), "*-"+ws))
+// newestSession is the directory of a workstream's latest session, "" for
+// none.
+func newestSession(store *queue.Store, goal, ws string) string {
+	dirs, err := filepath.Glob(filepath.Join(store.SessionsDir(goal), "*-"+ws))
 	if err != nil || len(dirs) == 0 {
 		return ""
 	}
 	slices.Sort(dirs)
-	events, err := session.ReadEvents(dirs[len(dirs)-1])
+	return dirs[len(dirs)-1]
+}
+
+// settling reports whether the session in dir has an agent that ended and
+// work diatom hasn't settled yet: it is gating, committing and merging.
+func settling(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	if _, ended := session.Ended(dir); !ended {
+		return false
+	}
+	st, err := session.LoadState(dir)
+	return err == nil && !st.Settled
+}
+
+// lastEvent is the latest step of the running session in dir.
+func lastEvent(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	events, err := session.ReadEvents(dir)
 	if err != nil {
 		return ""
 	}

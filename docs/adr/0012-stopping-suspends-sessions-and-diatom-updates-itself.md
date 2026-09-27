@@ -22,4 +22,4 @@ The scheduler has to stop now and then: to install a new diatom, to reboot, or t
 - **Without it**, a new release is only logged.
 - **A binary built from a checkout never updates itself**, because its builder is working on it. It is still followed: when the binary on disk is replaced, the footer says so, and `U` restarts on it.
 
-The cost is that the part of a session before a stop is not billed in its usage, because the agent never reports it.
+What an agent spent before a stop is kept with the session, since the resumed run's usage counts only from its own start. The cost is that a command the agent was running when it was stopped is killed, and the agent has to run it again.

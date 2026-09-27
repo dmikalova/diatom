@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -891,7 +892,8 @@ func (a *App) navEntry(i int, e entry) []string {
 			under = relevant(*e.row)
 		}
 	case entryGoal:
-		glyph, name, under = navGlyph(*e.row), e.row.goal.Title, relevant(*e.row)
+		glyph, name, under = navGlyph(*e.row, a.status.busyGoal == e.row.goal.Name),
+			e.row.goal.Title, relevant(*e.row)
 		if name == "" {
 			name = e.row.goal.Name
 		}
@@ -963,9 +965,14 @@ func (a *App) nextCounts() string {
 	if len(parts) == 0 {
 		parts = append(parts, tui.Dim("nothing needs you"))
 	}
-	// And the sessions running, which need nothing of the human.
-	if n := a.running(); n > 0 {
-		parts = append(parts, "🟢 "+strconv.Itoa(n))
+	// And what runs, which needs nothing of the human: agents, and git
+	// work, a landing's included.
+	agents, merging := a.running()
+	if agents > 0 {
+		parts = append(parts, "🤖 "+strconv.Itoa(agents))
+	}
+	if merging > 0 {
+		parts = append(parts, "🔀 "+strconv.Itoa(merging))
 	}
 	return strings.Join(parts, "  ")
 }
@@ -994,14 +1001,26 @@ func relevant(r goalRow) string {
 		// The goal's page names what it waits for.
 		return tui.Color("blocked", c)
 	case len(r.activeWork) > 0:
-		var ws []string
+		var running, merging []string
 		for _, w := range r.activeWork {
+			settles := slices.Contains(r.settling, w)
 			if w == "" {
 				w = "grilling"
 			}
-			ws = append(ws, w)
+			if settles {
+				merging = append(merging, w)
+			} else {
+				running = append(running, w)
+			}
 		}
-		return tui.Color("running "+strings.Join(ws, ", "), c)
+		var parts []string
+		if len(running) > 0 {
+			parts = append(parts, "running "+strings.Join(running, ", "))
+		}
+		if len(merging) > 0 {
+			parts = append(parts, "committing "+strings.Join(merging, ", "))
+		}
+		return tui.Color(strings.Join(parts, "; "), c)
 	case name == "queued":
 		return tui.Color(fmt.Sprintf("%d ready, waiting for a session", r.ready), c)
 	case r.goal.State == queue.GoalPlanning:
@@ -1025,9 +1044,19 @@ func count(n int, thing string) string {
 	return fmt.Sprintf("%d %ss", n, thing)
 }
 
-// navGlyph is where a goal stands, as the nav shows it.
-func navGlyph(r goalRow) string {
+// navGlyph is where a goal stands, as the nav shows it: a robot while an
+// agent works on it, and the merge sign while diatom does its git work, such
+// as committing a session's work or landing it.
+func navGlyph(r goalRow, landing bool) string {
 	name, c := goalStatus(r)
+	switch {
+	case landing:
+		return "🔀"
+	case len(r.activeWork) > len(r.settling):
+		return "🤖"
+	case len(r.settling) > 0:
+		return "🔀"
+	}
 	g, ok := map[string]string{
 		"active": "🟢", "queued": "⏳", "blocked": "🔗", "reviewing": "🔎", "ready to finish": "📩",
 		"planning": "📝", "parked": "⏸️", "done": "✅",
@@ -1038,13 +1067,17 @@ func navGlyph(r goalRow) string {
 	return tui.Color(g, c)
 }
 
-// running counts the sessions running.
-func (a *App) running() int {
-	n := 0
+// running counts the agents running, and the git work under way: the
+// sessions diatom is committing, and a landing.
+func (a *App) running() (agents, merging int) {
 	for _, r := range a.status.rows {
-		n += len(r.activeWork)
+		agents += len(r.activeWork) - len(r.settling)
+		merging += len(r.settling)
 	}
-	return n
+	if a.status.busy != "" {
+		merging++
+	}
+	return agents, merging
 }
 
 // money is an amount in dollars, to the cent while it is small.

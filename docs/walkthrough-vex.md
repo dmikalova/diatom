@@ -34,6 +34,11 @@ gh auth status        # diatom opens PRs and reads CI checks with gh
    ```toml
    maxSessions = 2               # agent sessions at once; raise it once you trust it
    autoApprove = ["*_test.go"]   # hunks in these files are approved for you
+
+   [budget]                      # dollars; once one is spent, nothing new starts
+   day = 50
+   week = 200
+   month = 600
    ```
 
    vex needs no gate of its own: it has a `go.mod`, so it gets the Go gate
@@ -57,17 +62,20 @@ cd ~/Code/github.com/dmikalova/vex && diatom
 The window runs vex's scheduler, which starts sessions as soon as work is
 ready. The nav down the left lists:
 
-- **Next**: what waits on you, one item at a time.
+- **Next**: what waits on you, one item at a time. Its second line counts
+  what waits by kind, then the agents running (🤖) and the git work under way
+  (🔀).
 - **Intake**: what triage is sorting, and its questions.
 - **The goals**, each on two lines: a glyph for where it stands and its
   title, then the one thing about it that matters most now, such as
-  `2 questions`, `48 hunks to review` or `waits for effect-catalog`. Finished
-  goals fold away at the
-  bottom.
-- **A menu** at the foot, for now with the scheduler's log, which `L` opens
-  too.
-- **The footer**: what the work has cost, the sessions running, and anything
-  wrong with the scheduler. Clicking it opens the scheduler's log.
+  `2 questions`, `48 hunks to review` or `blocked`. The glyph is 🤖 while an
+  agent works on the goal, and 🔀 while diatom commits a session's work or
+  lands the goal.
+- **A menu** at the foot: ☑️ Finished lists the finished goals, the latest
+  first, and 📒 the scheduler's log, which `L` opens too.
+- **The footer**: what the sessions cost today, over the last 7 days and over
+  the last 30, as `$22D · $80W · $200M`, and anything wrong with the
+  scheduler. Clicking it opens the scheduler's log.
 - **The intake box**, at the foot.
 
 The main pane shows what the nav selects. Tab moves between the nav, the parts
@@ -252,5 +260,9 @@ whenever you like.
   and over the last 30. Once one is spent, the footer shows it in red and no
   new session starts; the ones running finish. Grilling runs on Opus at high
   effort, and implementation on Opus at medium. The window's title shows
-  today's cost, and each goal's page its own and each task's. A finished
-  goal's sessions count until they are 30 days old.
+  today's cost, and each goal's page its own and each task's. A session's
+  cost counts on the days its agent worked, shared by how many steps it took
+  on each, so a session that runs past midnight or resumes the next morning
+  counts on both days. A finished goal's sessions count until they are 30
+  days old. A spent day's budget only holds new sessions until midnight, so
+  a goal bigger than a day's budget still finishes, over several days.
