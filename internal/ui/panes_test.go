@@ -122,6 +122,10 @@ func key(m tea.Model, keys ...string) {
 			msg = tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift}
 		case "alt+a", "alt+c":
 			msg = tea.KeyPressMsg{Code: rune(k[4]), Mod: tea.ModAlt}
+		case "space":
+			msg = tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}
+		case "shift+space":
+			msg = tea.KeyPressMsg{Code: tea.KeySpace, Mod: tea.ModShift}
 		case "ctrl+x":
 			msg = tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl}
 		default:
@@ -161,7 +165,7 @@ func TestGoalPage(t *testing.T) {
 		t.Errorf("titled %q", title)
 	}
 	openGoal(t, a, "set")
-	out := ansi.Strip(a.render())
+	out := plain(a.render())
 	for _, want := range []string{"‹ set", "queued · set", "tasks 1 pending", "1 questions", "1 to review",
 		"› r  Review its 1 hunks",
 		"p  Park it", "0001 [engine] Add ward"} {
@@ -171,8 +175,8 @@ func TestGoalPage(t *testing.T) {
 	}
 	key(a, "p")
 	if g, _ := f.store.Goal("set"); g.State != queue.GoalParked ||
-		!strings.Contains(ansi.Strip(a.render()), "p  Resume it") {
-		t.Errorf("p left the goal %s:\n%s", g.State, ansi.Strip(a.render()))
+		!strings.Contains(plain(a.render()), "p  Resume it") {
+		t.Errorf("p left the goal %s:\n%s", g.State, plain(a.render()))
 	}
 	key(a, "p")
 	if g, _ := f.store.Goal("set"); g.State != queue.GoalActive {
@@ -182,7 +186,7 @@ func TestGoalPage(t *testing.T) {
 	a.status.detail.sel = len(a.status.detailActions())
 	key(a, "enter")
 	if a.status.detail.task == nil || a.status.detail.task.id != "0001" {
-		t.Fatalf("enter past the actions didn't open the task:\n%s", ansi.Strip(a.render()))
+		t.Fatalf("enter past the actions didn't open the task:\n%s", plain(a.render()))
 	}
 	key(a, "esc", "esc")
 	if a.focus != partNav || a.status.detail == nil || a.status.detail.task != nil {
@@ -203,7 +207,7 @@ func TestNavScrolls(t *testing.T) {
 	for range 18 {
 		key(a, "j")
 	}
-	out := ansi.Strip(a.render())
+	out := plain(a.render())
 	if !strings.Contains(out, "g15") || strings.Contains(out, "⏩ Next") {
 		t.Errorf("the nav after moving down 18, in 12 lines:\n%s", out)
 	}
@@ -224,12 +228,12 @@ func TestGoalPageShowsWaitingGoal(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, _ := newApp(t, f)
-	if out := ansi.Strip(a.render()); !strings.Contains(out, "🔗 later") ||
+	if out := plain(a.render()); !strings.Contains(out, "🔗 later") ||
 		!strings.Contains(out, "    blocked") {
 		t.Errorf("the nav:\n%s", out)
 	}
 	openGoal(t, a, "later")
-	if out := ansi.Strip(a.render()); !strings.Contains(out, "blocked · later") ||
+	if out := plain(a.render()); !strings.Contains(out, "blocked · later") ||
 		!strings.Contains(out, "blocked: waits for set to finish") {
 		t.Errorf("the goal opened:\n%s", out)
 	}
@@ -245,8 +249,11 @@ func TestGoalPageShowsRunningSession(t *testing.T) {
 		`{"type":"text","text":"old"}`+"\n"+`{"type":"tool","text":"Bash go test ./..."}`+"\n")
 	a, _ := newApp(t, f)
 	openGoal(t, a, "set")
-	if out := ansi.Strip(a.render()); !strings.Contains(out, "▶ engine") ||
-		!strings.Contains(out, "Bash go test ./...") || !strings.Contains(a.nextCounts(), "🤖 1") {
+	if out := plain(a.render()); !strings.Contains(out, "▶ engine") ||
+		!strings.Contains(
+			out,
+			"Bash go test ./...",
+		) || !strings.Contains(plain(a.nextCounts()), "🤖 1") {
 		t.Errorf("running session missing:\n%s", out)
 	}
 }
@@ -289,7 +296,7 @@ func TestIntakeBeingSorted(t *testing.T) {
 			`{"time":"2026-01-01T00:00:04Z","type":"text","text":"Two goals, then."}`+"\n")
 	a, _ := newApp(t, f)
 	openGoal(t, a, queue.IntakeGoal)
-	out := ansi.Strip(a.render())
+	out := plain(a.render())
 	if !strings.Contains(out, "‹ Intake") || !strings.Contains(out, "1 being sorted") ||
 		!strings.Contains(out, "1 waiting on your answers") ||
 		!strings.Contains(out, "0001 Triage: notes · Two goals, then.") ||
@@ -302,12 +309,12 @@ func TestIntakeBeingSorted(t *testing.T) {
 	}
 	// The task lists its Claude sessions; space opens one like enter.
 	key(a, "enter")
-	out = ansi.Strip(a.render())
+	out = plain(a.render())
 	if !strings.Contains(out, "› ▶ Claude running") || !strings.Contains(out, "2 steps") {
 		t.Fatalf("task opened:\n%s", out)
 	}
 	key(a, " ")
-	out = ansi.Strip(a.render())
+	out = plain(a.render())
 	if !strings.Contains(out, "✓ Read the todo list · 2s") || !strings.Contains(out, "› ") ||
 		!strings.Contains(out, "“ Two goals, then.") || strings.Contains(out, "cat docs/todo.md") {
 		t.Fatalf("session opened:\n%s", out)
@@ -323,13 +330,13 @@ func TestIntakeBeingSorted(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.Update(tickMsg{})
-	out = ansi.Strip(a.render())
+	out = plain(a.render())
 	if !regexp.MustCompile(`› \d\d:\d\d:\d\d ▶ Start the poison goal`).MatchString(out) {
 		t.Errorf("the open session didn't follow it:\n%s", out)
 	}
 	// A step opens to its command and output.
 	key(a, "k", "k", "enter")
-	out = ansi.Strip(a.render())
+	out = plain(a.render())
 	if !strings.Contains(out, "cat docs/todo.md") || !strings.Contains(out, "output after 2s") ||
 		!strings.Contains(out, "## Ward") {
 		t.Errorf("step opened:\n%s", out)
@@ -362,7 +369,7 @@ func TestSessionShowsWhyItWasntSettled(t *testing.T) {
 	openGoal(t, a, "set")
 	a.status.detail.sel = len(a.status.detailActions())
 	key(a, "enter")
-	out := ansi.Strip(a.render())
+	out := plain(a.render())
 	if !strings.Contains(out, "✗ Claude completed") ||
 		!strings.Contains(out, "no gate is configured") {
 		t.Errorf("task:\n%s", out)
@@ -386,8 +393,8 @@ func TestIntakeBox(t *testing.T) {
 		t.Fatal("shift+enter sent the intake")
 	}
 	key(a, "enter")
-	if !strings.Contains(ansi.Strip(a.render()), "Sent for triage.") {
-		t.Errorf("intake after sending:\n%s", ansi.Strip(a.render()))
+	if !strings.Contains(plain(a.render()), "Sent for triage.") {
+		t.Errorf("intake after sending:\n%s", plain(a.render()))
 	}
 	typeText(a, "playtest: ward felt too strong")
 	key(a, "enter")
@@ -400,8 +407,8 @@ func TestIntakeBox(t *testing.T) {
 	key(a, "esc")
 	a.Update(tickMsg{})
 	if a.intake.area.Focused() ||
-		!strings.Contains(ansi.Strip(a.render()), "2 waiting for triage") {
-		t.Errorf("intake after sending twice:\n%s", ansi.Strip(a.render()))
+		!strings.Contains(plain(a.render()), "2 waiting for triage") {
+		t.Errorf("intake after sending twice:\n%s", plain(a.render()))
 	}
 }
 
@@ -437,11 +444,11 @@ func TestGoalPageSignsOffAPlan(t *testing.T) {
 	}
 	a, _ := newApp(t, f)
 	openGoal(t, a, g.Name)
-	if out := ansi.Strip(a.render()); !strings.Contains(out, "grilling: the next round is queued") {
+	if out := plain(a.render()); !strings.Contains(out, "grilling: the next round is queued") {
 		t.Errorf("planning goal without a plan:\n%s", out)
 	}
 	key(a, "s")
-	if !strings.Contains(ansi.Strip(a.render()), "no plan to sign off") {
+	if !strings.Contains(plain(a.render()), "no plan to sign off") {
 		t.Error("s signed off a goal without a plan")
 	}
 	p, _ := plan.Parse([]byte("summary: Do it.\nworkstreams: [{name: engine}]\n" +
@@ -450,7 +457,7 @@ func TestGoalPageSignsOffAPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.Update(tickMsg{})
-	out := ansi.Strip(a.render())
+	out := plain(a.render())
 	if !strings.Contains(out, "plan ready to sign off: 1 workstreams, 1 tasks") ||
 		!strings.Contains(out, "› s  Sign off the plan: 1 workstreams, 1 tasks") ||
 		!strings.Contains(out, "[engine] Add ward") {
@@ -458,7 +465,7 @@ func TestGoalPageSignsOffAPlan(t *testing.T) {
 	}
 	key(a, "s")
 	if got, _ := f.store.Goal(g.Name); got.State != queue.GoalPlanning ||
-		!strings.Contains(ansi.Strip(a.render()), "press s again") {
+		!strings.Contains(plain(a.render()), "press s again") {
 		t.Fatal("one s signed the plan off")
 	}
 	key(a, "s")
@@ -575,7 +582,7 @@ func TestGoalPageEndsAndLandsAGoal(t *testing.T) {
 		t.Fatal("one d marked the goal done")
 	}
 	press(t, a, "d")
-	out := ansi.Strip(a.render())
+	out := plain(a.render())
 	if g, _ := f.store.Goal("set"); g.State != queue.GoalDone ||
 		!strings.Contains(
 			out,
@@ -586,13 +593,13 @@ func TestGoalPageEndsAndLandsAGoal(t *testing.T) {
 	press(t, a, "P")
 	press(t, a, "P")
 	if tip, err := bare.RevParse(ctx, "main"); err != nil || s.err != nil ||
-		!strings.Contains(ansi.Strip(a.render()), "pushed, waiting to show up on origin/main") {
+		!strings.Contains(plain(a.render()), "pushed, waiting to show up on origin/main") {
 		t.Errorf(
 			"after two P: main upstream %s, %v, %v\n%s",
 			tip,
 			err,
 			s.err,
-			ansi.Strip(a.render()),
+			plain(a.render()),
 		)
 	}
 }
@@ -600,7 +607,7 @@ func TestGoalPageEndsAndLandsAGoal(t *testing.T) {
 func TestFooterSaysWhenNothingCanStart(t *testing.T) {
 	f := newFixture(t)
 	a, _ := newApp(t, f)
-	if foot := ansi.Strip(a.footer()); !strings.Contains(foot, "no scheduler: reopen diatom") {
+	if foot := plain(a.footer()); !strings.Contains(foot, "no scheduler: reopen diatom") {
 		t.Errorf("no scheduler: %q", foot)
 	}
 	unlock, err := f.store.LockScheduler()
@@ -609,14 +616,14 @@ func TestFooterSaysWhenNothingCanStart(t *testing.T) {
 	}
 	defer unlock()
 	a.Update(tickMsg{})
-	if foot := ansi.Strip(a.footer()); strings.Contains(foot, "⚠") {
+	if foot := plain(a.footer()); strings.Contains(foot, "⚠") {
 		t.Errorf("a healthy scheduler was reported: %q", foot)
 	}
 	if err := f.store.SetStuck("config: unknown setting autoApprove", time.Unix(0, 0)); err != nil {
 		t.Fatal(err)
 	}
 	a.Update(tickMsg{})
-	if foot := ansi.Strip(a.footer()); !strings.Contains(foot, "stuck since") ||
+	if foot := plain(a.footer()); !strings.Contains(foot, "stuck since") ||
 		!strings.Contains(foot, "unknown setting autoApprove") {
 		t.Errorf("a stuck scheduler: %q", foot)
 	}
@@ -667,6 +674,8 @@ func TestGoalStates(t *testing.T) {
 
 func TestShowsCosts(t *testing.T) {
 	f := newFixture(t)
+	// What was spent counts up to now.
+	f.env.Now = time.Now
 	for i, c := range []struct {
 		tasks []string
 		cost  float64
@@ -699,11 +708,11 @@ func TestShowsCosts(t *testing.T) {
 	}
 	a, _ := newApp(t, f)
 	if title := a.View().WindowTitle; title != "diatom · vex · $5.00 today" ||
-		!strings.Contains(ansi.Strip(a.footer()), "$5.00D · $5.00W · $5.00M") {
+		!strings.Contains(plain(a.footer()), "$5.00D · $5.00W · $5.00M") {
 		t.Errorf("titled %q, footer %q", title, a.footer())
 	}
 	openGoal(t, a, "set")
-	out := ansi.Strip(a.render())
+	out := plain(a.render())
 	if !strings.Contains(out, "1 to review · $5.00") ||
 		!strings.Contains(out, "Add ward · $3.38") ||
 		!strings.Contains(out, "Add cards · $1.62") {
@@ -731,8 +740,8 @@ func TestSessionShowsDiatomWrappingUp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	line := ansi.Strip(sv.line(200))
-	steps := ansi.Strip(sv.render(200, 20))
+	line := plain(sv.line(200))
+	steps := plain(sv.render(200, 20))
 	if !strings.Contains(line, "▶ diatom wrapping up") ||
 		!strings.Contains(line, "Running the gate") ||
 		!strings.Contains(steps, "▶ diatom: Running the gate `check`") {
@@ -751,7 +760,7 @@ func TestTaskListsItsDependencies(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := NewStatus(context.Background(), f.env)
-	out := ansi.Strip(tv.render(s, 30))
+	out := plain(tv.render(s, 30))
 	if !strings.Contains(out, "depends on:\n  ○ 0001 [engine] Add ward pending") ||
 		strings.Count(out, "Add ward") != 1 {
 		t.Errorf("task:\n%s", out)
@@ -766,11 +775,11 @@ func TestNoticesStayUntilTheHumanActs(t *testing.T) {
 	for range 3 {
 		a.Update(tickMsg{})
 	}
-	if !strings.Contains(ansi.Strip(a.render()), "main moved on") {
-		t.Fatalf("the notice went with a reload:\n%s", ansi.Strip(a.render()))
+	if !strings.Contains(plain(a.render()), "main moved on") {
+		t.Fatalf("the notice went with a reload:\n%s", plain(a.render()))
 	}
 	key(a, "j")
-	if strings.Contains(ansi.Strip(a.render()), "main moved on") {
+	if strings.Contains(plain(a.render()), "main moved on") {
 		t.Error("the notice stayed after a key")
 	}
 }
@@ -855,7 +864,7 @@ func TestLandingOnAFailingGateGoesToAnAgent(t *testing.T) {
 	openGoal(t, a, "set")
 	press(t, a, "P")
 	press(t, a, "P")
-	out := ansi.Strip(a.render())
+	out := plain(a.render())
 	if !strings.Contains(a.status.flash, "fails the gate on main's tip, so it didn't land") ||
 		!strings.Contains(out, "lint: poison is unused") || strings.Contains(out, "force") {
 		t.Errorf("flash %q, err %v:\n%s", a.status.flash, a.status.err, out)
@@ -894,7 +903,7 @@ func TestALandingInProgress(t *testing.T) {
 		}
 	}
 	openGoal(t, a, "set")
-	out := ansi.Strip(a.render())
+	out := plain(a.render())
 	for _, want := range []string{"▶ merging it into main…", "ok  vex/engine  0.4s"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the page lacks %q:\n%s", want, out)
@@ -905,12 +914,12 @@ func TestALandingInProgress(t *testing.T) {
 	}
 	// Once it ends, the log stays until the human moves on.
 	a.Update(jobMsg{flash: "merged set into main on origin"})
-	if out := ansi.Strip(a.render()); !strings.Contains(out, "ok  vex/engine  0.4s") ||
+	if out := plain(a.render()); !strings.Contains(out, "ok  vex/engine  0.4s") ||
 		!strings.Contains(out, "merged set into main") {
 		t.Errorf("after the job:\n%s", out)
 	}
 	key(a, "j")
-	if strings.Contains(ansi.Strip(a.render()), "ok  vex/engine") {
+	if strings.Contains(plain(a.render()), "ok  vex/engine") {
 		t.Error("the log stayed after a key")
 	}
 }
@@ -939,10 +948,10 @@ func TestGlyphsForAgentsAndGitWork(t *testing.T) {
 	a, _ := newApp(t, f)
 	r := a.status.rows[0]
 	r.questions, r.toReview = 0, 0
-	if g := navGlyph(r, false); g != "🤖" || ansi.Strip(relevant(r)) != "running engine" {
-		t.Errorf("an agent running = %s %q", g, ansi.Strip(relevant(r)))
+	if g := navGlyph(r, false); g != emoji("🤖") || plain(relevant(r)) != "running engine" {
+		t.Errorf("an agent running = %s %q", g, plain(relevant(r)))
 	}
-	if g := navGlyph(r, true); g != "🔀" {
+	if g := navGlyph(r, true); g != emoji("🔀") {
 		t.Errorf("a goal landing = %s", g)
 	}
 	// Its agent has ended, and diatom commits its work.
@@ -950,14 +959,14 @@ func TestGlyphsForAgentsAndGitWork(t *testing.T) {
 	a.reload()
 	r = a.status.rows[0]
 	r.questions, r.toReview = 0, 0
-	if g := navGlyph(r, false); g != "🔀" || ansi.Strip(relevant(r)) != "committing engine" {
-		t.Errorf("committing = %s %q", g, ansi.Strip(relevant(r)))
+	if g := navGlyph(r, false); g != emoji("🔀") || plain(relevant(r)) != "committing engine" {
+		t.Errorf("committing = %s %q", g, plain(relevant(r)))
 	}
-	if !strings.Contains(a.nextCounts(), "🔀 1") || strings.Contains(a.nextCounts(), "🤖") {
+	if !strings.Contains(plain(a.nextCounts()), "🔀 1") || strings.Contains(a.nextCounts(), "🤖") {
 		t.Errorf("next counts = %q", a.nextCounts())
 	}
 	r.activeWork, r.settling = []string{"cards", "engine"}, []string{"engine"}
-	if got := ansi.Strip(relevant(r)); got != "running cards; committing engine" {
+	if got := plain(relevant(r)); got != "running cards; committing engine" {
 		t.Errorf("both = %q", got)
 	}
 	if settling("") {

@@ -71,11 +71,14 @@ ready. The nav down the left lists:
   `2 questions`, `48 hunks to review` or `blocked`. The glyph is 🤖 while an
   agent works on the goal, and 🔀 while diatom commits a session's work or
   lands the goal.
-- **A menu** at the foot: ☑️ Finished lists the finished goals, the latest
-  first, and 📒 the scheduler's log, which `L` opens too.
+- **A menu** at the foot: 💰 Spending shows what each of the last 30 days
+  cost against the budget, and `enter` on a day shows what each goal and
+  session spent on it. ☑️ Finished lists the finished goals, the latest first,
+  and 📒 the scheduler's log, which `L` opens too.
 - **The footer**: what the sessions cost today, over the last 7 days and over
   the last 30, as `$22D · $80W · $200M`, and anything wrong with the
-  scheduler. Clicking it opens the scheduler's log.
+  scheduler. Clicking the cost opens the spending, and the rest the
+  scheduler's log.
 - **The intake box**, at the foot.
 
 The main pane shows what the nav selects. Tab moves between the nav, the parts
@@ -129,8 +132,8 @@ An item of Next has three parts, and tab moves through them:
 1. **What it is about**: the goal's title, where it stands, what it is for, and
    which task asked. `enter` here opens the goal's page, with its brief, plan
    and earlier questions and answers; `esc` comes back.
-2. **The item**: the question or plan in full. `↑`/`↓` scroll it, and `space`
-   scrolls half a page.
+2. **The item**: the question or plan in full. `↑`/`↓` scroll it, `space`
+   scrolls half a page down and `shift+space` half a page up.
 3. **The answer**: `enter` sends it and moves on to the first item left.
 
 For a plan:

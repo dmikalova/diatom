@@ -6,19 +6,26 @@ import (
 	"strings"
 
 	"github.com/bluekeyes/go-gitdiff/gitdiff"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/dmikalova/diatom/internal/review"
 	"github.com/dmikalova/diatom/internal/tui"
 )
 
-// headerLines and footerLines are the rows around the diff.
+// headerLines and footerLines are the rows around the diff, besides the
+// hunk's tasks; taskLines is the most rows the tasks take.
 const (
-	headerLines = 5
+	headerLines = 4
 	footerLines = 2
+	taskLines   = 3
 )
 
 func (m *Model) bodyHeight() int {
-	return max(m.height-headerLines-footerLines-len(m.causes()), 3)
+	tasks := 1
+	if m.cur >= 0 {
+		tasks = len(m.taskLines(m.items[m.cur]))
+	}
+	return max(m.height-headerLines-tasks-footerLines-len(m.causes()), 3)
 }
 
 func (m *Model) render() string {
@@ -33,7 +40,9 @@ func (m *Model) render() string {
 	}
 	it := m.items[m.cur]
 	fmt.Fprintf(&b, "%s%s%s %s\n", sgr(fgCode(yellow)), short(it.Commit), reset, it.Subject)
-	b.WriteString(dim(m.taskLine(it)) + "\n")
+	for _, l := range m.taskLines(it) {
+		b.WriteString(dim(l) + "\n")
+	}
 	fmt.Fprintf(
 		&b,
 		"%s%s%s · hunk %d of %d · %s\n",
@@ -82,12 +91,27 @@ func autoApproved(items []review.Item) int {
 	return n
 }
 
-func (m *Model) taskLine(it review.Item) string {
+// hangIndent is how far the tasks' later lines sit in from their first, so
+// they read as one paragraph.
+const hangIndent = "  "
+
+// taskLines names the tasks that made the hunk's commit, wrapped to the
+// width with the later lines indented, and cut short past taskLines.
+func (m *Model) taskLines(it review.Item) []string {
 	var parts []string
 	for _, t := range it.Tasks {
 		parts = append(parts, fmt.Sprintf("task %s: %s", t.ID, t.Title))
 	}
-	return strings.Join(parts, " · ")
+	w := max(m.width-len(hangIndent), 10)
+	lines := strings.Split(ansi.Wordwrap(strings.Join(parts, " · "), w, ""), "\n")
+	for i := 1; i < len(lines); i++ {
+		lines[i] = hangIndent + lines[i]
+	}
+	if len(lines) > taskLines {
+		lines = lines[:taskLines]
+		lines[taskLines-1] = ansi.Truncate(lines[taskLines-1], w, "") + "…"
+	}
+	return lines
 }
 
 func (m *Model) state(it review.Item) string {

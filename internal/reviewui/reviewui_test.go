@@ -2,6 +2,7 @@ package reviewui
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -388,4 +389,27 @@ func TestNothingToReview(t *testing.T) {
 	}
 	press(m, "a", "u", "v", "j")
 	m.Refresh()
+}
+
+func TestTaskLinesHang(t *testing.T) {
+	m := &Model{width: 40}
+	it := review.Item{}
+	for i, title := range []string{"Catalog types and the shared helper", "Add census reporting",
+		"Catalog the key and turn nodes", "Catalog the damage nodes", "Gate Effect"} {
+		it.Tasks = append(it.Tasks, &queue.Task{ID: fmt.Sprintf("000%d", i+2), Title: title})
+	}
+	lines := m.taskLines(it)
+	if len(lines) != taskLines || !strings.HasPrefix(lines[0], "task 0002") ||
+		!strings.HasPrefix(lines[1], hangIndent) ||
+		!strings.HasSuffix(lines[2], "…") {
+		t.Errorf("task lines = %q", lines)
+	}
+	for _, l := range lines {
+		if ansi.StringWidth(l) > m.width {
+			t.Errorf("%q is wider than %d", l, m.width)
+		}
+	}
+	if got := m.taskLines(review.Item{}); len(got) != 1 {
+		t.Errorf("no tasks = %q", got)
+	}
 }

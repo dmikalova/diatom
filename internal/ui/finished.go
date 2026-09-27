@@ -97,7 +97,7 @@ func (a *App) finishedKey(key string) bool {
 		a.finishedTop = max(a.finishedTop-1, 0)
 	case "j", "down":
 		a.finishedTop++
-	case "pgup":
+	case "pgup", "shift+space":
 		a.finishedTop = max(a.finishedTop-room, 0)
 	case "pgdown", "space", " ":
 		a.finishedTop += room

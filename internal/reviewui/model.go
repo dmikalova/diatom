@@ -196,7 +196,7 @@ func (m *Model) updateKey(msg tea.KeyPressMsg) (*Model, tea.Cmd) {
 		m.move(-1)
 	case "ctrl+d", "pgdown", "space":
 		m.move(max(m.bodyHeight()/2, 1))
-	case "ctrl+u", "pgup":
+	case "ctrl+u", "pgup", "shift+space":
 		m.move(-max(m.bodyHeight()/2, 1))
 	case "c":
 		if m.cur >= 0 && !m.combined {

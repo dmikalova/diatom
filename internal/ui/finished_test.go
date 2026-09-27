@@ -7,8 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/x/ansi"
-
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/runner"
@@ -18,6 +16,8 @@ import (
 
 func TestFinishedGoalsListLatestFirst(t *testing.T) {
 	f := newFixture(t)
+	// What was spent counts up to now.
+	f.env.Now = time.Now
 	for _, g := range []*queue.Goal{
 		{Name: "old", Title: "Old set", Description: "What the old set was for.",
 			State: queue.GoalFinished, Finished: time.Date(2026, 9, 1, 10, 0, 0, 0, time.Local)},
@@ -38,21 +38,21 @@ func TestFinishedGoalsListLatestFirst(t *testing.T) {
 	if es[len(es)-2].kind != entryFinished || es[len(es)-1].kind != entryLog {
 		t.Fatalf("the menu = %+v", es[len(es)-2:])
 	}
-	nav := ansi.Strip(a.renderNav())
+	nav := plain(a.renderNav())
 	rule := strings.Index(nav, "────")
-	if at := strings.Index(nav, "☑️ Finished (2)"); at < rule || at > strings.Index(nav, "📒") {
+	if at := strings.Index(nav, "☑ Finished (2)"); at < rule || at > strings.Index(nav, "📒") {
 		t.Errorf("Finished isn't in the menu above the log:\n%s", nav)
 	}
 	if strings.Contains(nav, "Old set") {
 		t.Errorf("a finished goal is in the nav:\n%s", nav)
 	}
-	if !strings.Contains(ansi.Strip(a.footer()), "$12D") {
-		t.Errorf("the finished goal's cost is gone: %q", ansi.Strip(a.footer()))
+	if !strings.Contains(plain(a.footer()), "$12D") {
+		t.Errorf("the finished goal's cost is gone: %q", plain(a.footer()))
 	}
 	a.sel = len(es) - 2
 	a.show()
 	key(a, "enter")
-	out := ansi.Strip(a.render())
+	out := plain(a.render())
 	newAt, oldAt := strings.Index(out, "New set"), strings.Index(out, "Old set")
 	if newAt < 0 || oldAt < newAt || !strings.Contains(out, "new · finished Sep 20 10:00 · $12") ||
 		!strings.Contains(out, "What the old set was for.") {
@@ -80,7 +80,7 @@ func TestFinishedWithoutATime(t *testing.T) {
 	if len(a.finished) != 1 || a.finished[0].at.IsZero() {
 		t.Errorf("finished = %+v", a.finished)
 	}
-	out := ansi.Strip(a.renderFinished(80, 20))
+	out := plain(a.renderFinished(80, 20))
 	if !strings.Contains(out, "old\n") || !strings.Contains(out, "old · finished") {
 		t.Errorf("a goal without a title:\n%s", out)
 	}
@@ -126,6 +126,8 @@ func TestLandingReviewRanksWithFinishing(t *testing.T) {
 
 func TestSpendingShowsTheBudget(t *testing.T) {
 	f := newFixture(t)
+	// What was spent counts up to now.
+	f.env.Now = time.Now
 	write(t, filepath.Join(f.repo, ".diatom", "config.toml"), "[budget]\nday = 1\nmonth = 100\n")
 	if err := recordSession(f.store.SessionsDir("set"), time.Now(), "mechanical",
 		runner.Result{Usage: runner.Usage{CostUSD: 2}}); err != nil {
@@ -135,7 +137,7 @@ func TestSpendingShowsTheBudget(t *testing.T) {
 	foot := a.footer()
 	if !strings.Contains(foot, tui.Color("$2.00D", tui.Red)) ||
 		strings.Contains(foot, tui.Color("$2.00M", tui.Red)) ||
-		!strings.Contains(ansi.Strip(foot), "today's budget is spent: nothing new starts") {
+		!strings.Contains(plain(foot), "today's budget is spent: nothing new starts") {
 		t.Errorf("footer = %q", foot)
 	}
 	if money(220.4) != "$220" || money(3.456) != "$3.46" {

@@ -6,8 +6,10 @@
 package spend
 
 import (
+	"cmp"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -19,9 +21,12 @@ import (
 // Session is what one session has cost so far, the tasks it worked on, and
 // that cost spread over the days it was spent.
 type Session struct {
-	USD   float64
-	Tasks []string
-	Parts []Part
+	// ID, Workstream and Kind are the session's, from its spec.
+	ID, Workstream string
+	Kind           queue.Kind
+	USD            float64
+	Tasks          []string
+	Parts          []Part
 	// Ended is set once the agent's last run has ended.
 	Ended bool
 }
@@ -78,7 +83,10 @@ func (t *Tally) Session(dir string) (Session, bool) {
 		return Session{}, false
 	}
 	events, _ := session.ReadEvents(dir)
-	c = Session{Tasks: spec.Tasks, Parts: spread(runs, events), Ended: ended}
+	c = Session{
+		ID: filepath.Base(dir), Workstream: spec.Workstream, Kind: spec.Kind,
+		Tasks: spec.Tasks, Parts: spread(runs, events), Ended: ended,
+	}
 	for _, r := range runs {
 		c.USD += r.CostUSD
 	}
@@ -151,30 +159,104 @@ type Totals struct{ Day, Week, Month float64 }
 // Repo adds up what every goal's sessions cost in the days up to now: the
 // finished goals', and triage's, too.
 func (t *Tally) Repo(s *queue.Store, now time.Time) Totals {
-	entries, _ := os.ReadDir(filepath.Join(s.Root, "goals"))
+	return Sum(t.Days(s, now), now)
+}
+
+// Sum adds up days into what was spent today, over the last 7 days and over
+// the last 30.
+func Sum(days []Day, now time.Time) Totals {
 	midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	week, month := midnight.AddDate(0, 0, -6), midnight.AddDate(0, 0, -29)
+	week := midnight.AddDate(0, 0, -6)
 	var tot Totals
+	for _, d := range days {
+		tot.Month += d.USD
+		if !d.Date.Before(week) {
+			tot.Week += d.USD
+		}
+		if d.Date.Equal(midnight) {
+			tot.Day += d.USD
+		}
+	}
+	return tot
+}
+
+// Day is what the repo's sessions spent on one day, from its local
+// midnight, and what each goal's spent, the most first.
+type Day struct {
+	Date  time.Time
+	USD   float64
+	Goals []GoalDay
+}
+
+// GoalDay is what one goal's sessions spent on a day, and each session's,
+// the most first.
+type GoalDay struct {
+	Goal     string
+	USD      float64
+	Sessions []SessionDay
+}
+
+// SessionDay is what one session spent on a day.
+type SessionDay struct {
+	Session Session
+	USD     float64
+}
+
+// Days is what the repo's sessions spent on each of the last 30 days up to
+// now that they spent anything, the latest first.
+func (t *Tally) Days(s *queue.Store, now time.Time) []Day {
+	midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	month := midnight.AddDate(0, 0, -29)
+	// Each day is keyed by when its midnight is, in seconds.
+	byDay := map[int64]map[string]*GoalDay{}
+	entries, _ := os.ReadDir(filepath.Join(s.Root, "goals"))
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
 		for _, c := range t.Goal(s, e.Name()) {
+			spent := map[int64]float64{}
 			for _, p := range c.Parts {
-				if p.At.Before(month) {
-					continue
+				at := p.At.In(now.Location())
+				day := time.Date(at.Year(), at.Month(), at.Day(), 0, 0, 0, 0, now.Location())
+				if !day.Before(month) && !day.After(midnight) {
+					spent[day.Unix()] += p.USD
 				}
-				tot.Month += p.USD
-				if !p.At.Before(week) {
-					tot.Week += p.USD
+			}
+			for day, usd := range spent {
+				goals := byDay[day]
+				if goals == nil {
+					goals = map[string]*GoalDay{}
+					byDay[day] = goals
 				}
-				if !p.At.Before(midnight) {
-					tot.Day += p.USD
+				g := goals[e.Name()]
+				if g == nil {
+					g = &GoalDay{Goal: e.Name()}
+					goals[e.Name()] = g
 				}
+				g.USD += usd
+				g.Sessions = append(g.Sessions, SessionDay{Session: c, USD: usd})
 			}
 		}
 	}
-	return tot
+	days := make([]Day, 0, len(byDay))
+	for date, goals := range byDay {
+		d := Day{Date: time.Unix(date, 0).In(now.Location())}
+		for _, g := range goals {
+			slices.SortStableFunc(
+				g.Sessions,
+				func(a, b SessionDay) int { return cmp.Compare(b.USD, a.USD) },
+			)
+			d.USD += g.USD
+			d.Goals = append(d.Goals, *g)
+		}
+		slices.SortFunc(d.Goals, func(a, b GoalDay) int {
+			return cmp.Or(cmp.Compare(b.USD, a.USD), cmp.Compare(a.Goal, b.Goal))
+		})
+		days = append(days, d)
+	}
+	slices.SortFunc(days, func(a, b Day) int { return b.Date.Compare(a.Date) })
+	return days
 }
 
 // Scale is one of the budget's: the letter the window marks it with, and

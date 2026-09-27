@@ -40,7 +40,7 @@ func TestAppNav(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, _ := newApp(t, f)
-	out := ansi.Strip(a.render())
+	out := plain(a.render())
 	for _, want := range []string{"⏩ Next", "➕ Intake", "⏳ Implement the next set", "    1 question",
 		"$0.00D · $0.00W · $0.00M", "─ intake ─"} {
 		if !strings.Contains(out, want) {
@@ -58,9 +58,9 @@ func TestAppNav(t *testing.T) {
 	}
 	// Moving down the nav shows each entry in the main pane.
 	key(a, "j", "j")
-	if e := a.selected(); e.kind != entryGoal || !strings.Contains(ansi.Strip(a.render()),
+	if e := a.selected(); e.kind != entryGoal || !strings.Contains(plain(a.render()),
 		"‹ Implement the next set") {
-		t.Errorf("selected %+v:\n%s", e, ansi.Strip(a.render()))
+		t.Errorf("selected %+v:\n%s", e, plain(a.render()))
 	}
 	// Into the goal, down its menu, and back out to the nav.
 	key(a, "enter")
@@ -119,7 +119,7 @@ func TestAppQuitSuspends(t *testing.T) {
 	}
 	_, cmd := a.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	if !*stopped || !a.quitting || cmd == nil ||
-		!strings.Contains(ansi.Strip(a.render()), "Suspending") {
+		!strings.Contains(plain(a.render()), "Suspending") {
 		t.Fatalf("ctrl+c: stopped %v, quitting %v", *stopped, a.quitting)
 	}
 	if _, ok := cmd().(stoppedMsg); !ok {
@@ -167,8 +167,8 @@ func TestAppViewer(t *testing.T) {
 	f := newFixture(t)
 	a := NewApp(context.Background(), f.env, Scheduler{Viewer: "diatom is open elsewhere"})
 	a.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
-	if out := ansi.Strip(a.footer()); !strings.Contains(out, "viewer: diatom is open elsewhere") {
-		t.Errorf("a viewer doesn't say so:\n%s", ansi.Strip(a.render()))
+	if out := plain(a.footer()); !strings.Contains(out, "viewer: diatom is open elsewhere") {
+		t.Errorf("a viewer doesn't say so:\n%s", plain(a.render()))
 	}
 	if _, cmd := a.Update(tea.KeyPressMsg{Code: 'q', Text: "q"}); cmd == nil || a.quitting {
 		t.Error("a viewer doesn't quit straight away")
@@ -227,17 +227,18 @@ func TestAppNavLooksAndWraps(t *testing.T) {
 	// The selected entry has a green bar down its left, not inverse video.
 	out := a.render()
 	bar := tui.Color("▌", tui.Accent)
-	if !strings.Contains(out, bar+tui.SGR(1)+"⏩ Next") || strings.Contains(out, tui.SGR(7)) {
+	if !strings.Contains(out, bar+emoji("⏩")+tui.SGR(1)+" Next") ||
+		strings.Contains(out, tui.SGR(7)) {
 		t.Errorf("the selected entry:\n%q", out)
 	}
-	// A selected goal's title is bold, past its emoji's reset.
+	// A selected goal's title is bold, and its emoji isn't.
 	key(a, "j", "j")
-	if out := a.render(); !strings.Contains(out, tui.Reset+tui.SGR(1)+" set") {
+	if out := a.render(); !strings.Contains(out, bar+emoji("⏳")+tui.SGR(1)+" set") {
 		t.Errorf("the selected goal's title isn't bold:\n%q", out)
 	}
 	// The intake box's rule joins the border, green beside the box.
 	key(a, "i")
-	lines := strings.Split(ansi.Strip(a.render()), "\n")
+	lines := strings.Split(plain(a.render()), "\n")
 	if row := lines[a.labelRow]; !strings.Contains(row, "─┤") {
 		t.Errorf("the intake rule = %q", row)
 	}
@@ -245,3 +246,7 @@ func TestAppNavLooksAndWraps(t *testing.T) {
 		t.Error("the border beside the intake box isn't green")
 	}
 }
+
+// plain is what s shows, without its colors, or the selector that asks for
+// an emoji's color form.
+func plain(s string) string { return strings.ReplaceAll(ansi.Strip(s), "️", "") }

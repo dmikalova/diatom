@@ -318,6 +318,8 @@ func (n *Next) key(msg tea.KeyPressMsg) nextKey {
 			n.scrollBy(-1)
 		case "space", " ":
 			n.scrollBy(max(n.room/2, 1))
+		case "shift+space":
+			n.scrollBy(-max(n.room/2, 1))
 		case "pgdown":
 			n.scrollBy(max(n.room-1, 1))
 		case "pgup":

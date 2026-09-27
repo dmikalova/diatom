@@ -282,7 +282,7 @@ func (sv *sessionView) update(key string) bool {
 			sv.scroll = max(sv.scroll-1, 0)
 		case "pgdown", "space", " ":
 			sv.scroll += 10
-		case "pgup":
+		case "pgup", "shift+space":
 			sv.scroll = max(sv.scroll-10, 0)
 		}
 		return false

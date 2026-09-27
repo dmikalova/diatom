@@ -14,7 +14,7 @@ func TestAppHidesAndResizesTheNav(t *testing.T) {
 	f := newFixture(t)
 	a, _ := newApp(t, f)
 	key(a, "h")
-	out := ansi.Strip(a.render())
+	out := plain(a.render())
 	if strings.Contains(out, "⏩ Next") || a.focus != partMain {
 		t.Errorf("h left the nav up, focus %d:\n%s", a.focus, out)
 	}
@@ -56,7 +56,7 @@ func TestAppShowsTheLog(t *testing.T) {
 	)
 	a, _ := newApp(t, f)
 	key(a, "L")
-	if out := ansi.Strip(a.render()); !strings.Contains(out, "Scheduler log") ||
+	if out := plain(a.render()); !strings.Contains(out, "Scheduler log") ||
 		!strings.Contains(out, `msg="planning failed"`) || a.focus != partMain {
 		t.Errorf("L shows:\n%s", out)
 	}
@@ -65,7 +65,7 @@ func TestAppShowsTheLog(t *testing.T) {
 		t.Errorf("esc from the log selected %+v, focus %d", a.selected(), a.focus)
 	}
 	// It is in the menu at the nav's foot, and the footer opens it too.
-	if out := ansi.Strip(a.render()); !strings.Contains(out, "📒 Scheduler log") {
+	if out := plain(a.render()); !strings.Contains(out, "📒 Scheduler log") {
 		t.Errorf("the nav has no log:\n%s", out)
 	}
 	a.sel = 0
@@ -127,7 +127,7 @@ func TestAppRestartsOnAnUpdate(t *testing.T) {
 	f := newFixture(t)
 	a, stopped := newApp(t, f)
 	a.Update(UpdateMsg{Bin: "/bin/diatom", Why: "a new build is installed"})
-	if foot := ansi.Strip(
+	if foot := plain(
 		a.footer(),
 	); !strings.Contains(
 		foot,
@@ -150,9 +150,9 @@ func TestAppReviews(t *testing.T) {
 		t.Fatalf("actions = %+v", acts)
 	}
 	key(a, "enter")
-	if out := ansi.Strip(a.render()); a.review == nil || !strings.Contains(out, "ward.go") ||
+	if out := plain(a.render()); a.review == nil || !strings.Contains(out, "ward.go") ||
 		!strings.Contains(out, "‹ set · set") {
-		t.Fatalf("the review isn't open:\n%s", ansi.Strip(a.render()))
+		t.Fatalf("the review isn't open:\n%s", plain(a.render()))
 	}
 	key(a, "esc")
 	if a.review != nil || a.status.detail == nil {
@@ -166,13 +166,13 @@ func TestAppReviews(t *testing.T) {
 	if it := a.next.shown(); it == nil || it.kind != itemReview {
 		t.Fatalf("Next shows %+v", it)
 	}
-	if out := ansi.Strip(a.render()); !strings.Contains(out, "ward.go") ||
+	if out := plain(a.render()); !strings.Contains(out, "ward.go") ||
 		!strings.Contains(out, "a approve") {
 		t.Errorf("Next's review:\n%s", out)
 	}
 	key(a, "a")
-	if !strings.Contains(ansi.Strip(a.render()), "Nothing needs you") {
-		t.Errorf("after approving the last hunk:\n%s", ansi.Strip(a.render()))
+	if !strings.Contains(plain(a.render()), "Nothing needs you") {
+		t.Errorf("after approving the last hunk:\n%s", plain(a.render()))
 	}
 }
 

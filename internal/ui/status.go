@@ -118,10 +118,12 @@ type Status struct {
 
 	// hunks caches each commit's hunk count; commits never change.
 	hunks map[string]int
-	// spent reads what sessions cost, and totals is what the repo's cost
-	// over each of budget's scales, as of the last reload.
+	// spent reads what sessions cost, and days and totals are what the
+	// repo's cost on each day and over each of budget's scales, as of the
+	// last reload.
 	spent  *spend.Tally
 	totals spend.Totals
+	days   []spend.Day
 	budget config.Budget
 
 	// confirm names the key and goal a first press asked to confirm, such
@@ -166,7 +168,8 @@ func (s *Status) reload() {
 	s.loadErr = nil
 	store := s.env.Store
 	s.health = health(store)
-	s.totals = s.spent.Repo(store, s.env.now())
+	s.days = s.spent.Days(store, s.env.now())
+	s.totals = spend.Sum(s.days, s.env.now())
 	if cfg, err := config.Load(store.Repo(), s.env.Paths); err == nil {
 		s.budget = cfg.Budget
 	}

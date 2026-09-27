@@ -6,7 +6,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 
 	"github.com/dmikalova/diatom/internal/intake"
 	"github.com/dmikalova/diatom/internal/plan"
@@ -37,7 +36,7 @@ func TestNextOrdersPlansQuestionsFinishReview(t *testing.T) {
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("items = %v, want %v", got, want)
 	}
-	out := ansi.Strip(a.render())
+	out := plain(a.render())
 	// Next counts what waits across the goals, one kind at a time.
 	if !strings.Contains(out, "⏩ Next") || !strings.Contains(out, "   📝 1  ❓ 2  🔎 1") {
 		t.Errorf("the nav doesn't count Next's items:\n%s", out)
@@ -58,7 +57,7 @@ func TestNextAnswersAndMovesOn(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, _ := newApp(t, f)
-	out := ansi.Strip(a.render())
+	out := plain(a.render())
 	for _, want := range []string{"Implement the next set", " · set",
 		"Every card of the next set, playable.", "Asked by task 0001: Add ward",
 		"enter opens the goal", "Does ward stack?", "It matters for poison."} {
@@ -83,8 +82,8 @@ func TestNextAnswersAndMovesOn(t *testing.T) {
 		a.next.answer.Value() != "" {
 		t.Errorf("after answering: %+v, area %d", it, a.next.area)
 	}
-	if !strings.Contains(ansi.Strip(a.render()), "1 earlier answers") {
-		t.Errorf("the next question doesn't count the answer:\n%s", ansi.Strip(a.render()))
+	if !strings.Contains(plain(a.render()), "1 earlier answers") {
+		t.Errorf("the next question doesn't count the answer:\n%s", plain(a.render()))
 	}
 	key(a, "tab")
 	typeText(a, "Yes")
@@ -146,11 +145,16 @@ func TestNextScrollsTheQuestion(t *testing.T) {
 	if a.next.scroll != a.next.room/2 {
 		t.Errorf("space scrolled to %d, room %d", a.next.scroll, a.next.room)
 	}
+	key(a, "shift+space")
+	if a.next.scroll != 0 {
+		t.Errorf("shift+space scrolled back to %d", a.next.scroll)
+	}
+	key(a, " ")
 	a.Update(tea.MouseWheelMsg{X: 60, Y: 12, Button: tea.MouseWheelDown})
 	for range 20 {
 		key(a, " ")
 	}
-	if out := ansi.Strip(a.render()); !strings.Contains(out, "the end") ||
+	if out := plain(a.render()); !strings.Contains(out, "the end") ||
 		!strings.Contains(out, "more above") {
 		t.Errorf("scrolled to the end:\n%s", out)
 	}
@@ -235,7 +239,7 @@ func TestNextOffersToFinishAGoal(t *testing.T) {
 		t.Fatalf("items = %+v", a.next.items)
 	}
 	a.next.cur = finish.id()
-	out := ansi.Strip(a.render())
+	out := plain(a.render())
 	for _, want := range []string{"All its work is done and reviewed", "Finishing unblocks: poison",
 		"› P  Merge it into main", "F  Open its stacked pull requests",
 		"d  Mark it done, to land later"} {
@@ -293,7 +297,7 @@ func TestNextSendsAPlanBack(t *testing.T) {
 		t.Errorf("after sending the plan back, Next shows %+v", it)
 	}
 	openGoal(t, a, "hex")
-	if out := ansi.Strip(a.render()); !strings.Contains(out, "plan sent back with your changes") {
+	if out := plain(a.render()); !strings.Contains(out, "plan sent back with your changes") {
 		t.Errorf("the goal's page:\n%s", out)
 	}
 }

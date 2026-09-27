@@ -74,7 +74,7 @@ func (a *App) logKey(key string) bool {
 		a.logBack++
 	case "j", "down":
 		a.logBack = max(a.logBack-1, 0)
-	case "pgup":
+	case "pgup", "shift+space":
 		a.logBack += room
 	case "pgdown", "space", " ":
 		a.logBack = max(a.logBack-room, 0)

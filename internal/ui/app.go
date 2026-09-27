@@ -57,8 +57,10 @@ const (
 	entryNext entryKind = iota
 	entryIntake
 	entryGoal
-	// entryFinished lists the finished goals, and entryLog is the
-	// scheduler's log, both in the menu at the nav's foot.
+	// entrySpending breaks down what sessions cost by day, entryFinished
+	// lists the finished goals, and entryLog is the scheduler's log, all in
+	// the menu at the nav's foot.
+	entrySpending
 	entryFinished
 	entryLog
 )
@@ -103,6 +105,10 @@ type App struct {
 	// finishedTop how far down their list is scrolled.
 	finished    []finishedGoal
 	finishedTop int
+	// spendSel is the day the spending selects, spendOpen set while it is
+	// opened to its goals, and spendTop how far that is scrolled.
+	spendSel, spendTop int
+	spendOpen          bool
 	// quitting is set once the sessions are suspending, and atOnce when the
 	// human quit without waiting for them.
 	quitting, atOnce bool
@@ -202,6 +208,7 @@ func (a *App) entries() []entry {
 		}
 		es = append(es, entry{kind: entryGoal, row: r})
 	}
+	es = append(es, entry{kind: entrySpending})
 	if len(a.finished) > 0 {
 		es = append(es, entry{kind: entryFinished})
 	}
@@ -221,6 +228,7 @@ func (a *App) show() {
 	}
 	a.shown = e.key()
 	a.status.detail, a.review, a.logBack, a.finishedTop = nil, nil, 0, 0
+	a.spendSel, a.spendTop, a.spendOpen = 0, 0, false
 	a.clearNotices()
 	if e.row != nil {
 		a.status.openDetail(e.row)
@@ -511,6 +519,11 @@ func (a *App) mainKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return a, a.setFocus(partNav)
 		}
 		return a, nil
+	case entrySpending:
+		if a.spendingKey(key) {
+			return a, a.setFocus(partNav)
+		}
+		return a, nil
 	}
 	if rv := a.review; rv != nil {
 		if back && !rv.Editing() {
@@ -651,6 +664,9 @@ func (a *App) click(m tea.Mouse) (tea.Model, tea.Cmd) {
 	case row == rowFooter:
 		a.openLog()
 		return a, a.setFocus(partMain)
+	case row == rowSpend:
+		a.openEntry(entrySpending)
+		return a, a.setFocus(partMain)
 	case row >= 0:
 		a.sel = row
 		a.show()
@@ -659,9 +675,12 @@ func (a *App) click(m tea.Mouse) (tea.Model, tea.Cmd) {
 }
 
 // openLog selects the scheduler's log.
-func (a *App) openLog() {
+func (a *App) openLog() { a.openEntry(entryLog) }
+
+// openEntry selects the menu's entry of kind.
+func (a *App) openEntry(kind entryKind) {
 	for i, e := range a.entries() {
-		if e.kind == entryLog {
+		if e.kind == kind {
 			a.sel = i
 		}
 	}
@@ -794,13 +813,14 @@ const (
 	rowNone   = -1
 	rowFooter = -2
 	rowIntake = -3
+	rowSpend  = -4
 )
 
 // navLayout is the nav's parts: the list that scrolls, the menu at its foot,
-// and under that the footer and the intake box's rule.
+// and under that the footer and the intake box's rule, each line with what
+// clicking it opens.
 type navLayout struct {
-	list, menu []navLine
-	foot       []string
+	list, menu, foot []navLine
 }
 
 // navLines lays the nav out.
@@ -808,7 +828,7 @@ func (a *App) navLines() navLayout {
 	lay := navLayout{menu: []navLine{{text: tui.Dim(strings.Repeat("─", a.nw())), entry: rowNone}}}
 	es := a.entries()
 	for i, e := range es {
-		if e.kind == entryFinished || e.kind == entryLog {
+		if e.kind == entrySpending || e.kind == entryFinished || e.kind == entryLog {
 			for _, l := range a.navEntry(i, e) {
 				lay.menu = append(lay.menu, navLine{text: l, entry: i})
 			}
@@ -821,8 +841,16 @@ func (a *App) navLines() navLayout {
 			lay.list = append(lay.list, navLine{text: l, entry: i})
 		}
 	}
-	for l := range strings.SplitSeq(ansi.Wordwrap(a.footer(), a.nw()-1, ""), "\n") {
-		lay.foot = append(lay.foot, " "+l)
+	for _, part := range []struct {
+		text string
+		row  int
+	}{{strings.Join(a.spending(), "\n"), rowSpend}, {strings.Join(a.health(), "\n"), rowFooter}} {
+		if part.text == "" {
+			continue
+		}
+		for l := range strings.SplitSeq(ansi.Wordwrap(part.text, a.nw()-1, ""), "\n") {
+			lay.foot = append(lay.foot, navLine{text: " " + l, entry: part.row})
+		}
 	}
 	label := "─ intake "
 	label += strings.Repeat("─", max(a.nw()-ansi.StringWidth(label), 0))
@@ -831,7 +859,7 @@ func (a *App) navLines() navLayout {
 	} else {
 		label = tui.Dim(label)
 	}
-	lay.foot = append(lay.foot, label)
+	lay.foot = append(lay.foot, navLine{text: label, entry: rowIntake})
 	return lay
 }
 
@@ -866,11 +894,10 @@ func (a *App) renderNav() string {
 		out, a.rowEntry = append(out, l.text), append(a.rowEntry, l.entry)
 	}
 	for i, l := range lay.foot {
-		row := rowFooter
 		if i == len(lay.foot)-1 {
-			row, a.labelRow = rowIntake, len(out)
+			a.labelRow = len(out)
 		}
-		out, a.rowEntry = append(out, l), append(a.rowEntry, row)
+		out, a.rowEntry = append(out, l.text), append(a.rowEntry, l.entry)
 	}
 	for _, l := range box {
 		out, a.rowEntry = append(out, l), append(a.rowEntry, rowIntake)
@@ -885,9 +912,9 @@ func (a *App) navEntry(i int, e entry) []string {
 	var glyph, name, under string
 	switch e.kind {
 	case entryNext:
-		glyph, name, under = "⏩", "Next", a.nextCounts()
+		glyph, name, under = emoji("⏩"), "Next", a.nextCounts()
 	case entryIntake:
-		glyph, name = "➕", "Intake"
+		glyph, name = emoji("➕"), "Intake"
 		if e.row != nil {
 			under = relevant(*e.row)
 		}
@@ -900,30 +927,37 @@ func (a *App) navEntry(i int, e entry) []string {
 		if a.status.busyGoal == e.row.goal.Name {
 			under = tui.Color("▶ "+a.status.busy+"…", tui.Green)
 		}
+	case entrySpending:
+		glyph, name = emoji("💰"), "Spending"
 	case entryFinished:
-		glyph, name = "☑️", fmt.Sprintf("Finished (%d)", len(a.finished))
+		glyph, name = emoji("☑️"), fmt.Sprintf("Finished (%d)", len(a.finished))
 	case entryLog:
-		glyph, name = "📒", "Scheduler log"
+		glyph, name = emoji("📒"), "Scheduler log"
 	}
 	// Glyphs take two columns, as an emoji does.
 	glyph += strings.Repeat(" ", max(2-ansi.StringWidth(glyph), 0))
-	lines := []string{glyph + " " + ansi.Truncate(name, max(a.nw()-5, 4), "…")}
+	title := " " + ansi.Truncate(name, max(a.nw()-5, 4), "…")
+	lead := " "
+	if i == a.sel {
+		// The selected entry has a bar down its left, and its title is bold:
+		// it stays lit while the main pane shows it. The glyph isn't bold,
+		// which would draw an emoji from the text font.
+		lead, title = tui.Color("▌", tui.Accent), boldAll(title)
+	}
+	lines := []string{lead + glyph + title}
 	if under != "" {
-		lines = append(lines, "   "+ansi.Truncate(under, max(a.nw()-5, 4), "…"))
-	}
-	if i != a.sel {
-		for j, l := range lines {
-			lines[j] = " " + l
-		}
-		return lines
-	}
-	// The selected entry is bold, with a bar down its left: it stays lit
-	// while the main pane shows it.
-	bar := tui.Color("▌", tui.Accent)
-	for j, l := range lines {
-		lines[j] = bar + boldAll(l)
+		lines = append(lines, lead+"   "+ansi.Truncate(under, max(a.nw()-5, 4), "…"))
 	}
 	return lines
+}
+
+// emoji asks for s in its color emoji form, as a terminal otherwise may draw
+// it from the text font.
+func emoji(s string) string {
+	if strings.HasSuffix(s, "\uFE0F") {
+		return s
+	}
+	return s + "\uFE0F"
 }
 
 // boldAll renders s bold throughout, the colors in it included: each of its
@@ -959,7 +993,7 @@ func (a *App) nextCounts() string {
 		n     int
 	}{{"📝", plans}, {"❓", questions}, {"📩", finishing}, {"🔎", hunks}, {"🔗", blocked}} {
 		if c.n > 0 {
-			parts = append(parts, c.emoji+" "+strconv.Itoa(c.n))
+			parts = append(parts, emoji(c.emoji)+" "+strconv.Itoa(c.n))
 		}
 	}
 	if len(parts) == 0 {
@@ -969,10 +1003,10 @@ func (a *App) nextCounts() string {
 	// work, a landing's included.
 	agents, merging := a.running()
 	if agents > 0 {
-		parts = append(parts, "🤖 "+strconv.Itoa(agents))
+		parts = append(parts, emoji("🤖")+" "+strconv.Itoa(agents))
 	}
 	if merging > 0 {
-		parts = append(parts, "🔀 "+strconv.Itoa(merging))
+		parts = append(parts, emoji("🔀")+" "+strconv.Itoa(merging))
 	}
 	return strings.Join(parts, "  ")
 }
@@ -1022,7 +1056,7 @@ func relevant(r goalRow) string {
 		}
 		return tui.Color(strings.Join(parts, "; "), c)
 	case name == "queued":
-		return tui.Color(fmt.Sprintf("%d ready, waiting for a session", r.ready), c)
+		return tui.Color("queued", c)
 	case r.goal.State == queue.GoalPlanning:
 		return planningLine(r)
 	case r.goal.State == queue.GoalDone:
@@ -1051,20 +1085,20 @@ func navGlyph(r goalRow, landing bool) string {
 	name, c := goalStatus(r)
 	switch {
 	case landing:
-		return "🔀"
+		return emoji("🔀")
 	case len(r.activeWork) > len(r.settling):
-		return "🤖"
+		return emoji("🤖")
 	case len(r.settling) > 0:
-		return "🔀"
+		return emoji("🔀")
 	}
 	g, ok := map[string]string{
 		"active": "🟢", "queued": "⏳", "blocked": "🔗", "reviewing": "🔎", "ready to finish": "📩",
 		"planning": "📝", "parked": "⏸️", "done": "✅",
 	}[name]
 	if !ok {
-		g = "·"
+		return tui.Color("·", c)
 	}
-	return tui.Color(g, c)
+	return emoji(g)
 }
 
 // running counts the agents running, and the git work under way: the
@@ -1109,7 +1143,12 @@ func (a *App) spending() []string {
 // footer is the repo's health, a line for each thing: what it cost, and the
 // scheduler.
 func (a *App) footer() string {
-	parts := a.spending()
+	return strings.Join(append(a.spending(), a.health()...), "\n")
+}
+
+// health is how the scheduler is, and what else the footer says.
+func (a *App) health() []string {
+	var parts []string
 	switch {
 	case a.quitting:
 		parts = append(parts, tui.Color("suspending…", tui.Yellow))
@@ -1124,7 +1163,7 @@ func (a *App) footer() string {
 	if a.flash != "" {
 		parts = append(parts, tui.Color(a.flash, tui.Cyan))
 	}
-	return strings.Join(parts, "\n")
+	return parts
 }
 
 func (a *App) renderMain() string {
@@ -1157,6 +1196,8 @@ func (a *App) renderMain() string {
 		return a.status.renderDetail()
 	case entryFinished:
 		return a.renderFinished(a.mainWidth(), a.height)
+	case entrySpending:
+		return a.renderSpending(a.mainWidth(), a.height)
 	}
 	return ""
 }
@@ -1172,6 +1213,8 @@ func (a *App) onScreen() (goal, context string) {
 		return "", "the intake, with what triage is still sorting"
 	case entryFinished:
 		return "", "the list of finished goals"
+	case entrySpending:
+		return "", "what the sessions spent, day by day"
 	case entryGoal:
 		g := e.row.goal
 		context = fmt.Sprintf("goal %s (%q)", g.Name, g.Title)

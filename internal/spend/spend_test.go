@@ -159,3 +159,37 @@ func TestSuspendedRunsCount(t *testing.T) {
 		t.Error("a broken state has a cost")
 	}
 }
+
+func TestDays(t *testing.T) {
+	s := queue.Open(t.TempDir())
+	now := time.Date(2026, 9, 27, 15, 0, 0, 0, time.Local)
+	ended(t, s, "set", "a", now.Add(-time.Hour), 10, 0, true)
+	ended(t, s, "set", "b", now.Add(-2*time.Hour), 30, 0, true)
+	ended(t, s, "done", "c", now.Add(-3*time.Hour), 5, 0, true)
+	ended(t, s, "done", "d", now.AddDate(0, 0, -3), 7, 0, true)
+	ended(t, s, "done", "e", now.AddDate(0, 0, -40), 9, 0, true)
+	days := New().Days(s, now)
+	if len(days) != 2 || days[0].Date.Day() != 27 || days[1].Date.Day() != 24 {
+		t.Fatalf("days = %+v", days)
+	}
+	today := days[0]
+	if fmt.Sprintf("%.0f", today.USD) != "45" || len(today.Goals) != 2 ||
+		today.Goals[0].Goal != "set" || today.Goals[1].Goal != "done" {
+		t.Fatalf("today = %+v", today)
+	}
+	if ss := today.Goals[0].Sessions; len(ss) != 2 || ss[0].Session.ID != "b" ||
+		ss[1].Session.ID != "a" {
+		t.Errorf("today's sessions of set = %+v", ss)
+	}
+	if tot := Sum(
+		days,
+		now,
+	); fmt.Sprintf(
+		"%.0f %.0f %.0f",
+		tot.Day,
+		tot.Week,
+		tot.Month,
+	) != "45 52 52" {
+		t.Errorf("sum = %+v", tot)
+	}
+}
