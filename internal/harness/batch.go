@@ -66,8 +66,9 @@ func (h *Harness) runBatch(ctx context.Context, repo Repo, b schedule.Batch) err
 		// Without a gate nothing can be checked or committed, so a session
 		// would only be thrown away.
 		return h.askAll(s, g.Name, b.Tasks, "No gate is configured for this repo, so diatom can't "+
-			"check or commit any work. Set `gate` in .diatom/config.yaml to the command every commit "+
-			"must pass, such as `gate: mage ci:check`, then answer this to carry on.")
+			"check or commit any work. Set `gate` in .diatom/config.toml to the command every commit "+
+			"must pass, such as `gate = \"mage ci:check\"`, or set one for every repo of its kind "+
+			"under `[gates]` in ~/.config/diatom/config.toml, then answer this to carry on.")
 	}
 	main := git.Repo{Dir: s.Repo()}
 	wt := git.Repo{Dir: s.WorktreeDir(g.Name, b.Workstream)}
@@ -283,7 +284,7 @@ func (h *Harness) newSession(
 	spec := session.Spec{
 		ID: id, Repo: s.Repo(), Goal: g.Name, Workstream: b.Workstream, Worktree: wt.Dir,
 		Kind: b.Kind, Profile: b.Profile, Effort: b.Effort,
-		Gate: cfg.Gate, GateAttempts: cfg.GateAttempts, GateTimeout: cfg.CommandTimeout,
+		Gate: cfg.Gate, GateAttempts: cfg.GateAttempts, GateTimeout: cfg.GateTimeout,
 	}
 	for _, t := range b.Tasks {
 		spec.Tasks = append(spec.Tasks, t.ID)

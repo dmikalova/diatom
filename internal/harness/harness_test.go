@@ -128,7 +128,7 @@ func newFixture(t *testing.T) *fixture {
 	if _, err := main.Commit(ctx, "chore: start"); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, repo, ".diatom/config.yaml", "gate: check\nmaxSessions: 2\n")
+	writeFile(t, repo, ".diatom/config.toml", "gate = \"check\"\nmaxSessions = 2\n")
 
 	store := queue.Open(repo)
 	if err := store.CreateGoal(
@@ -631,14 +631,14 @@ func TestSessionContext(t *testing.T) {
 	writeFile(
 		t,
 		f.h.Paths.XDG,
-		"config.yaml",
-		"profiles:\n  implementation:\n    skills: [grilling]\n",
+		"config.toml",
+		"[profiles.implementation]\nskills = [\"grilling\"]\n",
 	)
 	writeFile(
 		t,
 		f.main.Dir,
-		".diatom/config.yaml",
-		"gate: check\nmcpServers:\n  docs:\n    command: docs-mcp\n",
+		".diatom/config.toml",
+		"gate = \"check\"\n[mcpServers.docs]\ncommand = \"docs-mcp\"\n",
 	)
 	writeFile(t, f.main.Dir, "AGENTS.md", "Run mage.\n")
 	writeFile(t, f.main.Dir, "internal/cards/AGENTS.md", "Card rules.\n")
@@ -680,7 +680,7 @@ func TestSessionContext(t *testing.T) {
 
 func TestNoGateAsksInsteadOfRunning(t *testing.T) {
 	f := newFixture(t)
-	writeFile(t, f.store.Repo(), ".diatom/config.yaml", "maxSessions: 2\n")
+	writeFile(t, f.store.Repo(), ".diatom/config.toml", "maxSessions = 2\n")
 	task := f.add("engine", "Add ward")
 	f.step()
 	qs, _ := f.store.Questions("set", queue.QuestionOpen)

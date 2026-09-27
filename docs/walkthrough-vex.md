@@ -17,7 +17,8 @@ gh auth status        # diatom opens PRs and reads CI checks with gh
 - Right after a release, `@latest` can still resolve to the one before it for
   up to half an hour, while Go's module proxy catches up. Name the version, as
   in `@v0.4.0`, to get it straight away.
-- `~/.config/diatom/config.yaml`, from your dotfiles, sets `autoUpdate: true`.
+- `~/.config/diatom/config.toml`, from your dotfiles, sets `autoUpdate = true`,
+  and `mage ci:check` as the gate of every Go repo.
   From here on the scheduler installs each new release itself and restarts on
   it, resuming its sessions.
 - Your global git ignore already lists `.diatom/`, which diatom requires before
@@ -30,22 +31,24 @@ gh auth status        # diatom opens PRs and reads CI checks with gh
    since agents never read that file. But anything they should see has to be
    committed first, including the project-standards v1.32.0 bump in `go.mod`
    and `go.sum`.
-2. **Create `.diatom/config.yaml`.** It's ignored, so it stays local:
+2. **Optionally create `.diatom/config.toml`.** It's ignored, so it stays
+   local:
 
-   ```yaml
-   gate: mage ci:check   # every commit must pass this
-   maxSessions: 2        # agent sessions at once in vex; raise it once you trust it
+   ```toml
+   maxSessions = 2   # agent sessions at once in vex; raise it once you trust it
    ```
 
-   The gate is `ci:check`, not `ci:fix`, because it must only check. Agents
-   run `ci:fix` themselves, as vex's AGENTS.md already tells them to. vex's
-   AGENTS.md also forbids git operations, which matches diatom: the harness
-   makes every commit.
+   vex needs no gate of its own: it has a `go.mod`, so it gets the Go gate
+   from your home config, `mage ci:check`. Without one, `diatom workspace`
+   would ask for it. The gate is `ci:check`, not `ci:fix`, because it must
+   only check. vex's AGENTS.md forbids git operations, which matches diatom:
+   the harness makes every commit.
 
-   vex's `ci:check` takes about 10 seconds. A gate still running after 30
-   seconds is stuck: diatom stops it and counts it as failed. Every command an
-   agent runs has the same limit. Set `commandTimeout` in this file if vex
-   ever needs longer.
+   vex's `ci:check` takes about 12 seconds warm, and over a minute on a cold
+   build cache. A gate still running after 2 minutes is stuck: diatom stops
+   it and counts it as failed. Each command an agent runs is stopped after 30
+   seconds, so agents run narrow checks and leave the whole gate to diatom.
+   Set `gateTimeout` or `commandTimeout` in this file to change either.
 
 ## 2. Open the workspace
 

@@ -498,7 +498,7 @@ func runFinish(
 				ctx,
 				s,
 				g,
-				finish.Options{Gate: cfg.Gate, Timeout: cfg.CommandTimeout},
+				finish.Options{Gate: cfg.Gate, Timeout: cfg.GateTimeout},
 			)
 		}
 	}

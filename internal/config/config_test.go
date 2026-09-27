@@ -50,14 +50,14 @@ func TestLoadDefaults(t *testing.T) {
 
 func TestLoadClosestWins(t *testing.T) {
 	root, paths := tree(t)
-	write(t, paths.XDG, "gate: xdg-gate\nmaxSessions: 4\nautoUpdate: true\n"+
-		"profiles:\n  implementation:\n    model: sonnet\n")
+	write(t, paths.XDG, "gate = \"xdg-gate\"\nmaxSessions = 4\nautoUpdate = true\n"+
+		"[profiles.implementation]\nmodel = \"sonnet\"\n")
 	write(
 		t,
 		filepath.Join(paths.Home, "Code", "org", DirName),
-		"gate: org-gate\ncommitCheck: lint\n",
+		"gate = \"org-gate\"\ncommitCheck = \"lint\"\n",
 	)
-	write(t, filepath.Join(root, DirName), "gate: mage check\nadr:\n  dir: docs/adr\n")
+	write(t, filepath.Join(root, DirName), "gate = \"mage check\"\n[adr]\ndir = \"docs/adr\"\n")
 
 	c, err := Load(root, paths)
 	if err != nil {
@@ -86,7 +86,7 @@ func TestLoadClosestWins(t *testing.T) {
 
 func TestLoadStopsAtHome(t *testing.T) {
 	root, paths := tree(t)
-	write(t, filepath.Join(filepath.Dir(paths.Home), DirName), "gate: above-home\n")
+	write(t, filepath.Join(filepath.Dir(paths.Home), DirName), "gate = \"above-home\"\n")
 	c, err := Load(root, paths)
 	if err != nil {
 		t.Fatal(err)
@@ -100,9 +100,11 @@ func TestLoadErrors(t *testing.T) {
 	tests := []struct {
 		name, dir, body, want string
 	}{
-		{"home-only key in a repo", "repo", "profiles: {}\n", "profiles is only read from"},
-		{"unknown key", "repo", "gaet: x\n", "field gaet not found"},
-		{"invalid YAML", "xdg", "gate: [\n", "config.yaml"},
+		{"home-only key in a repo", "repo", "[profiles]\n", "profiles is only read from"},
+		{"unknown key", "repo", "gaet = \"x\"\n", "unknown setting gaet"},
+		{"unknown nested key", "repo", "[adr]\nfolder = \"x\"\n", "unknown setting adr.folder"},
+		{"invalid TOML", "xdg", "gate = [\n", "config.toml"},
+		{"unknown kind", "repo", "[gates]\ncobol = \"make\"\n", "gates.cobol: no such kind"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -122,7 +124,7 @@ func TestLoadErrors(t *testing.T) {
 
 func TestLoadHome(t *testing.T) {
 	_, paths := tree(t)
-	write(t, paths.XDG, "autoUpdate: true\n")
+	write(t, paths.XDG, "autoUpdate = true\n")
 	c, err := LoadHome(paths)
 	if err != nil {
 		t.Fatal(err)
@@ -162,7 +164,7 @@ func TestPathsExpand(t *testing.T) {
 
 func TestLoadContextDefaults(t *testing.T) {
 	root, paths := tree(t)
-	write(t, filepath.Join(root, DirName), "mcpServers:\n  docs:\n    command: docs-mcp\n")
+	write(t, filepath.Join(root, DirName), "[mcpServers.docs]\ncommand = \"docs-mcp\"\n")
 	c, err := Load(root, paths)
 	if err != nil {
 		t.Fatal(err)
@@ -191,14 +193,72 @@ func TestRetryEffort(t *testing.T) {
 	}
 }
 
-func TestCommandTimeout(t *testing.T) {
+func TestTimeouts(t *testing.T) {
 	root, paths := tree(t)
 	cfg, err := Load(root, paths)
-	if err != nil || cfg.CommandTimeout != 30*time.Second {
-		t.Fatalf("default = %v, %v", cfg.CommandTimeout, err)
+	if err != nil || cfg.CommandTimeout != 30*time.Second || cfg.GateTimeout != 2*time.Minute {
+		t.Fatalf("defaults = %v and %v, %v", cfg.CommandTimeout, cfg.GateTimeout, err)
 	}
-	write(t, filepath.Join(root, DirName), "commandTimeout: 2m\n")
-	if cfg, err := Load(root, paths); err != nil || cfg.CommandTimeout != 2*time.Minute {
-		t.Errorf("repo override = %v, %v", cfg.CommandTimeout, err)
+	write(t, filepath.Join(root, DirName), "commandTimeout = \"1m\"\ngateTimeout = \"3m30s\"\n")
+	if cfg, err := Load(root, paths); err != nil || cfg.CommandTimeout != time.Minute ||
+		cfg.GateTimeout != 210*time.Second {
+		t.Errorf("repo override = %v and %v, %v", cfg.CommandTimeout, cfg.GateTimeout, err)
+	}
+}
+
+func TestGateByKind(t *testing.T) {
+	root, paths := tree(t)
+	write(t, paths.XDG, "[gates]\ngo = \"mage ci:check\"\nnode = \"npm test\"\n")
+	if cfg, err := Load(root, paths); err != nil || cfg.Gate != "" {
+		t.Errorf("a repo of no kind = %q, %v", cfg.Gate, err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, err := Load(root, paths); err != nil || cfg.Gate != "mage ci:check" {
+		t.Errorf("a Go repo = %q, %v", cfg.Gate, err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(root, paths); err == nil || !strings.Contains(err.Error(), "set gate in") {
+		t.Errorf("a Go and node repo = %v, want it told to set its own gate", err)
+	}
+	if err := SetGate(root, "make check"); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, err := Load(root, paths); err != nil || cfg.Gate != "make check" {
+		t.Errorf("after SetGate = %q, %v", cfg.Gate, err)
+	}
+}
+
+func TestSetGateKeepsTheRest(t *testing.T) {
+	root, paths := tree(t)
+	write(t, filepath.Join(root, DirName), "maxSessions = 2\n\n[adr]\ndir = \"docs/adr\"\n")
+	if err := SetGate(root, `mage "ci:check"`); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(root, paths)
+	if err != nil || cfg.Gate != `mage "ci:check"` || cfg.MaxSessions != 2 ||
+		cfg.ADR.Dir != "docs/adr" {
+		t.Errorf("after SetGate = %+v, %v", cfg, err)
+	}
+}
+
+func TestOldYAMLIsAnError(t *testing.T) {
+	root, paths := tree(t)
+	dir := filepath.Join(root, DirName)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(dir, "config.yaml"),
+		[]byte("gate: x\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(root, paths); err == nil || !strings.Contains(err.Error(), "TOML now") {
+		t.Errorf("Load = %v", err)
 	}
 }

@@ -33,7 +33,7 @@ const stopWait = 5 * time.Second
 // did not pass; the error is only for a gate that could not run at all.
 func Run(ctx context.Context, dir, command string) (Result, error) {
 	if strings.TrimSpace(command) == "" {
-		return Result{}, errors.New("no gate is configured: set gate in .diatom/config.yaml")
+		return Result{}, errors.New("no gate is configured: set gate in .diatom/config.toml")
 	}
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	cmd.Dir = dir

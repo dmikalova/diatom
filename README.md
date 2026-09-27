@@ -30,7 +30,7 @@ go install github.com/dmikalova/diatom/cmd/diatom@latest
 ```
 
 Installed this way, diatom can keep itself on the latest release: set
-`autoUpdate: true` in `~/.config/diatom/config.yaml`. A diatom built from a
+`autoUpdate = true` in `~/.config/diatom/config.toml`. A diatom built from a
 checkout never updates itself.
 
 diatom keeps its state in `.diatom/` inside each repo, which must be ignored
@@ -50,7 +50,6 @@ repos, run two diatoms.
 
 ```bash
 cd ~/Code/github.com/dmikalova/vex
-echo 'gate: mage ci:check' > .diatom/config.yaml
 diatom workspace    # everything below in one zellij session, scheduler included
 ```
 
@@ -110,21 +109,33 @@ into `diatom/<goal>/integration`.
 
 ## Configure
 
-Config is merged from `.diatom/config.yaml` in the repo and each parent
-directory up to your home, then `~/.config/diatom/config.yaml`. The closest file
+Config is TOML, merged from `.diatom/config.toml` in the repo and each parent
+directory up to your home, then `~/.config/diatom/config.toml`. The closest file
 wins. The built-in defaults are in
-[`internal/config/defaults.yaml`](internal/config/defaults.yaml).
+[`internal/config/defaults.toml`](internal/config/defaults.toml).
 
-```yaml
-gate: mage ci:check               # required; the check every commit must pass
-gateAttempts: 3                   # gate failures sent back before a retry at more effort
-commandTimeout: 30s               # a gate or agent command running longer is stuck
-maxSessions: 1                    # sessions at once in this repo
-maxBatch: 10                      # tasks per session
-commitCheck: project-standards commit-msg   # lints a commit message file
-instructions: [~/AGENTS.md]       # appended to every agent's system prompt
-mcpServers:                       # the only MCP servers agents get
-  docs: { command: docs-mcp }
+Every repo needs a gate, the check every commit must pass. A repo that sets
+none gets the one `[gates]` names for its kind of project: go (a `go.mod`),
+node (`package.json`), deno (`deno.json`), rust (`Cargo.toml`) or python
+(`pyproject.toml`). With neither, `diatom workspace` and `diatom run` ask for
+one and save it in the repo's `.diatom/config.toml`.
+
+```toml
+gate = "mage ci:check"            # this repo's gate
+gateAttempts = 3                  # gate failures sent back before a retry at more effort
+gateTimeout = "2m"                # a gate running longer is stuck, and fails
+commandTimeout = "30s"            # an agent's command running longer is stopped
+maxSessions = 1                   # sessions at once in this repo
+maxBatch = 10                     # tasks per session
+commitCheck = "project-standards commit-msg"   # lints a commit message file
+instructions = ["~/AGENTS.md"]    # appended to every agent's system prompt
+
+[gates]                           # the gate of each kind of repo that sets none
+go = "mage ci:check"
+node = "npm test"
+
+[mcpServers.docs]                 # the only MCP servers agents get
+command = "docs-mcp"
 ```
 
 Agent sessions load none of your own Claude Code settings, skills, plugins or
@@ -132,11 +143,16 @@ MCP servers (ADR 0011). They get the instruction files above, the repo's own
 `AGENTS.md`, `CLAUDE.md` and project settings, and the skills their profile
 lists.
 
-Only `~/.config/diatom/config.yaml` may set these:
+Only `~/.config/diatom/config.toml` may set these:
 
-```yaml
-autoUpdate: true                  # install new releases and restart on them
-profiles:
-  implementation: { model: opus, effort: medium, maxTurns: 300 }
-  planning: { skills: [grilling] }  # names in ~/.claude/skills, or paths
+```toml
+autoUpdate = true                 # install new releases and restart on them
+
+[profiles.implementation]
+model = "opus"
+effort = "medium"
+maxTurns = 300
+
+[profiles.planning]
+skills = ["grilling"]             # names in ~/.claude/skills, or paths
 ```

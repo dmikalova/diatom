@@ -410,5 +410,5 @@ func (h *Harness) runGate(
 	if run == nil {
 		run = gate.Run
 	}
-	return gate.Within(cfg.CommandTimeout, run)(ctx, dir, cfg.Gate)
+	return gate.Within(cfg.GateTimeout, run)(ctx, dir, cfg.Gate)
 }

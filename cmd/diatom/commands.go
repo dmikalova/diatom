@@ -251,7 +251,7 @@ func layOut(
 	}
 	_, _ = fmt.Fprintf(stdout, "laying goal %s out on %s, running the gate on each pull request…\n",
 		g.Name, g.Base)
-	return finish.Build(ctx, s, g, finish.Options{Gate: cfg.Gate, Timeout: cfg.CommandTimeout})
+	return finish.Build(ctx, s, g, finish.Options{Gate: cfg.Gate, Timeout: cfg.GateTimeout})
 }
 
 // goalNew creates a goal on the current branch. It starts in planning with a

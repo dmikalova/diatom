@@ -46,6 +46,9 @@ func cmdRun(ctx context.Context, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if err := ensureGate(s, paths, os.Stdin, stderr, terminal(os.Stdin)); err != nil {
+		return err
+	}
 	home, err := config.LoadHome(paths)
 	if err != nil {
 		return err
@@ -168,7 +171,7 @@ func (u *updater) check(ctx context.Context) string {
 		if u.told != latest {
 			u.told = latest
 			u.log.Info("a new diatom release is out: set autoUpdate: true in "+
-				"~/.config/diatom/config.yaml, or install it with `go install "+update.Package+"@"+latest+"`",
+				"~/.config/diatom/config.toml, or install it with `go install "+update.Package+"@"+latest+"`",
 				"running", u.current, "latest", latest)
 		}
 		return ""

@@ -47,6 +47,13 @@ func cmdWorkspace(ctx context.Context) error {
 			"already inside zellij: detach first, or run `zellij attach " + sessionName + "`",
 		)
 	}
+	paths, err := config.DefaultPaths()
+	if err != nil {
+		return err
+	}
+	if err := ensureGate(s, paths, os.Stdin, os.Stderr, terminal(os.Stdin)); err != nil {
+		return err
+	}
 	zellij, err := exec.LookPath("zellij")
 	if err != nil {
 		return fmt.Errorf("the workspace runs in zellij, which is not installed: %w", err)

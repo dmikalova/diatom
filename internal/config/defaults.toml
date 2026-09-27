@@ -1,0 +1,33 @@
+# diatom's built-in defaults, the lowest layer of every config merge. Override
+# any of them in ~/.config/diatom/config.toml or a .diatom/config.toml.
+gateAttempts = 3
+gateTimeout = "2m"
+commandTimeout = "30s"
+maxSessions = 1
+maxBatch = 10
+instructions = ["~/AGENTS.md"]
+
+[profiles.planning]
+model = "opus"
+effort = "high"
+maxTurns = 200
+skills = ["grilling"]
+tools = ["Read", "Glob", "Grep", "Edit", "Write", "Bash", "Skill", "TodoWrite", "WebFetch", "WebSearch"]
+
+[profiles.implementation]
+model = "opus"
+effort = "medium"
+maxTurns = 300
+tools = ["Read", "Glob", "Grep", "Edit", "Write", "Bash", "Skill", "TodoWrite"]
+
+[profiles.mechanical]
+model = "sonnet"
+effort = "medium"
+maxTurns = 150
+tools = ["Read", "Glob", "Grep", "Edit", "Write", "Bash", "TodoWrite"]
+
+[profiles.commit-message]
+model = "haiku"
+effort = "low"
+maxTurns = 1
+tools = []

@@ -15,4 +15,4 @@ diatom runs locally with only a few agent sessions at a time, so Redis-backed qu
 - **Frontmatter** carries the id, kind, profile, priority, workstream, dependencies and origin (the plan, a review decision, or a question).
 - **Only the harness moves task files.** Agents add notes to a task's body through a tool. This rules out races between the agent and the scheduler.
 - **Finished tasks stay until the goal is done.** A task's link to its commits is what turns a later rejection into a revision with the right context. When the goal is done, its directory and worktrees are deleted. Git history and ADRs are the lasting record.
-- **Per-repo config stays in the ignored directory** (`.diatom/config.yaml`), so diatom never has to be committed into a work repository.
+- **Per-repo config stays in the ignored directory** (`.diatom/config.toml`), so diatom never has to be committed into a work repository.

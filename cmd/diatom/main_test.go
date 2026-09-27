@@ -40,6 +40,8 @@ func inRepo(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	// Never the real home config.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Chdir(dir)
 	return dir
 }

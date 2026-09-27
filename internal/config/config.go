@@ -1,6 +1,6 @@
 // Package config loads diatom's configuration (ADR 0007). A repo's settings are
-// merged from `.diatom/config.yaml` in the repository root and in each of its
-// parent directories, then the XDG file `~/.config/diatom/config.yaml`, where
+// merged from `.diatom/config.toml` in the repository root and in each of its
+// parent directories, then the XDG file `~/.config/diatom/config.toml`, where
 // the search stops. The closest file wins. Home-only settings (the profiles,
 // and updating diatom itself) are read from the XDG file alone, and setting
 // one anywhere else is an error.
@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"go.yaml.in/yaml/v3"
+	"github.com/BurntSushi/toml"
 )
 
 // DirName is the directory that holds diatom's state and config in a repo, and
@@ -26,11 +26,15 @@ import (
 const DirName = ".diatom"
 
 // FileName is the config file inside DirName, and inside the XDG directory.
-const FileName = "config.yaml"
+const FileName = "config.toml"
+
+// oldFileName is the YAML config diatom read before, which is now an error
+// so a setting in one is never silently ignored.
+const oldFileName = "config.yaml"
 
 // defaults is the lowest layer of every merge, below the XDG file.
 //
-//go:embed defaults.yaml
+//go:embed defaults.toml
 var defaults []byte
 
 // homeOnly are the top-level keys only the XDG file may set.
@@ -40,75 +44,82 @@ var homeOnly = []string{"profiles", "autoUpdate"}
 type Repo struct {
 	// Gate is the check command every commit must pass, run with `sh -c` in the
 	// worktree (ADR 0005). It is never skipped, so an empty gate is an error.
-	Gate string `yaml:"gate"`
+	// Unset, it is the Gates entry for the kind of project the repo is.
+	Gate string `toml:"gate"`
+	// Gates maps a kind of project, such as go or node, to the gate of a
+	// repo of that kind that sets no gate of its own.
+	Gates map[string]string `toml:"gates"`
 	// GateAttempts is how many times the Stop hook sends a failing gate back
 	// to the agent before the task is retried with more effort.
-	GateAttempts int `yaml:"gateAttempts"`
-	// CommandTimeout is how long the gate, or any command an agent runs, may
-	// take. A good gate run takes seconds, so one that runs this long is
-	// stuck: it is stopped and fails.
-	CommandTimeout time.Duration `yaml:"commandTimeout"`
+	GateAttempts int `toml:"gateAttempts"`
+	// GateTimeout is how long the gate may take. A gate run that takes this
+	// long is stuck: it is stopped and fails.
+	GateTimeout time.Duration `toml:"gateTimeout"`
+	// CommandTimeout is how long any command an agent runs may take. It is
+	// stopped after that, so agents run narrow checks and leave the whole
+	// gate to diatom.
+	CommandTimeout time.Duration `toml:"commandTimeout"`
 	// MaxSessions caps the agent sessions running in this repo at once.
-	MaxSessions int `yaml:"maxSessions"`
+	MaxSessions int `toml:"maxSessions"`
 	// MaxBatch caps the tasks one session takes (ADR 0004).
-	MaxBatch int `yaml:"maxBatch"`
+	MaxBatch int `toml:"maxBatch"`
 	// CommitCheck lints a commit message: it is run with `sh -c` and the path
 	// of a file holding the message appended, such as
 	// `project-standards commit-msg`. Empty checks only the Conventional
 	// Commits header.
-	CommitCheck string `yaml:"commitCheck"`
+	CommitCheck string `toml:"commitCheck"`
 	// ADR says where a goal's ADRs go and how they're written (ADR 0010).
-	ADR ADR `yaml:"adr"`
+	ADR ADR `toml:"adr"`
 	// Instructions are files appended to every agent's system prompt, such
 	// as ~/AGENTS.md. A missing file is skipped. The repo's own root AGENTS.md
 	// is always added after them. Agents get no other context unless it is
 	// configured here, in a profile's skills or in MCPServers (ADR 0006).
-	Instructions []string `yaml:"instructions"`
+	Instructions []string `toml:"instructions"`
 	// MCPServers are the MCP servers agents may use, in Claude Code's
 	// mcpServers format. None of the user's own servers are loaded.
-	MCPServers map[string]any `yaml:"mcpServers"`
+	MCPServers map[string]any `toml:"mcpServers"`
 }
 
 // ADR configures where ADRs go and what format they use.
 type ADR struct {
 	// Dir is the repo's ADR directory, relative to its root. Empty keeps ADRs
 	// in the goal's directory.
-	Dir string `yaml:"dir"`
+	Dir string `toml:"dir"`
 	// Format is free text given to the planning profile about how to write an
 	// ADR, such as the name of a skill to follow.
-	Format string `yaml:"format"`
+	Format string `toml:"format"`
 }
 
 // Home is the configuration only the XDG file sets.
 type Home struct {
 	// Profiles maps each profile name to the agent that runs it (ADR 0006).
-	Profiles map[string]Profile `yaml:"profiles"`
+	Profiles map[string]Profile `toml:"profiles"`
 	// AutoUpdate installs each new release of diatom as it comes out and
 	// restarts the scheduler on it, resuming its sessions. A diatom built
 	// from a checkout never updates itself.
-	AutoUpdate bool `yaml:"autoUpdate"`
+	AutoUpdate bool `toml:"autoUpdate"`
 }
 
 // Profile is the kind of agent a piece of work needs.
 type Profile struct {
 	// Model is a model alias or full name, such as opus or claude-sonnet-5.
-	Model string `yaml:"model"`
+	Model string `toml:"model"`
 	// Effort is the effort level, such as medium; empty uses the model's.
-	Effort string `yaml:"effort"`
+	Effort string `toml:"effort"`
 	// Tools are the tools the agent may use, in Claude Code's permission
 	// syntax (`Bash`, `Edit`, `Bash(go test:*)`). Empty allows none.
-	Tools []string `yaml:"tools"`
+	Tools []string `toml:"tools"`
 	// MaxTurns ends a session after this many agent turns.
-	MaxTurns int `yaml:"maxTurns"`
+	MaxTurns int `toml:"maxTurns"`
 	// Skills are the skills the agent may load. A bare name is a directory
 	// in ~/.claude/skills; anything else is a path to a skill directory.
-	Skills []string `yaml:"skills"`
+	Skills []string `toml:"skills"`
 }
 
 // Config is a repo's merged configuration together with the home settings.
 type Config struct {
-	Repo `yaml:",inline"`
-	Home `yaml:",inline"`
+	Repo
+	Home
 }
 
 // Profile returns the named profile, or an error naming the missing one.
@@ -172,7 +183,100 @@ func Load(root string, paths Paths) (*Config, error) {
 	for _, l := range layers {
 		merge(merged, l)
 	}
-	return decode(merged)
+	c, err := decode(merged)
+	if err != nil {
+		return nil, err
+	}
+	if c.Gate == "" && root != "" {
+		if c.Gate, err = kindGate(root, c.Gates); err != nil {
+			return nil, err
+		}
+	}
+	return c, nil
+}
+
+// kind is a kind of project Gates may name, with the files at a repo's root
+// that make it one.
+type kind struct {
+	name  string
+	files []string
+}
+
+var kinds = []kind{
+	{"go", []string{"go.mod"}},
+	{"node", []string{"package.json"}},
+	{"deno", []string{"deno.json", "deno.jsonc"}},
+	{"rust", []string{"Cargo.toml"}},
+	{"python", []string{"pyproject.toml"}},
+}
+
+// Kinds lists the kinds of project the repo at root is, such as go.
+func Kinds(root string) []string {
+	var found []string
+	for _, k := range kinds {
+		for _, f := range k.files {
+			if _, err := os.Stat(filepath.Join(root, f)); err == nil {
+				found = append(found, k.name)
+				break
+			}
+		}
+	}
+	return found
+}
+
+// kindGate is the gate Gates gives the repo at root, or "" when it gives
+// none. A repo of two kinds that both have one must set its own gate.
+func kindGate(root string, gates map[string]string) (string, error) {
+	for name := range gates {
+		if !slices.ContainsFunc(kinds, func(k kind) bool { return k.name == name }) {
+			return "", fmt.Errorf("config: gates.%s: no such kind of project; the kinds are %s",
+				name, kindNames())
+		}
+	}
+	var gate, from string
+	for _, k := range Kinds(root) {
+		g := strings.TrimSpace(gates[k])
+		switch {
+		case g == "":
+		case gate != "" && g != gate:
+			return "", fmt.Errorf("config: %s is both a %s and a %s project, whose gates differ: "+
+				"set gate in %s", root, from, k, filepath.Join(root, DirName, FileName))
+		default:
+			gate, from = g, k
+		}
+	}
+	return gate, nil
+}
+
+// SetGate saves gate as the gate of the repo at root, in its own config
+// file.
+func SetGate(root, gate string) error {
+	path := filepath.Join(root, DirName, FileName)
+	old, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	var b bytes.Buffer
+	if err := toml.NewEncoder(&b).Encode(map[string]string{"gate": gate}); err != nil {
+		return err
+	}
+	// A top-level key has to come before any table, so it goes first.
+	body := append(b.Bytes(), old...)
+	if _, err := parse(body, path); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, body, 0o644)
+}
+
+func kindNames() string {
+	names := make([]string, 0, len(kinds))
+	for _, k := range kinds {
+		names = append(names, k.name)
+	}
+	return strings.Join(names, ", ")
 }
 
 // LoadHome reads the home settings alone, for the scheduler, which runs
@@ -183,7 +287,7 @@ func LoadHome(paths Paths) (*Config, error) {
 
 // walk returns the config layers for root, furthest (the defaults) first.
 func walk(root string, paths Paths) ([]map[string]any, error) {
-	base, err := parse(defaults, "defaults.yaml")
+	base, err := parse(defaults, "defaults.toml")
 	if err != nil {
 		return nil, err
 	}
@@ -215,8 +319,13 @@ func walk(root string, paths Paths) ([]map[string]any, error) {
 	return append([]map[string]any{base, xdg}, near...), nil
 }
 
-// read parses the YAML file at path. A missing file is an empty layer.
+// read parses the TOML file at path. A missing file is an empty layer, and
+// a YAML one beside it an error.
 func read(path string) (map[string]any, error) {
+	old := filepath.Join(filepath.Dir(path), oldFileName)
+	if _, err := os.Stat(old); err == nil {
+		return nil, fmt.Errorf("%s: diatom's config is TOML now: move it to %s", old, path)
+	}
 	b, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return map[string]any{}, nil
@@ -229,7 +338,7 @@ func read(path string) (map[string]any, error) {
 
 func parse(b []byte, name string) (map[string]any, error) {
 	m := map[string]any{}
-	if err := yaml.Unmarshal(b, &m); err != nil {
+	if err := toml.Unmarshal(b, &m); err != nil {
 		return nil, fmt.Errorf("%s: %w", name, err)
 	}
 	return m, nil
@@ -251,15 +360,21 @@ func merge(dst, src map[string]any) {
 
 // decode turns the merged layers into a Config, rejecting unknown keys.
 func decode(m map[string]any) (*Config, error) {
-	b, err := yaml.Marshal(m)
-	if err != nil {
+	var b bytes.Buffer
+	if err := toml.NewEncoder(&b).Encode(m); err != nil {
 		return nil, err
 	}
-	dec := yaml.NewDecoder(bytes.NewReader(b))
-	dec.KnownFields(true)
 	var c Config
-	if err := dec.Decode(&c); err != nil {
+	md, err := toml.Decode(b.String(), &c)
+	if err != nil {
 		return nil, fmt.Errorf("config: %w", err)
+	}
+	for _, key := range md.Undecoded() {
+		// MCP servers are in Claude Code's format, which diatom passes on
+		// as it is.
+		if key[0] != "mcpServers" {
+			return nil, fmt.Errorf("config: unknown setting %s", key)
+		}
 	}
 	return &c, nil
 }
