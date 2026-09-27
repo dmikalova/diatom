@@ -242,7 +242,10 @@ that commit again with your comments. `P` merges into `origin/main`, then
 fast-forwards your local `main` unless it has commits of its own or your
 uncommitted changes touch what landed; nothing is stashed. While it lands, the goal's page shows each step and the
 gate's output as they come, with nothing else offered, and Next moves on to
-the next thing. A landing that fails leaves the goal active, with
+the next thing. Landing another goal while one lands queues it behind: Next
+moves on, the nav shows it ⏳ waiting to land, and it starts once the one
+before it ends. The queue lasts while diatom is open. A landing that fails
+leaves the goal active, with
 the reason on screen. If the workstreams can't be put in stack order, you get one PR, and
 the goal's page says why. What landing came to stays on screen until you press
 a key or move on.

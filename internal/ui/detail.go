@@ -97,6 +97,10 @@ func (s *Status) detailRow() *goalRow {
 // jobLines show, on the page of the goal a job works on, what it is doing
 // and its log as it goes, or once it has ended, until the human moves on.
 func (s *Status) jobLines(goal string, room int) []string {
+	if i := s.queuedAt(goal); i >= 0 {
+		return []string{"  " + tui.Color(fmt.Sprintf("⏳ %s once %s has landed", s.queued[i].what,
+			s.busyGoal), tui.Yellow), ""}
+	}
 	if s.log == nil || s.logGoal != goal {
 		return nil
 	}
@@ -122,8 +126,9 @@ func (s *Status) pageRow() *goalRow {
 
 func (s *Status) detailActions() []action {
 	row := s.detailRow()
-	if row != nil && s.busyGoal == row.goal.Name {
-		// Nothing else is offered while the goal is being landed.
+	if row != nil && s.landing(row.goal.Name) {
+		// Nothing else is offered while the goal is being landed, or waits
+		// to be.
 		return nil
 	}
 	acts := actions(row)

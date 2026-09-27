@@ -135,8 +135,10 @@ type Status struct {
 	busyGoal, logGoal string
 	log               *jobLog
 	// busy says what a background job, such as preparing a goal to land, is
-	// doing; it takes no other job until that one ends.
-	busy string
+	// doing; the jobs confirmed while it runs wait in queued, and start in
+	// turn as it ends.
+	busy   string
+	queued []job
 
 	// health says what keeps the scheduler from starting work, when
 	// something does: it isn't running, or every pass fails.
@@ -573,10 +575,24 @@ func prepare(
 	return finish.Build(ctx, s, g, opts)
 }
 
-// jobDone ends a background job, such as preparing a goal to land.
-func (s *Status) jobDone(msg jobMsg) {
+// jobDone ends a background job, such as preparing a goal to land, and
+// starts the next one waiting.
+func (s *Status) jobDone(msg jobMsg) tea.Cmd {
 	s.reload()
+	done := s.busyGoal
 	s.busy, s.busyGoal, s.flash, s.err = "", "", msg.flash, msg.err
+	if done != "" && s.flash != "" {
+		s.flash = done + ": " + s.flash
+	}
+	if msg.err != nil && done != "" {
+		s.err = fmt.Errorf("%s: %w", done, msg.err)
+	}
+	if len(s.queued) == 0 {
+		return nil
+	}
+	next := s.queued[0]
+	s.queued = s.queued[1:]
+	return s.start(next)
 }
 
 // act does what one of a goal's keys does, and reports whether key is one.
@@ -688,19 +704,37 @@ type jobMsg struct {
 	err   error
 }
 
+// job is a goal's landing the human confirmed: its key, and what it does.
+type job struct {
+	repo, goal, key, what string
+}
+
+// landing reports whether a job lands the goal, or waits to.
+func (s *Status) landing(goal string) bool {
+	return s.busyGoal == goal || s.queuedAt(goal) >= 0
+}
+
+// queuedAt is where the goal's job waits in the queue, -1 when none does.
+func (s *Status) queuedAt(goal string) int {
+	for i, j := range s.queued {
+		if j.goal == goal {
+			return i
+		}
+	}
+	return -1
+}
+
 // finishKey handles the keys that end and land a goal (ADR 0003), each
 // confirmed with a second press: P merges it into its base branch, F opens
 // its pull requests, and d marks it done, to land later. Landing an active
 // goal marks it done first. Preparing it runs the gate, so the job runs in
 // the background, telling its log each step.
 func (s *Status) finishKey(row *goalRow, key string) tea.Cmd {
-	if s.busy != "" {
-		s.flash = "still " + s.busy
+	if s.landing(row.goal.Name) {
+		s.flash = row.goal.Name + " is landing already"
 		return nil
 	}
-	// The job gets its own copy: the rows are rendered while it runs.
-	goal := *row.goal
-	g, name := &goal, row.repo+"/"+row.goal.Name
+	g, name := row.goal, row.repo+"/"+row.goal.Name
 	var prompt, what string
 	switch key {
 	case "d":
@@ -725,11 +759,27 @@ func (s *Status) finishKey(row *goalRow, key string) tea.Cmd {
 	if !s.confirmed(key, name, prompt) {
 		return nil
 	}
-	s.busy, s.busyGoal, s.logGoal, s.log = what, g.Name, g.Name, &jobLog{}
-	store, paths, run, exe, ctx, log := queue.Open(row.repo), s.env.Paths, s.env.Runner, s.env.Exe,
-		s.ctx, s.log
+	j := job{repo: row.repo, goal: g.Name, key: key, what: what}
+	if s.busy != "" {
+		// One job runs at a time, since each takes the repo's git and gate.
+		s.queued = append(s.queued, j)
+		s.flash = fmt.Sprintf("%s lands after %s", g.Name, s.busyGoal)
+		return nil
+	}
+	return s.start(j)
+}
+
+// start runs a job in the background, on the goal as it stands now.
+func (s *Status) start(j job) tea.Cmd {
+	store := queue.Open(j.repo)
+	g, err := store.Goal(j.goal)
+	if err != nil {
+		return func() tea.Msg { return jobMsg{err: err} }
+	}
+	s.busy, s.busyGoal, s.logGoal, s.log = j.what, g.Name, g.Name, &jobLog{}
+	paths, run, exe, ctx, log := s.env.Paths, s.env.Runner, s.env.Exe, s.ctx, s.log
 	return tea.Batch(func() tea.Msg {
-		flash, err := runFinish(ctx, store, paths, run, exe, g, key, log)
+		flash, err := runFinish(ctx, store, paths, run, exe, g, j.key, log)
 		return jobMsg{flash: flash, err: err}
 	}, jobTick())
 }
@@ -912,6 +962,9 @@ func (s *Status) foot() []string {
 	}
 	if s.busy != "" {
 		foot = append(foot, tui.Color(s.busyGoal+": "+s.busy+"…", tui.Yellow))
+	}
+	for _, j := range s.queued {
+		foot = append(foot, tui.Dim(j.goal+": "+j.what+", after "+s.busyGoal))
 	}
 	return foot
 }

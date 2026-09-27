@@ -273,8 +273,9 @@ func (a *App) handle(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case UpdateMsg:
 		a.update = &msg
 	case jobMsg:
-		a.status.jobDone(msg)
+		cmd := a.status.jobDone(msg)
 		a.next.reload()
+		return a, cmd
 	case jobTickMsg:
 		if a.status.busy != "" {
 			return a, jobTick()
@@ -926,6 +927,8 @@ func (a *App) navEntry(i int, e entry) []string {
 		}
 		if a.status.busyGoal == e.row.goal.Name {
 			under = tui.Color("▶ "+a.status.busy+"…", tui.Green)
+		} else if a.status.queuedAt(e.row.goal.Name) >= 0 {
+			glyph, under = emoji("⏳"), tui.Color("waiting to land", tui.Yellow)
 		}
 	case entrySpending:
 		glyph, name = emoji("💰"), "Spending"

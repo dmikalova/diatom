@@ -143,7 +143,7 @@ func (n *Next) reload() {
 		if r.questions > 0 {
 			tiers[itemQuestion] = append(tiers[itemQuestion], n.questions(r)...)
 		}
-		if readyToFinish(*r) && r.goal.Name != n.status.busyGoal {
+		if readyToFinish(*r) && !n.status.landing(r.goal.Name) {
 			tiers[itemFinish] = append(tiers[itemFinish], item{kind: itemFinish, row: r})
 			n.stats[r.goal.Name] = n.diffStat(r.goal)
 		}
