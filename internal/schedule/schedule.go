@@ -57,10 +57,14 @@ func Ready(tasks []*queue.Task) []*queue.Task {
 type Goal struct {
 	Repo    string
 	Name    string
-	Pinned  bool
 	Created time.Time
 	// Ready are the goal's ready tasks, from Ready.
 	Ready []*queue.Task
+	// Later are its pending tasks that wait on others, and Unfinished holds
+	// the IDs of every task not done. A session that takes a task can go on
+	// to one that waits only on it, in the same workstream.
+	Later      []*queue.Task
+	Unfinished map[string]bool
 }
 
 // Running is a session already in progress.
@@ -101,8 +105,10 @@ type candidate struct {
 }
 
 // Next returns the batches to start now, given the ready work and the
-// sessions already running. Pinned goals come first, then the priority order,
-// then the older goal, then the task's own priority and id.
+// sessions already running: the priority order first, then the older goal,
+// then the task's own priority and id. A batch goes on, in order, to tasks
+// that wait only on tasks done or already in it, so a chain of dependent
+// tasks in a workstream runs in one session.
 func Next(goals []*Goal, running []Running, lim Limits) []Batch {
 	var cands []candidate
 	for _, g := range goals {
@@ -148,6 +154,7 @@ func Next(goals []*Goal, running []Running, lim Limits) []Batch {
 				taken[o.task] = true
 			}
 		}
+		chain(&b, c.goal, taken, rl.Batch)
 		batches = append(batches, b)
 		busy[key] = true
 		perRepo[key.repo]++
@@ -163,13 +170,36 @@ func repoLimits(lim Limits, repo string) RepoLimits {
 	return RepoLimits{Sessions: 1}
 }
 
-func compare(a, b candidate) int {
-	if a.goal.Pinned != b.goal.Pinned {
-		if a.goal.Pinned {
-			return -1
-		}
-		return 1
+// chain adds to b, one at a time and in priority order, the goal's later
+// tasks whose dependencies are all done or in b, up to size tasks.
+func chain(b *Batch, g *Goal, taken map[*queue.Task]bool, size int) {
+	later := slices.Clone(g.Later)
+	slices.SortStableFunc(later, func(x, y *queue.Task) int {
+		return cmp.Or(cmp.Compare(x.Priority, y.Priority), cmp.Compare(x.ID, y.ID))
+	})
+	in := map[string]bool{}
+	for _, t := range b.Tasks {
+		in[t.ID] = true
 	}
+	for size == 0 || len(b.Tasks) < size {
+		i := slices.IndexFunc(later, func(t *queue.Task) bool {
+			return !taken[t] && t.Workstream == b.Workstream && t.Kind == b.Kind &&
+				t.Profile == b.Profile && t.Effort == b.Effort &&
+				!slices.ContainsFunc(
+					t.DependsOn,
+					func(d string) bool { return g.Unfinished[d] && !in[d] },
+				)
+		})
+		if i < 0 {
+			return
+		}
+		t := later[i]
+		b.Tasks = append(b.Tasks, t)
+		taken[t], in[t.ID] = true, true
+	}
+}
+
+func compare(a, b candidate) int {
 	return cmp.Or(
 		cmp.Compare(Rank(a.task.Kind), Rank(b.task.Kind)),
 		a.goal.Created.Compare(b.goal.Created),

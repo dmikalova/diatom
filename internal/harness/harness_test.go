@@ -783,3 +783,24 @@ func TestSessionLogsWhatDiatomDoesAfterTheAgent(t *testing.T) {
 		t.Errorf("events:\n%s", strings.Join(got, "\n"))
 	}
 }
+
+func TestDependentTasksRunInOneSession(t *testing.T) {
+	f := newFixture(t)
+	a := f.add("engine", "Add ward")
+	b := f.add("engine", "Add poison", a.ID)
+	c := f.add("cards", "Card uses ward", a.ID)
+	f.agent.act = func(t *testing.T, wt string, s agentSession) {
+		writeFile(t, wt, "work-"+s.spec.Workstream+".txt", "done\n")
+		for _, id := range s.spec.Tasks {
+			s.report(session.EntryDone, id, "")
+		}
+	}
+	got := f.step()
+	if len(got) != 1 || len(got[0].Tasks) != 2 || got[0].Tasks[0].ID != a.ID ||
+		got[0].Tasks[1].ID != b.ID {
+		t.Fatalf("batches = %+v, want %s then %s in one engine session", got, a.ID, b.ID)
+	}
+	if got := f.step(); len(got) != 1 || got[0].Tasks[0].ID != c.ID {
+		t.Errorf("then = %+v, want the cards task once ward is done", got)
+	}
+}

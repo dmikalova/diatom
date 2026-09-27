@@ -62,7 +62,7 @@ cd ~/Code/github.com/dmikalova/vex && diatom workspace
     shows the repo and the focus. Every menu opens its selection with
     `enter` or `space`, and `esc` backs out one level:
     - A goal opens to a menu of what can be done with it now (sign off, mark
-      done, open PRs, push, park, pin), then its tasks, each running one with
+      done, open PRs, push, park), then its tasks, each running one with
       its latest step. Each menu entry shows its key, which also works
       straight from the list.
     - A task opens to the Claude sessions that worked on it, newest first:
@@ -161,8 +161,9 @@ left, and **ready to finish** once those are reviewed too.
 
 A freed session goes to the most urgent kind of work first: fixes, then
 revisions, triage, grilling and planned work. Among work of the same kind it
-goes to the goal highest in the list. Pinned goals come first, and `P` pins
-one.
+goes to the goal highest in the list. A session takes up to 5 tasks of one
+workstream at once, following a chain of tasks that depend on each other, so
+related work shares one agent's context.
 
 What happens without you:
 
@@ -192,7 +193,7 @@ What needs you:
   into tasks, a question, or a separate goal. A task on a workstream the goal
   doesn't have comes back to you as a question.
 - **Controls:** `p` parks or resumes a goal. Nothing new starts while parked,
-  and nothing is lost. `P` pins a goal so its tasks run before other goals'.
+  and nothing is lost.
 
 ## 6. Mark a goal done
 

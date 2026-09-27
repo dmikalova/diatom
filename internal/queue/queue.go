@@ -60,8 +60,6 @@ type Goal struct {
 	Name  string    `yaml:"-"`
 	Title string    `yaml:"title"`
 	State GoalState `yaml:"state"`
-	// Pinned goals are picked before every other goal (ADR 0007).
-	Pinned bool `yaml:"pinned,omitempty"`
 	// Base is the branch the integration branch started from.
 	Base        string       `yaml:"base"`
 	Created     time.Time    `yaml:"created"`

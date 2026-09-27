@@ -36,7 +36,7 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if c.GateAttempts != 3 || c.MaxSessions != 1 || c.MaxBatch != 10 {
+	if c.GateAttempts != 3 || c.MaxSessions != 1 || c.MaxBatch != 5 {
 		t.Errorf("defaults = %+v", c.Repo)
 	}
 	p, err := c.Profile("implementation")

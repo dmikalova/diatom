@@ -69,9 +69,6 @@ func cmdGoal(ctx context.Context, args []string, stdin io.Reader, stdout io.Writ
 		w := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
 		for _, g := range goals {
 			var notes []string
-			if g.Pinned {
-				notes = append(notes, "pinned")
-			}
 			if waiting := s.Waiting(g); len(waiting) > 0 {
 				notes = append(notes, "after "+strings.Join(waiting, ","))
 			}
@@ -107,7 +104,7 @@ func cmdGoal(ctx context.Context, args []string, stdin io.Reader, stdout io.Writ
 			)
 		}
 		return nil
-	case "activate", "park", "pin", "unpin":
+	case "activate", "park":
 		if len(rest) != 1 {
 			return fmt.Errorf("%w: goal %s takes a goal name", errUsage, sub)
 		}
@@ -115,13 +112,9 @@ func cmdGoal(ctx context.Context, args []string, stdin io.Reader, stdout io.Writ
 		if err != nil {
 			return err
 		}
-		switch sub {
-		case "activate":
-			g.State = queue.GoalActive
-		case "park":
+		g.State = queue.GoalActive
+		if sub == "park" {
 			g.State = queue.GoalParked
-		default:
-			g.Pinned = sub == "pin"
 		}
 		return s.SaveGoal(g)
 	}

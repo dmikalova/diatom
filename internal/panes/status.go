@@ -158,23 +158,6 @@ func (s *Status) reload() {
 		}
 		rows = append(rows, row)
 	}
-	// Pinned goals first, as the scheduler takes them; the rest stay oldest
-	// first, as it does too.
-	slices.SortStableFunc(rows, func(a, b goalRow) int {
-		switch {
-		case a.intake != b.intake:
-			if a.intake {
-				return -1
-			}
-			return 1
-		case a.goal.Pinned != b.goal.Pinned:
-			if a.goal.Pinned {
-				return -1
-			}
-			return 1
-		}
-		return 0
-	})
 	keep := s.selected()
 	s.rows = rows
 	if keep != nil {
@@ -355,7 +338,7 @@ func (s *Status) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // goalKeys act on a goal, so not on the intake row.
-var goalKeys = []string{"p", "P", "s", "d", "D", "F", "U", "f"}
+var goalKeys = []string{"p", "s", "d", "D", "F", "U", "f"}
 
 func (s *Status) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	s.flash = ""
@@ -405,13 +388,6 @@ func (s *Status) act(row *goalRow, key string) (tea.Cmd, bool) {
 	switch key {
 	case "p":
 		s.toggleParked(row)
-	case "P":
-		row.goal.Pinned = !row.goal.Pinned
-		what := "unpinned"
-		if row.goal.Pinned {
-			what = "pinned"
-		}
-		s.save(row, what)
 	case "s":
 		s.signOff(row)
 		return nil, true
@@ -459,13 +435,6 @@ func actions(r *goalRow) []action {
 				action{"F", "Open its stacked pull requests"},
 				action{"U", "Push it straight to " + g.Base})
 		}
-	}
-	if g.State != queue.GoalDone {
-		pin := action{"P", "Pin it, so its tasks run before other goals'"}
-		if g.Pinned {
-			pin.label = "Unpin it"
-		}
-		a = append(a, pin)
 	}
 	return a
 }
@@ -765,11 +734,7 @@ func (s *Status) renderRow(b *strings.Builder, i int, r goalRow) {
 	if r.goal.Name == s.focus.Goal {
 		focused = tui.Color("●", tui.Cyan)
 	}
-	name := r.goal.Name
-	if r.goal.Pinned {
-		name += " 📌"
-	}
-	fmt.Fprintf(b, "%s%s %s %s\n", mark, focused, tui.Bold(name), goalState(r))
+	fmt.Fprintf(b, "%s%s %s %s\n", mark, focused, tui.Bold(r.goal.Name), goalState(r))
 	fmt.Fprintf(
 		b,
 		"      %s",

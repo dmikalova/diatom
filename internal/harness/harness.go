@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -238,29 +239,25 @@ func (h *Harness) load(ctx context.Context, path string) (Repo, []*schedule.Goal
 		if g.State != queue.GoalActive && g.State != queue.GoalPlanning {
 			continue
 		}
-		ready, err := h.loadGoal(ctx, repo, g)
+		sg, err := h.loadGoal(ctx, repo, g)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("goal %s: %w", g.Name, err))
 			continue
 		}
-		goals = append(goals, &schedule.Goal{
-			Repo:    path,
-			Name:    g.Name,
-			Pinned:  g.Pinned,
-			Created: g.Created,
-			Ready:   ready,
-		})
+		sg.Repo, sg.Name, sg.Created = path, g.Name, g.Created
+		goals = append(goals, sg)
 	}
 	return repo, goals, errors.Join(append(errs, ctx.Err())...)
 }
 
 // loadGoal brings in what the human decided for a goal since the last look,
-// answers, reviews and feedback, and returns its tasks ready to run.
+// answers, reviews and feedback, and returns its tasks ready to run, with
+// the planned work that can follow them in the same session.
 func (h *Harness) loadGoal(
 	ctx context.Context,
 	repo Repo,
 	g *queue.Goal,
-) ([]*queue.Task, error) {
+) (*schedule.Goal, error) {
 	s := repo.Store
 	if err := h.applyAnswers(s, g.Name); err != nil {
 		return nil, err
@@ -272,7 +269,7 @@ func (h *Harness) loadGoal(
 	if waiting := s.Waiting(g); len(waiting) > 0 {
 		// Nothing starts, grilling included, until the goals it waits for
 		// have landed: its branch then starts from them (ADR 0003).
-		return nil, nil
+		return &schedule.Goal{}, nil
 	}
 	switch {
 	case g.Name == queue.IntakeGoal:
@@ -301,7 +298,17 @@ func (h *Harness) loadGoal(
 			ready = append(ready, t)
 		}
 	}
-	return ready, nil
+	sg := &schedule.Goal{Ready: ready, Unfinished: map[string]bool{}}
+	for _, t := range tasks {
+		if t.State != queue.Done {
+			sg.Unfinished[t.ID] = true
+		}
+		if g.State == queue.GoalActive && t.State == queue.Pending && runnable[t.Kind] &&
+			t.Workstream != "" && !slices.Contains(ready, t) {
+			sg.Later = append(sg.Later, t)
+		}
+	}
+	return sg, nil
 }
 
 // applyAnswers adds each answered question's answer to its task, makes the

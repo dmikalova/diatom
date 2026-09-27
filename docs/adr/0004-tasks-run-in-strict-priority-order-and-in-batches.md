@@ -21,6 +21,8 @@ Triage and grilling come after revisions because a revision corrects work that l
 
 A task waiting on an answer from the human is not ready and is skipped (ADR 0009).
 
-- **A session takes a batch**: as many ready tasks as fit, of the same kind, in the same workstream. For revisions this means every pending revision in the workstream, capped at a configurable size (default 10).
+- **A session takes a batch**: as many ready tasks as fit, of the same kind, in the same workstream, capped at a configurable size (default 5). For revisions this means every pending revision in the workstream.
+  - **A batch goes on down a chain.** After its ready tasks, it takes the workstream's tasks that wait only on tasks already done or in the batch, in order. Planned work in a workstream usually depends on the task before it, so without this each task would pay for a session of its own.
+  - **Among work of the same kind, the older goal goes first.** There is no pinning: work worth doing runs, work that should wait is parked, and work that depends on another goal waits for it (ADR 0003).
 - **Planned work is split into small tasks at planning time**, so batches of planned work have the right size too.
 - **Batches never span workstreams**, because a session runs in exactly one worktree.

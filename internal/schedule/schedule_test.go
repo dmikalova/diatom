@@ -109,22 +109,6 @@ func TestNextRespectsCaps(t *testing.T) {
 	}
 }
 
-func TestNextPinnedFirst(t *testing.T) {
-	now := time.Now()
-	old := &Goal{
-		Repo:    "vex",
-		Name:    "old",
-		Created: now,
-		Ready:   []*queue.Task{task("1", queue.GateRepair, "a")},
-	}
-	pinned := &Goal{Repo: "vex", Name: "pinned", Pinned: true, Created: now.Add(time.Hour),
-		Ready: []*queue.Task{task("1", queue.Planned, "a")}}
-	got := Next([]*Goal{old, pinned}, nil, Limits{})
-	if len(got) != 1 || got[0].Goal != "pinned" {
-		t.Errorf("Next = %+v, want the pinned goal first", got)
-	}
-}
-
 func TestNextOrdersWithinKind(t *testing.T) {
 	late := task("1", queue.Planned, "a")
 	late.Priority = 2
@@ -172,5 +156,47 @@ func TestNextHigherGoalFirst(t *testing.T) {
 	lim := Limits{Repos: map[string]RepoLimits{"vex": {Sessions: 1}}}
 	if got := Next([]*Goal{lower, top}, nil, lim); len(got) != 1 || got[0].Goal != "top" {
 		t.Errorf("Next = %+v, want the top goal", got)
+	}
+}
+
+// TestNextChainsDependentTasks pins that a session goes on to the tasks
+// that wait only on tasks in it, in its own workstream, up to the cap.
+func TestNextChainsDependentTasks(t *testing.T) {
+	dep := func(tk *queue.Task, on ...string) *queue.Task { tk.DependsOn = on; return tk }
+	first := task("1", queue.Planned, "uitest")
+	g := &Goal{
+		Repo:  "vex",
+		Name:  "g",
+		Ready: []*queue.Task{first},
+		Later: []*queue.Task{
+			dep(task("3", queue.Planned, "uitest"), "2"),
+			dep(task("2", queue.Planned, "uitest"), "1"),
+			dep(
+				task("4", queue.Planned, "uitest"),
+				"1",
+				"9",
+			), // 9 is another workstream's, not done
+			dep(task("5", queue.Planned, "web"), "1"),
+		},
+		Unfinished: map[string]bool{
+			"1": true,
+			"2": true,
+			"3": true,
+			"4": true,
+			"5": true,
+			"9": true,
+		},
+	}
+	got := Next([]*Goal{g}, nil, Limits{Repos: map[string]RepoLimits{"vex": {Sessions: 1}}})
+	if len(got) != 1 || !slices.Equal(ids(got[0]), []string{"1", "2", "3"}) {
+		t.Fatalf("Next = %+v, want the chain 1, 2, 3", got)
+	}
+	got = Next(
+		[]*Goal{g},
+		nil,
+		Limits{Repos: map[string]RepoLimits{"vex": {Sessions: 1, Batch: 2}}},
+	)
+	if len(got) != 1 || !slices.Equal(ids(got[0]), []string{"1", "2"}) {
+		t.Errorf("Next with a batch of 2 = %+v", got)
 	}
 }

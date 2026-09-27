@@ -177,10 +177,9 @@ func TestStatus(t *testing.T) {
 		t.Errorf("after esc at the list, focus = %+v, want the repo", fc)
 	}
 
-	key(s, "p", "P")
-	g, _ := f.store.Goal("set")
-	if g.State != queue.GoalActive || !g.Pinned {
-		t.Errorf("after p and P, goal = %+v", g)
+	key(s, "p")
+	if g, _ := f.store.Goal("set"); g.State != queue.GoalActive {
+		t.Errorf("after p, goal = %+v, want it resumed", g)
 	}
 	s.Update(tickMsg{})
 }
@@ -805,18 +804,6 @@ func TestStatusGoalStates(t *testing.T) {
 	}
 	if got := line(); got != "set ready to finish" {
 		t.Errorf("with everything reviewed: %q", got)
-	}
-}
-
-func TestStatusListsPinnedGoalsFirst(t *testing.T) {
-	f := newFixture(t)
-	if err := f.store.CreateGoal(&queue.Goal{Name: "later", State: queue.GoalActive,
-		Created: time.Unix(2000, 0), Pinned: true}); err != nil {
-		t.Fatal(err)
-	}
-	s := NewStatus(context.Background(), f.env)
-	if len(s.rows) != 2 || s.rows[0].goal.Name != "later" {
-		t.Errorf("rows = %v, %v", s.rows[0].goal.Name, s.rows[1].goal.Name)
 	}
 }
 

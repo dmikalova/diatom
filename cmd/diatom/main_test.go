@@ -102,14 +102,14 @@ func TestGoalAndTaskCommands(t *testing.T) {
 		t.Error("task add accepted an unknown workstream")
 	}
 
-	for _, sub := range []string{"pin", "park"} {
-		if code, _, stderr := diatom(t, "", "goal", sub, "set"); code != 0 {
-			t.Fatalf("goal %s: %s", sub, stderr)
-		}
+	if code, _, stderr := diatom(t, "", "goal", "park", "set"); code != 0 {
+		t.Fatalf("goal park: %s", stderr)
+	}
+	if code, _, _ := diatom(t, "", "goal", "pin", "set"); code != 2 {
+		t.Error("goal pin was accepted")
 	}
 	_, stdout, _ = diatom(t, "", "goal", "list")
-	if !strings.Contains(stdout, "set") || !strings.Contains(stdout, "parked") ||
-		!strings.Contains(stdout, "pinned") {
+	if !strings.Contains(stdout, "set") || !strings.Contains(stdout, "parked") {
 		t.Errorf("goal list = %q", stdout)
 	}
 	_, stdout, _ = diatom(t, "", "status")

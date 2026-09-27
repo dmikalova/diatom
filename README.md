@@ -127,7 +127,7 @@ gateTimeout = "2m"                # a gate running longer is stuck, and fails
 commandTimeout = "30s"            # an agent's command running longer is stopped
 autoApprove = ["*_test.go"]       # files whose hunks are approved without review
 maxSessions = 1                   # sessions at once in this repo
-maxBatch = 10                     # tasks per session
+maxBatch = 5                      # tasks per session, following chains of dependent tasks
 commitCheck = "project-standards commit-msg"   # lints a commit message file
 instructions = ["~/AGENTS.md"]    # appended to every agent's system prompt
 

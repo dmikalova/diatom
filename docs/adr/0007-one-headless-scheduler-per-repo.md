@@ -13,7 +13,7 @@ diatom first ran one scheduler per machine across every repo it knew about, with
 **diatom works in one repo: the one it is started in. Each repo has one headless scheduler (`diatom run`), which owns the repo's queue, git operations and agent sessions. Every pane is a separate client that reads and writes the repo's `.diatom/` state.**
 
 - **Every command finds its repo from the directory it runs in**, anywhere in the repo, a goal's worktree included. Outside a git repo, and in a repo that doesn't ignore `.diatom/`, diatom refuses to run. Working in two repos means running two diatoms.
-- **The scheduler picks the highest-priority ready task across the repo's active goals.** Goals can be pinned to be picked first. The repo sets its maximum number of sessions. It takes the repo's lock, `.diatom/run.lock`, so a second `diatom run` in the same repo refuses to start.
+- **The scheduler picks the highest-priority ready task across the repo's active goals.** The repo sets its maximum number of sessions. It takes the repo's lock, `.diatom/run.lock`, so a second `diatom run` in the same repo refuses to start.
 - **Whether a goal is active or parked is saved in the goal itself**, so it survives restarts. New goals start in planning.
 - **`diatom workspace` opens the repo's zellij session**, named for the repo, which you can detach from and reattach to, with four panes:
   - **review**: the native reviewer (ADR 0008)

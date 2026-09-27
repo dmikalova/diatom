@@ -11,7 +11,7 @@
 //	diatom goal new <name> [-title text] -ws engine,cards:engine -active
 //	diatom goal plan|approve <name>
 //	diatom goal list
-//	diatom goal activate|park|pin|unpin <name>
+//	diatom goal activate|park <name>
 //	diatom goal after <name> [goal...]
 //	diatom goal done <name> [-force]
 //	diatom goal finish <name> [-push | -prs] [-remote origin] [-force]
@@ -123,7 +123,7 @@ const usage = `Usage:
   diatom goal new <name> -ws engine,cards:engine -active   skip grilling
   diatom goal plan|approve <name>   show or sign off a goal's plan
   diatom goal list
-  diatom goal activate|park|pin|unpin <name>
+  diatom goal activate|park <name>
   diatom goal after <name> [goal...]   wait for those goals to finish; none clears it
   diatom goal done <name> [-force]  finish a goal and lay it out for landing
   diatom goal finish <name> [-push | -prs] [-remote origin]   land a done goal
