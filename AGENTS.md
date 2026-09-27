@@ -19,7 +19,8 @@ Run `mage ci:fix && mage ci:check` before calling work done. It must print
 | `internal/queue`         | Goals, tasks and questions as files (ADR 0002)           |
 | `internal/session`       | The files one agent session shares with the harness      |
 | `internal/git`           | Every git operation the harness owns (ADRs 0003, 0005)   |
-| `internal/hook`          | The PreToolUse git block and the Stop gate (ADR 0005)    |
+| `internal/hook`          | PreToolUse's blocks and the Stop gate (ADR 0005)         |
+| `internal/roster`        | The repo's goals as agents see them (ADR 0011)           |
 | `internal/runner`        | The runner interface, and `claude/` its first backend    |
 | `internal/commitmsg`     | Commit messages on the cheapest profile (ADR 0005)       |
 | `internal/review`        | Hunks, review decisions and the review queue (ADR 0001)  |

@@ -427,7 +427,7 @@ func (h *Harness) startGoal(ctx context.Context, repo Repo, e session.Entry) (*q
 	if body == "" {
 		body = e.Title
 	}
-	g, err := plan.NewGoal(ctx, s, "", e.Title, body,
+	g, err := plan.NewGoal(ctx, s, "", e.Title, e.Description, body,
 		queue.Origin{Type: "triage", Ref: e.Task}, h.now())
 	if err != nil {
 		return nil, err

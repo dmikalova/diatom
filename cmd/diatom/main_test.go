@@ -500,7 +500,21 @@ func TestPlanningToolCommands(t *testing.T) {
 	); code != 0 {
 		t.Fatalf("add-task: %s", stderr)
 	}
-	if code, _, stderr := diatom(t, "", "task", "new-goal", "0001", "-title", "Web UI"); code != 0 {
+	if code, _, stderr := diatom(
+		t,
+		"",
+		"task",
+		"new-goal",
+		"0001",
+		"-title",
+		"Web UI",
+	); code != 2 ||
+		!strings.Contains(stderr, "-description") {
+		t.Errorf("new-goal without a description = %d %q", code, stderr)
+	}
+	if code, _, stderr := diatom(
+		t, "", "task", "new-goal", "0001", "-title", "Web UI", "-description", "A browser client.",
+	); code != 0 {
 		t.Fatalf("new-goal: %s", stderr)
 	}
 	planFile := filepath.Join(t.TempDir(), "plan.yaml")
@@ -516,6 +530,8 @@ func TestPlanningToolCommands(t *testing.T) {
 		"0001",
 		"-title",
 		"ForgeKey",
+		"-description",
+		"x",
 		"-plan",
 		planFile,
 	); code != 0 ||
@@ -533,6 +549,8 @@ func TestPlanningToolCommands(t *testing.T) {
 		"0001",
 		"-title",
 		"Bad",
+		"-description",
+		"x",
 		"-plan",
 		planFile,
 	); code != 1 ||
@@ -580,7 +598,8 @@ func TestPlanningToolCommands(t *testing.T) {
 	if len(r.Adds) != 1 || r.Adds[0].Title != "Weaken ward" || r.Adds[0].Goal != "set" ||
 		strings.Join(r.Adds[0].After, ",") != "0003,0004" ||
 		r.Adds[0].Text != "Ward stops 1." ||
-		len(r.Goals) != 2 || r.Goals[1].Plan != good ||
+		len(r.Goals) != 2 || r.Goals[0].Description != "A browser client." ||
+		r.Goals[1].Plan != good ||
 		len(
 			r.Feedback,
 		) != 1 || r.Feedback[0].Goal != "grim" || r.Feedback[0].Text != "Split cards." {
@@ -693,5 +712,23 @@ func TestGoalAfter(t *testing.T) {
 	}
 	if _, stdout, _ := diatom(t, "", "goal", "list"); strings.Contains(stdout, "after") {
 		t.Errorf("list after clearing = %q", stdout)
+	}
+}
+
+func TestTaskGoals(t *testing.T) {
+	inRepo(t)
+	diatom(t, "", "goal", "new", "set", "-title", "Next set", "-ws", "engine", "-active")
+	diatom(t, "", "task", "add", "-goal", "set", "-ws", "engine", "Add ward")
+	code, stdout, stderr := diatom(t, "", "task", "goals")
+	if code != 0 || stdout != "- `set`: Next set (active, 0 of 1 tasks done)\n" {
+		t.Errorf("task goals = %d %q %q", code, stdout, stderr)
+	}
+	code, stdout, stderr = diatom(t, "", "task", "goals", "set")
+	if code != 0 || !strings.Contains(stdout, "- 0001 pending [engine]: Add ward") {
+		t.Errorf("task goals set = %d %q %q", code, stdout, stderr)
+	}
+	if code, _, stderr := diatom(t, "", "task", "goals", "web"); code != 1 ||
+		!strings.Contains(stderr, "the goals are set") {
+		t.Errorf("task goals web = %d %q", code, stderr)
 	}
 }

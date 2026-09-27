@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/dmikalova/diatom/internal/gate"
+	"github.com/dmikalova/diatom/internal/hook"
 	"github.com/dmikalova/diatom/internal/runner"
 )
 
@@ -270,7 +271,10 @@ func hookSettings(h runner.Hooks) map[string][]hookMatcher {
 	hooks := map[string][]hookMatcher{}
 	if h.PreToolUse != "" {
 		hooks["PreToolUse"] = []hookMatcher{
-			{Matcher: "Bash", Hooks: []hookCommand{{Type: "command", Command: h.PreToolUse}}},
+			{
+				Matcher: strings.Join(append([]string{"Bash"}, hook.FileTools...), "|"),
+				Hooks:   []hookCommand{{Type: "command", Command: h.PreToolUse}},
+			},
 		}
 	}
 	if h.Stop != "" {

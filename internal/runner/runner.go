@@ -64,7 +64,8 @@ type Spec struct {
 
 // Hooks are shell commands run at the agent's hook points.
 type Hooks struct {
-	// PreToolUse runs before each Bash command and may deny it.
+	// PreToolUse runs before each Bash command and file tool, and may deny
+	// it.
 	PreToolUse string
 	// Stop runs when the agent tries to end the session and may send it back
 	// to work.

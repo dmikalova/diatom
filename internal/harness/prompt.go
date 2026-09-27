@@ -9,6 +9,7 @@ import (
 
 	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
+	"github.com/dmikalova/diatom/internal/roster"
 	"github.com/dmikalova/diatom/internal/schedule"
 )
 
@@ -25,6 +26,8 @@ type PromptInput struct {
 	Merging bool
 	// Guides are the AGENTS.md files below the worktree's root.
 	Guides []string
+	// Goals are the repo's goals, this one included.
+	Goals []roster.Brief
 }
 
 // Prompt builds a batch's instructions. ADR 0006 has prompts refer to files
@@ -88,6 +91,8 @@ func Prompt(in PromptInput) string {
 		b.WriteString("\n")
 	}
 
+	writeOthers(&b, in)
+
 	switch in.Batch.Kind {
 	case queue.Revision:
 		b.WriteString(
@@ -137,6 +142,24 @@ func Prompt(in PromptInput) string {
 	}
 	b.WriteString("\nWhen every task is done or asked, end the session.\n")
 	return b.String()
+}
+
+// writeOthers lists the repo's other goals, so an agent knows what they
+// cover and how far they have got without reading diatom's state.
+func writeOthers(b *strings.Builder, in PromptInput) {
+	var list strings.Builder
+	_ = roster.Write(&list, in.Goals, in.Goal.Name)
+	if list.Len() == 0 {
+		return
+	}
+	b.WriteString(
+		"## The repo's other goals\n\nOther work under way in this repo. Where yours touches one, " +
+			"this is where it stands. `diatom task goals <name>` shows one in full: its plan, workstreams " +
+			"and tasks. That command and this list are the only record of other goals: don't read " +
+			"`.diatom/` or other worktrees for it, and don't take the repo's own notes or todo files as " +
+			"their status.\n\n",
+	)
+	b.WriteString(list.String() + "\n")
 }
 
 func plural(n int, word string) string {
@@ -200,11 +223,13 @@ func (h *Harness) planningPrompt(repo Repo, g *queue.Goal, in PromptInput) (stri
 	b.WriteString("  - `diatom task note <id> \"<text>\"` records something worth keeping.\n")
 	b.WriteString("  - `diatom task done <id>` marks the task done.\n")
 	if in.Batch.Kind == queue.Triage {
-		if err := writeTriage(&b, repo); err != nil {
+		if err := writeTriage(&b, repo, in.Goals); err != nil {
 			return "", err
 		}
 	} else {
 		writeGrilling(&b, repo, in)
+		b.WriteString("\n")
+		writeOthers(&b, in)
 	}
 	if len(in.Guides) > 0 {
 		b.WriteString("\n## Directory instructions\n\n")
@@ -228,7 +253,7 @@ func (h *Harness) planningPrompt(repo Repo, g *queue.Goal, in PromptInput) (stri
 	return b.String(), nil
 }
 
-func writeTriage(b *strings.Builder, repo Repo) error {
+func writeTriage(b *strings.Builder, repo Repo, briefs []roster.Brief) error {
 	b.WriteString(
 		"  - `diatom task add-task <id> -goal <goal> -ws <workstream> -title \"<title>\" " +
 			"[-after <ids>] [-profile <profile>] < body` adds a task to one of a goal's workstreams, with its " +
@@ -244,8 +269,11 @@ func writeTriage(b *strings.Builder, repo Repo) error {
 			"the title of one you start in this session. No -after clears it.\n",
 	)
 	b.WriteString(
-		"  - `diatom task new-goal <id> -title \"<title>\" [-after <goals>] [-plan <plan.yaml>] < description` " +
-			"starts a new goal, which is grilled before any work starts. Pass -plan only when the input already " +
+		"  - `diatom task new-goal <id> -title \"<title>\" -description \"<line>\" [-after <goals>] " +
+			"[-plan <plan.yaml>] < brief` starts a new goal, which is grilled before any work starts. The " +
+			"description says in one plain sentence what the goal is for, beyond its title: it is how agents on " +
+			"other goals, and the human answering its questions, tell it apart. The brief on stdin is " +
+			"everything grilling starts from. Pass -plan only when the input already " +
 			"decides everything, workstreams and tasks: the goal then skips grilling and waits for the human " +
 			"to sign the plan off. The plan's format is below.\n\n",
 	)
@@ -254,7 +282,7 @@ func writeTriage(b *strings.Builder, repo Repo) error {
 			"to a handful of playtest notes or a comment from review. Sort it into the repo's goals:\n\n" +
 			"- Small, clear-cut work for an existing goal becomes tasks on its workstreams.\n" +
 			"- New intent becomes a new goal, or several when the input covers separate things that land " +
-			"apart. Draw each goal's description from the input and the files it points at, so grilling " +
+			"apart. Draw each goal's brief from the input and the files it points at, so grilling " +
 			"starts from everything it needs.\n" +
 			"- Anything unclear, or that needs a design decision, is a question to the human.\n" +
 			"- When goals would edit the same code, or the human orders them, make the later ones wait " +
@@ -278,11 +306,15 @@ func writeTriage(b *strings.Builder, repo Repo) error {
 	if len(goals) == 0 {
 		b.WriteString("None yet.\n\n")
 	}
+	descriptions := map[string]string{}
+	for _, br := range briefs {
+		descriptions[br.Name] = br.Description
+	}
 	for _, g := range goals {
 		if g.State == queue.GoalFinished {
 			continue
 		}
-		if err := writeGoal(b, repo.Store, g); err != nil {
+		if err := writeGoal(b, repo.Store, g, descriptions[g.Name]); err != nil {
 			return err
 		}
 	}
@@ -291,8 +323,11 @@ func writeTriage(b *strings.Builder, repo Repo) error {
 
 // writeGoal describes a goal for triage: its workstreams, and the tasks new
 // work can be placed after.
-func writeGoal(b *strings.Builder, s *queue.Store, g *queue.Goal) error {
+func writeGoal(b *strings.Builder, s *queue.Store, g *queue.Goal, description string) error {
 	fmt.Fprintf(b, "### %s: %s (%s)\n\n", g.Name, g.Title, g.State)
+	if description != "" {
+		b.WriteString(description + "\n\n")
+	}
 	if len(g.After) > 0 {
 		fmt.Fprintf(b, "Waits for: %s\n\n", strings.Join(g.After, ", "))
 	}

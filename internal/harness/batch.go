@@ -18,6 +18,7 @@ import (
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
+	"github.com/dmikalova/diatom/internal/roster"
 	"github.com/dmikalova/diatom/internal/runner"
 	"github.com/dmikalova/diatom/internal/schedule"
 	"github.com/dmikalova/diatom/internal/session"
@@ -301,11 +302,16 @@ func (h *Harness) newSession(
 	if err != nil {
 		return "", spec, err
 	}
+	goals, err := roster.Briefs(s)
+	if err != nil {
+		return "", spec, err
+	}
 	in := PromptInput{
 		Goal: g, Batch: b, Gate: cfg.Gate, Timeout: cfg.CommandTimeout,
 		TaskDir: filepath.Join(s.GoalDir(g.Name), "tasks", string(queue.Active)),
 		Merging: wt.MergeInProgress(ctx),
 		Guides:  guides,
+		Goals:   goals,
 	}
 	var prompt string
 	if planningKind(b.Kind) {

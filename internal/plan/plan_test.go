@@ -132,6 +132,7 @@ func TestNewGoal(t *testing.T) {
 		s,
 		"",
 		"Implement the new KeyForge set: Grim Reminders!",
+		"Every card in the set, playable.",
 		"All 400 cards.",
 		queue.Origin{Type: "intake"},
 		now,
@@ -143,16 +144,19 @@ func TestNewGoal(t *testing.T) {
 		g.Base != "main" {
 		t.Errorf("goal = %+v", g)
 	}
+	if saved, _ := s.Goal(g.Name); saved.Description != "Every card in the set, playable." {
+		t.Errorf("description = %q", saved.Description)
+	}
 	tasks, _ := s.Tasks(g.Name)
 	if len(tasks) != 1 || tasks[0].Kind != queue.Grilling || tasks[0].Profile != "planning" ||
 		tasks[0].Body != "All 400 cards.\n" {
 		t.Errorf("tasks = %+v", tasks)
 	}
-	again, err := NewGoal(ctx, s, "", "Implement the new KeyForge set", "", queue.Origin{}, now)
+	again, err := NewGoal(ctx, s, "", "Implement the new KeyForge set", "", "", queue.Origin{}, now)
 	if err != nil || again.Name != "implement-the-new-keyforge-set-2" {
 		t.Errorf("second goal = %+v, %v", again, err)
 	}
-	if blank, _ := NewGoal(ctx, s, "", "!!!", "", queue.Origin{}, now); blank.Name != "goal" {
+	if blank, _ := NewGoal(ctx, s, "", "!!!", "", "", queue.Origin{}, now); blank.Name != "goal" {
 		t.Errorf("goal from a title with no words = %s", blank.Name)
 	}
 }
@@ -161,7 +165,7 @@ func TestApprove(t *testing.T) {
 	ctx := context.Background()
 	s := newRepo(t)
 	now := time.Unix(100, 0).UTC()
-	g, err := NewGoal(ctx, s, "set", "New set", "", queue.Origin{}, now)
+	g, err := NewGoal(ctx, s, "set", "New set", "", "", queue.Origin{}, now)
 	if err != nil {
 		t.Fatal(err)
 	}

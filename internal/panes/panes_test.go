@@ -523,7 +523,16 @@ func TestIntake(t *testing.T) {
 func TestStatusSignsOffAPlan(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	g, err := plan.NewGoal(ctx, f.store, "grim", "Grim Reminders", "", queue.Origin{}, f.env.Now())
+	g, err := plan.NewGoal(
+		ctx,
+		f.store,
+		"grim",
+		"Grim Reminders",
+		"",
+		"",
+		queue.Origin{},
+		f.env.Now(),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -571,7 +580,7 @@ func TestStatusSignsOffAPlan(t *testing.T) {
 // newPlan starts a goal in planning with a plan handed in.
 func newPlan(t *testing.T, f *fixture, name string) {
 	t.Helper()
-	if _, err := plan.NewGoal(context.Background(), f.store, name, "Title of "+name, "",
+	if _, err := plan.NewGoal(context.Background(), f.store, name, "Title of "+name, "", "",
 		queue.Origin{}, f.env.Now()); err != nil {
 		t.Fatal(err)
 	}

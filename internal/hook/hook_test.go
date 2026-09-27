@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -102,6 +103,7 @@ func TestPreToolUse(t *testing.T) {
 	if err := PreToolUse(
 		strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"git commit -m x"}}`),
 		&out,
+		Scope{},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -124,12 +126,65 @@ func TestPreToolUse(t *testing.T) {
 		`{"tool_name":"Edit","tool_input":{"file_path":"x"}}`,
 	} {
 		out.Reset()
-		if err := PreToolUse(strings.NewReader(ev), &out); err != nil || out.Len() != 0 {
+		if err := PreToolUse(strings.NewReader(ev), &out, Scope{}); err != nil || out.Len() != 0 {
 			t.Errorf("PreToolUse(%s) wrote %q, %v", ev, out.String(), err)
 		}
 	}
-	if err := PreToolUse(strings.NewReader("{"), &out); err == nil {
+	if err := PreToolUse(strings.NewReader("{"), &out, Scope{}); err == nil {
 		t.Error("PreToolUse accepted broken JSON")
+	}
+}
+
+func TestPreToolUseScope(t *testing.T) {
+	state := "/repo/.diatom"
+	own := state + "/goals/web/worktrees/ui"
+	scope := Scope{State: state, Allowed: []string{own, state + "/goals/web/adr"}}
+	for _, tc := range []struct {
+		tool, input string
+		deny        bool
+	}{
+		{"Read", `{"file_path":"/repo/.diatom/goals/engine/goal.yaml"}`, true},
+		{"Read", `{"file_path":"../../../engine/plan.yaml"}`, true},
+		{"Grep", `{"pattern":"x","path":"/repo/.diatom/goals/engine/worktrees/core"}`, true},
+		{"Glob", `{"pattern":"/repo/.diatom/goals/*/plan.yaml"}`, true},
+		{"Glob", `{"pattern":"../../../*/tasks/**"}`, true},
+		{"Write", `{"file_path":"/repo/.diatom/goals/web/goal.yaml"}`, true},
+		{"Read", `{"file_path":"internal/web/game.go"}`, false},
+		{"Read", `{"file_path":"/repo/.diatom/goals/web/worktrees/ui/go.mod"}`, false},
+		{"Write", `{"file_path":"/repo/.diatom/goals/web/adr/0050-x.md"}`, false},
+		{"Glob", `{"pattern":"**/*.go"}`, false},
+		{"Grep", `{"pattern":"/repo/.diatom/goals"}`, false},
+		{"Read", `{"file_path":"/Users/me/notes.md"}`, false},
+		{"WebFetch", `{"url":"/repo/.diatom/x"}`, false},
+	} {
+		var out bytes.Buffer
+		ev := fmt.Sprintf(`{"tool_name":%q,"cwd":%q,"tool_input":%s}`, tc.tool, own, tc.input)
+		if err := PreToolUse(strings.NewReader(ev), &out, scope); err != nil {
+			t.Fatal(err)
+		}
+		if denied := bytes.Contains(out.Bytes(), []byte(`"deny"`)); denied != tc.deny {
+			t.Errorf(
+				"%s %s denied = %v, want %v: %s",
+				tc.tool,
+				tc.input,
+				denied,
+				tc.deny,
+				out.String(),
+			)
+		}
+		if tc.deny && !bytes.Contains(out.Bytes(), []byte("diatom task goals")) {
+			t.Errorf(
+				"%s %s: reason doesn't point to diatom task goals: %s",
+				tc.tool,
+				tc.input,
+				out.String(),
+			)
+		}
+	}
+	var out bytes.Buffer
+	ev := `{"tool_name":"Read","tool_input":{"file_path":"/repo/.diatom/goals/engine/goal.yaml"}}`
+	if err := PreToolUse(strings.NewReader(ev), &out, Scope{}); err != nil || out.Len() != 0 {
+		t.Errorf("outside a session: wrote %q, %v", out.String(), err)
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"github.com/dmikalova/diatom/internal/intake"
 	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
+	"github.com/dmikalova/diatom/internal/roster"
 	"github.com/dmikalova/diatom/internal/schedule"
 	"github.com/dmikalova/diatom/internal/session"
 )
@@ -265,7 +266,16 @@ func TestTriageDoneMovesIntake(t *testing.T) {
 func TestFeedbackRegrillsAPlan(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	g, err := plan.NewGoal(ctx, f.store, "next", "Next set", "Do it.", queue.Origin{}, time.Now())
+	g, err := plan.NewGoal(
+		ctx,
+		f.store,
+		"next",
+		"Next set",
+		"",
+		"Do it.",
+		queue.Origin{},
+		time.Now(),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,6 +376,7 @@ func TestGrillingDoneWithoutPlan(t *testing.T) {
 		"next",
 		"Next set",
 		"",
+		"",
 		queue.Origin{},
 		time.Now(),
 	)
@@ -395,7 +406,13 @@ func TestGrillingDoneWithoutPlan(t *testing.T) {
 func TestPlanningPromptsSayOnlyTheToolReachesTheHuman(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	g, err := plan.NewGoal(ctx, f.store, "next", "Next set", "", queue.Origin{}, time.Now())
+	g, err := plan.NewGoal(
+		ctx, f.store, "next", "Next set", "The set after this one.", "", queue.Origin{}, time.Now(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	briefs, err := roster.Briefs(f.store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -407,7 +424,7 @@ func TestPlanningPromptsSayOnlyTheToolReachesTheHuman(t *testing.T) {
 	tasks, _ := f.store.Tasks(g.Name)
 	for kind, goal := range map[queue.Kind]*queue.Goal{queue.Grilling: g, queue.Triage: intakeGoal} {
 		p, err := f.h.planningPrompt(Repo{Store: f.store, Config: cfg}, goal,
-			PromptInput{Goal: goal, Batch: schedule.Batch{Kind: kind, Tasks: tasks}})
+			PromptInput{Goal: goal, Batch: schedule.Batch{Kind: kind, Tasks: tasks}, Goals: briefs})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -425,9 +442,26 @@ func TestPlanningPromptsSayOnlyTheToolReachesTheHuman(t *testing.T) {
 			!strings.Contains(p, "task feedback <id> -goal")) {
 			t.Errorf("triage prompt lacks the repo's goals or its tools:\n%s", p)
 		}
+		if kind == queue.Triage &&
+			!strings.Contains(p, "### next: Next set (planning)\n\nThe set after this one.") {
+			t.Errorf("triage prompt lacks the goals' descriptions:\n%s", p)
+		}
+		if kind == queue.Grilling && (!strings.Contains(p, "- `set`: ") ||
+			strings.Contains(p, "- `next`: ")) {
+			t.Errorf("grilling prompt doesn't list just the other goals:\n%s", p)
+		}
 	}
-	if work := Prompt(PromptInput{Goal: g, Batch: schedule.Batch{}}); !strings.Contains(work,
-		"Nobody reads your replies") || !strings.Contains(work, askGuide) {
+	set, _ := f.store.Goal("set")
+	work := Prompt(PromptInput{Goal: set, Batch: schedule.Batch{}, Goals: briefs})
+	if !strings.Contains(work, "Nobody reads your replies") || !strings.Contains(work, askGuide) {
 		t.Error("the work prompt lacks the unattended rule or how to ask a question")
+	}
+	if !strings.Contains(
+		work,
+		"- `next`: Next set (planning, 0 of 1 tasks done). The set after this one.",
+	) ||
+		strings.Contains(work, "- `set`: ") ||
+		!strings.Contains(work, "diatom task goals <name>") {
+		t.Errorf("the work prompt doesn't list the other goals:\n%s", work)
 	}
 }

@@ -57,9 +57,13 @@ const IntakeGoal = "_intake"
 type Goal struct {
 	// Name is the goal's directory name and branch prefix. It is not stored
 	// in goal.yaml.
-	Name  string    `yaml:"-"`
-	Title string    `yaml:"title"`
-	State GoalState `yaml:"state"`
+	Name  string `yaml:"-"`
+	Title string `yaml:"title"`
+	// Description says in a line what the goal is for, so agents working on
+	// other goals and the human answering its questions know it at a glance.
+	// Triage writes it.
+	Description string    `yaml:"description,omitempty"`
+	State       GoalState `yaml:"state"`
 	// Base is the branch the integration branch started from.
 	Base        string       `yaml:"base"`
 	Created     time.Time    `yaml:"created"`

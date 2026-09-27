@@ -17,7 +17,7 @@ import (
 //
 //	diatom task add-task <id> -goal <goal> -ws <workstream> -title <title> [-after ids] [-profile p] < body
 //	diatom task feedback <id> -goal <goal> < text
-//	diatom task new-goal <id> -title <title> [-after goals] [-plan plan.yaml] < description
+//	diatom task new-goal <id> -title <title> -description <line> [-after goals] [-plan plan.yaml] < brief
 //	diatom task after <id> -goal <goal> [-after goals]
 //	diatom task plan <id> < plan.yaml
 func planningReport(sub string, args []string, stdin io.Reader, stdout io.Writer) error {
@@ -27,6 +27,7 @@ func planningReport(sub string, args []string, stdin io.Reader, stdout io.Writer
 	ws := fs.String("ws", "", "the workstream")
 	planFile := fs.String("plan", "", "the new goal's plan, when its work is already decided")
 	title := fs.String("title", "", "the title")
+	description := fs.String("description", "", "what a new goal is for, in a line")
 	after := fs.String("after", "", "ids of tasks that must be done first, comma-separated")
 	profile := fs.String("profile", "", "the profile, instead of the kind's default")
 	pos, err := parseInterspersed(fs, args)
@@ -50,16 +51,10 @@ func planningReport(sub string, args []string, stdin io.Reader, stdout io.Writer
 		if spec.Kind != queue.Triage {
 			return fmt.Errorf("task %s is only for triage sessions", sub)
 		}
-		if err := triageEntry(
-			&e,
-			sub,
-			*goal,
-			*title,
-			*ws,
-			*after,
-			*profile,
-			*planFile,
-		); err != nil {
+		if err := triageEntry(&e, sub, entryFlags{
+			goal: *goal, title: *title, description: *description, ws: *ws,
+			after: *after, profile: *profile, planFile: *planFile,
+		}); err != nil {
 			return err
 		}
 	case "plan":
@@ -109,9 +104,15 @@ func planningReport(sub string, args []string, stdin io.Reader, stdout io.Writer
 	return nil
 }
 
+// entryFlags are the flags of what a triage session hands in.
+type entryFlags struct {
+	goal, title, description, ws, after, profile, planFile string
+}
+
 // triageEntry fills in what a triage session hands in with add-task,
 // feedback or new-goal.
-func triageEntry(e *session.Entry, sub, goal, title, ws, after, profile, planFile string) error {
+func triageEntry(e *session.Entry, sub string, f entryFlags) error {
+	goal, title, ws, after, profile := f.goal, f.title, f.ws, f.after, f.profile
 	switch sub {
 	case "feedback":
 		if goal == "" || e.Text == "" {
@@ -140,14 +141,20 @@ func triageEntry(e *session.Entry, sub, goal, title, ws, after, profile, planFil
 		}
 		return nil
 	}
-	if strings.TrimSpace(title) == "" {
-		return fmt.Errorf("%w: task new-goal needs -title", errUsage)
+	description := strings.TrimSpace(f.description)
+	if strings.TrimSpace(title) == "" || description == "" {
+		return fmt.Errorf("%w: task new-goal needs -title and -description", errUsage)
 	}
-	e.Type, e.Title, e.After = session.EntryGoal, title, splitList(after)
-	if planFile == "" {
+	if strings.Contains(description, "\n") {
+		return fmt.Errorf("%w: -description is one line; the rest goes on stdin", errUsage)
+	}
+	e.Type, e.Title, e.Description, e.After = session.EntryGoal, title, description, splitList(
+		after,
+	)
+	if f.planFile == "" {
 		return nil
 	}
-	b, err := os.ReadFile(planFile)
+	b, err := os.ReadFile(f.planFile)
 	if err != nil {
 		return err
 	}

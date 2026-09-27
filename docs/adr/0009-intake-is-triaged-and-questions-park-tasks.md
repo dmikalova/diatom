@@ -14,7 +14,7 @@ New work doesn't always come as a well-formed goal. After a playtest, the human 
 - **Triage reads the repo and all of its goals, and sorts the intake into any of:**
   - tasks on the workstreams of any active or parked goal
   - feedback for a goal still in planning: a plan waiting for sign-off is set aside, and grilling starts another round with it
-  - one or more new goals, each grilled before work starts (ADR 0010), or signed off straight away when the intake already decides the work
+  - one or more new goals, each grilled before work starts (ADR 0010), or signed off straight away when the intake already decides the work. Triage gives each a one-line description of what it is for, which other goals' agents and the human see.
   - questions back to the human when something is unclear
 - **Triage reports through the task tool.** A task for a goal that is done, on a workstream the goal doesn't have, or after a task that doesn't exist becomes a question instead, because adding a workstream or changing dependencies needs the human (ADR 0010). A task for a goal in planning becomes feedback for its grilling. An intake is filed as done once its triage is, and not while triage waits on a question.
 - **Planning sessions can't end without reporting.** A question or plan written only in the agent's reply reaches nobody, so the Stop hook of triage and grilling sends the agent back, twice at most, until each task is asked about or handed in.

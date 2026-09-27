@@ -92,12 +92,13 @@ type Entry struct {
 	Tree string `json:"tree,omitempty"`
 	// Goal, Title, Workstream, After and Profile describe a task triage adds
 	// to a goal. Goal alone is the goal feedback is for, and Title alone a
-	// goal triage starts.
-	Goal       string   `json:"goal,omitempty"`
-	Title      string   `json:"title,omitempty"`
-	Workstream string   `json:"workstream,omitempty"`
-	After      []string `json:"after,omitempty"`
-	Profile    string   `json:"profile,omitempty"`
+	// goal triage starts, with its Description.
+	Goal        string   `json:"goal,omitempty"`
+	Title       string   `json:"title,omitempty"`
+	Description string   `json:"description,omitempty"`
+	Workstream  string   `json:"workstream,omitempty"`
+	After       []string `json:"after,omitempty"`
+	Profile     string   `json:"profile,omitempty"`
 	// Plan is the plan of a goal triage starts with its work already
 	// decided, as YAML, for the human to sign off without grilling.
 	Plan string `json:"plan,omitempty"`

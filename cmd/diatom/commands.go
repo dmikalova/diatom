@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"text/tabwriter"
@@ -21,6 +22,7 @@ import (
 	"github.com/dmikalova/diatom/internal/intake"
 	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
+	"github.com/dmikalova/diatom/internal/roster"
 	"github.com/dmikalova/diatom/internal/session"
 )
 
@@ -300,6 +302,7 @@ func goalNew(
 			s,
 			name[0],
 			*title,
+			"",
 			body,
 			queue.Origin{Type: "human"},
 			time.Now(),
@@ -456,8 +459,37 @@ func cmdTask(ctx context.Context, args []string, stdin io.Reader, stdout io.Writ
 		return taskReport(ctx, sub, rest, stdout)
 	case "add-task", "after", "feedback", "new-goal", "plan":
 		return planningReport(sub, rest, stdin, stdout)
+	case "goals":
+		return taskGoals(ctx, rest, stdout)
 	}
 	return fmt.Errorf("%w: unknown task subcommand %q", errUsage, args[0])
+}
+
+// taskGoals is how an agent reads the repo's goals: all of them in brief, or
+// one in full.
+func taskGoals(ctx context.Context, args []string, stdout io.Writer) error {
+	if len(args) > 1 {
+		return fmt.Errorf("%w: task goals takes at most a goal's name", errUsage)
+	}
+	s, err := here(ctx)
+	if err != nil {
+		return err
+	}
+	briefs, err := roster.Briefs(s)
+	if err != nil {
+		return err
+	}
+	if len(args) == 0 {
+		return roster.Write(stdout, briefs, "")
+	}
+	if !slices.ContainsFunc(briefs, func(b roster.Brief) bool { return b.Name == args[0] }) {
+		names := make([]string, 0, len(briefs))
+		for _, b := range briefs {
+			names = append(names, b.Name)
+		}
+		return fmt.Errorf("no goal %q; the goals are %s", args[0], strings.Join(names, ", "))
+	}
+	return roster.Detail(stdout, s, args[0])
 }
 
 func taskAdd(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
@@ -685,13 +717,30 @@ func cmdStatus(ctx context.Context, stdout io.Writer) error {
 	return ctx.Err()
 }
 
+// hookScope is the part of diatom's state the session's file tools may reach:
+// its worktree, its tasks and its goal's ADR drafts. Outside a session
+// nothing is held back.
+func hookScope() hook.Scope {
+	_, spec, err := session.FromEnv()
+	if err != nil || spec.Repo == "" {
+		return hook.Scope{}
+	}
+	s := queue.Open(spec.Repo)
+	goal := s.GoalDir(spec.Goal)
+	return hook.Scope{State: s.Root, Allowed: []string{
+		spec.Worktree,
+		filepath.Join(goal, "tasks", string(queue.Active)),
+		plan.DraftsDir(goal),
+	}}
+}
+
 func cmdHook(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
 	if len(args) != 1 {
 		return fmt.Errorf("%w: hook takes pre-tool-use or stop", errUsage)
 	}
 	switch args[0] {
 	case "pre-tool-use":
-		return hook.PreToolUse(stdin, stdout)
+		return hook.PreToolUse(stdin, stdout, hookScope())
 	case "stop":
 		// The event itself carries nothing the gate needs.
 		_, _ = io.Copy(io.Discard, stdin)

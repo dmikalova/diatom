@@ -42,6 +42,7 @@ func TestPreToolUseBlocksWaiting(t *testing.T) {
 	if err := PreToolUse(
 		strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"sleep 120; tail x"}}`),
 		&out,
+		Scope{},
 	); err != nil {
 		t.Fatal(err)
 	}

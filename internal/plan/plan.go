@@ -232,7 +232,7 @@ var slugRe = regexp.MustCompile(`[^a-z0-9]+`)
 func NewGoal(
 	ctx context.Context,
 	s *queue.Store,
-	name, title, body string,
+	name, title, description, body string,
 	origin queue.Origin,
 	now time.Time,
 ) (*queue.Goal, error) {
@@ -247,7 +247,14 @@ func NewGoal(
 			err,
 		)
 	}
-	g := &queue.Goal{Name: name, Title: title, State: queue.GoalPlanning, Base: base, Created: now}
+	g := &queue.Goal{
+		Name:        name,
+		Title:       title,
+		Description: strings.TrimSpace(description),
+		State:       queue.GoalPlanning,
+		Base:        base,
+		Created:     now,
+	}
 	if err := s.CreateGoal(g); err != nil {
 		return nil, err
 	}

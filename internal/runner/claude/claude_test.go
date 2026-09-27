@@ -203,7 +203,8 @@ func TestArgs(t *testing.T) {
 	if err := json.Unmarshal([]byte(args[len(args)-1]), &settings); err != nil {
 		t.Fatalf("settings %q: %v", args[len(args)-1], err)
 	}
-	if !settings.DisableBundledSkills || settings.Hooks["PreToolUse"][0].Matcher != "Bash" ||
+	if !settings.DisableBundledSkills ||
+		settings.Hooks["PreToolUse"][0].Matcher != "Bash|Read|Grep|Glob|Edit|MultiEdit|Write|NotebookEdit" ||
 		settings.Hooks["Stop"][0].Hooks[0].Command != "/bin/diatom hook stop" {
 		t.Errorf("settings = %+v", settings)
 	}

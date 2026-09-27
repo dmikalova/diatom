@@ -1,7 +1,8 @@
 // Package hook implements the two Claude Code hooks diatom gives every agent
 // session (ADR 0005). PreToolUse blocks git commands that change the
-// repository, because the harness does every git operation, and commands
-// that background or sleep to wait out the command time limit. Stop runs the gate
+// repository, because the harness does every git operation, commands that
+// background or sleep to wait out the command time limit, and file tools
+// reaching into diatom's state beyond the session's own. Stop runs the gate
 // before the session may end and sends a failure back to the agent, which
 // keeps fixing in the same session: the cheapest retry, because nothing has to
 // be reloaded.
@@ -24,24 +25,29 @@ import (
 // toolInput is the part of a PreToolUse event the hook reads.
 type toolInput struct {
 	ToolName  string `json:"tool_name"`
+	Cwd       string `json:"cwd"`
 	ToolInput struct {
-		Command string `json:"command"`
+		Command      string `json:"command"`
+		FilePath     string `json:"file_path"`
+		NotebookPath string `json:"notebook_path"`
+		Path         string `json:"path"`
+		Pattern      string `json:"pattern"`
 	} `json:"tool_input"`
 }
 
-// PreToolUse reads a PreToolUse event from in and, when it is a Bash command
-// that changes the repository through git, or backgrounds or sleeps to wait
-// out the command time limit, writes a deny decision to out.
-func PreToolUse(in io.Reader, out io.Writer) error {
+// PreToolUse reads a PreToolUse event from in and writes a deny decision to
+// out when it is a Bash command that changes the repository through git, or
+// backgrounds or sleeps to wait out the command time limit, or a file tool
+// reaching into diatom's state outside scope.
+func PreToolUse(in io.Reader, out io.Writer, scope Scope) error {
 	var ev toolInput
 	if err := json.NewDecoder(in).Decode(&ev); err != nil {
 		return fmt.Errorf("PreToolUse event: %w", err)
 	}
-	if ev.ToolName != "Bash" {
-		return nil
-	}
 	var reason string
-	if blocked := BlockedGit(ev.ToolInput.Command); blocked != "" {
+	if ev.ToolName != "Bash" {
+		reason = scope.deny(ev)
+	} else if blocked := BlockedGit(ev.ToolInput.Command); blocked != "" {
 		reason = fmt.Sprintf(
 			"diatom runs every git operation that changes the repository, so `%s` is blocked. "+
 				"Only edit files: when you finish, the harness runs the gate and commits your work. "+
