@@ -756,18 +756,10 @@ func (s *Status) renderRow(b *strings.Builder, i int, r goalRow) {
 		b.WriteString(tui.Dim(fmt.Sprintf(" · $%.2f", r.cost)))
 	}
 	b.WriteString("\n")
-	if len(r.waiting) > 0 {
-		b.WriteString(
-			"      " + tui.Color(
-				"waiting for "+strings.Join(r.waiting, ", ")+" to finish",
-				tui.Yellow,
-			) + "\n",
-		)
-	}
 	if r.goal.State == queue.GoalDone {
 		b.WriteString("      " + landingLine(r) + "\n")
 	}
-	if r.goal.State == queue.GoalPlanning {
+	if r.goal.State == queue.GoalPlanning && len(r.waiting) == 0 {
 		b.WriteString("      " + planningLine(r) + "\n")
 	}
 	s.renderActive(b, r)
@@ -825,6 +817,11 @@ func planningLine(r goalRow) string {
 // every task is done while hunks are left to review; with those reviewed
 // too it is ready to finish.
 func goalState(r goalRow) string {
+	if len(r.waiting) > 0 &&
+		(r.goal.State == queue.GoalActive || r.goal.State == queue.GoalPlanning) {
+		// Opening the goal says which goals it waits for.
+		return tui.Color("blocked", tui.Red)
+	}
 	if r.goal.State != queue.GoalActive || len(r.activeWork) > 0 {
 		return stateColor(r.goal.State)
 	}

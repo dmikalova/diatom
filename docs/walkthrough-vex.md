@@ -115,8 +115,8 @@ triage is done: open it with `enter` to watch triage work. Anything triage
 can't decide comes to the questions pane, filed under intake.
 
 The sweep waits: nothing of it runs, grilling included, until the effect
-catalog and ForgeKey goals are finished (step 7), and status shows it "waiting
-for" them. Its branch then starts from `main` with both landed, pulled or not,
+catalog and ForgeKey goals are finished (step 7). Status shows it as
+**blocked**, and opening it names the goals it waits for. Its branch then starts from `main` with both landed, pulled or not,
 so it never overlaps them. Set or change what a goal waits for from the command
 line too: `diatom goal after mass-mutation-sweep effect-catalog forgekey-purge`.
 

@@ -169,6 +169,13 @@ func (s *Status) renderMenu(d *detail, room int) string {
 		for i := range lines {
 			lines[i] = strings.TrimPrefix(lines[i], "    ")
 		}
+		if len(row.waiting) > 0 {
+			lines = append(
+				lines,
+				"  "+tui.Color("blocked: waits for "+strings.Join(row.waiting, ", ")+
+					" to finish, and nothing of it starts until then", tui.Red),
+			)
+		}
 		lines = append(lines, "")
 	}
 	sel := 0

@@ -212,9 +212,16 @@ func TestStatusShowsWaitingGoal(t *testing.T) {
 	if err := f.store.SetAfter("later", []string{"set"}); err != nil {
 		t.Fatal(err)
 	}
-	if out := ansi.Strip(NewStatus(context.Background(), f.env).render()); !strings.Contains(out,
-		"waiting for set to finish") {
+	s := NewStatus(context.Background(), f.env)
+	s.Update(tea.WindowSizeMsg{Width: 200, Height: 30})
+	out := ansi.Strip(s.render())
+	if !strings.Contains(out, "later blocked") || strings.Contains(out, "waits for") {
 		t.Errorf("status:\n%s", out)
+	}
+	s.sel = slices.IndexFunc(s.rows, func(r goalRow) bool { return r.goal.Name == "later" })
+	key(s, "enter")
+	if out := ansi.Strip(s.render()); !strings.Contains(out, "blocked: waits for set to finish") {
+		t.Errorf("the goal opened:\n%s", out)
 	}
 }
 
@@ -878,5 +885,23 @@ func TestStatusShowsCosts(t *testing.T) {
 	out := ansi.Strip(s.render())
 	if !strings.Contains(out, "Add ward · $3.38") || !strings.Contains(out, "Add cards · $1.62") {
 		t.Errorf("goal opened:\n%s", out)
+	}
+}
+
+func TestTaskListsItsDependencies(t *testing.T) {
+	f := newFixture(t)
+	if err := f.store.AddTask("set", &queue.Task{Title: "Card uses ward", Kind: queue.Planned,
+		Workstream: "cards", DependsOn: []string{"0001", "0001"}}); err != nil {
+		t.Fatal(err)
+	}
+	tv, err := loadTask(f.store, "set", "0002")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := NewStatus(context.Background(), f.env)
+	out := ansi.Strip(tv.render(s, 30))
+	if !strings.Contains(out, "depends on:\n  ○ 0001 [engine] Add ward pending") ||
+		strings.Count(out, "Add ward") != 1 {
+		t.Errorf("task:\n%s", out)
 	}
 }

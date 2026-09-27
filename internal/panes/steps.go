@@ -22,6 +22,7 @@ import (
 type taskView struct {
 	id        string
 	task      *queue.Task
+	deps      []*queue.Task
 	questions []*queue.Question
 	sessions  []*sessionView
 	sel, top  int
@@ -71,6 +72,13 @@ func loadTask(s *queue.Store, goal, id string) (*taskView, error) {
 		return nil, err
 	}
 	tv := &taskView{id: id, task: t}
+	for _, d := range t.DependsOn {
+		// A plan can name a dependency twice.
+		if dt, err := s.Task(goal, d); err == nil &&
+			!slices.ContainsFunc(tv.deps, func(x *queue.Task) bool { return x.ID == dt.ID }) {
+			tv.deps = append(tv.deps, dt)
+		}
+	}
 	for _, st := range []queue.QuestionState{queue.QuestionOpen, queue.QuestionClosed} {
 		qs, err := s.Questions(goal, st)
 		if err != nil {
@@ -309,7 +317,19 @@ func (tv *taskView) render(s *Status, room int) string {
 	if t.Profile != "" {
 		head += tui.Dim(" · " + t.Profile)
 	}
-	lines := []string{head, ""}
+	lines := []string{head}
+	for i, d := range tv.deps {
+		if i == 0 {
+			lines = append(lines, tui.Dim("depends on:"))
+		}
+		ws := ""
+		if d.Workstream != "" {
+			ws = tui.Dim("[" + d.Workstream + "] ")
+		}
+		lines = append(lines, fmt.Sprintf("  %s %s %s%s %s", stateMark(d.State), d.ID, ws,
+			oneLine(d.Title, s.width-24), tui.Dim(string(d.State))))
+	}
+	lines = append(lines, "")
 	sel := 0
 	if len(tv.sessions) == 0 {
 		lines = append(lines, tui.Dim("No session has worked on it yet."))
