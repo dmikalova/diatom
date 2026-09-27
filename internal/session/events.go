@@ -15,8 +15,17 @@ import (
 // the agent's words, its tool calls and their results, and the gate's runs.
 const EventsFile = "events.jsonl"
 
-// EventGate is a gate run; the other types are the runner's.
-const EventGate = "gate"
+// EventGate is a gate run, and EventSettle a step diatom takes after the
+// agent, such as committing; the other types are the runner's.
+const (
+	EventGate   = "gate"
+	EventSettle = "settle"
+)
+
+// Settling records a step diatom starts on after the agent.
+func Settling(now time.Time, what string) Event {
+	return Event{Time: now, Type: EventSettle, Summary: what}
+}
 
 // Event is one line of a session's events.
 type Event struct {

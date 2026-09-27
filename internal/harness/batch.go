@@ -544,6 +544,7 @@ func (h *Harness) finish(
 		return h.failed(ctx, repo, g, wt, tasks, asked, filepath.Base(dir), output)
 	}
 
+	h.settling(dir, "Committing the work")
 	shas, err := h.commit(ctx, repo, wt, b.Kind, g.Base, tasks, report)
 	if err != nil {
 		return h.requeue(s, g.Name, tasks, asked, err)
@@ -558,7 +559,16 @@ func (h *Harness) finish(
 			return err
 		}
 	}
+	h.settling(dir, "Merging it into the goal's integration branch")
 	return h.integrate(ctx, repo, g, b.Workstream)
+}
+
+// settling logs a step diatom takes after the agent, so the session shows
+// what it is waiting on.
+func (h *Harness) settling(dir, what string) {
+	if err := session.AppendEvent(dir, session.Settling(h.now(), what)); err != nil {
+		h.log().Warn("logging a session step failed", "dir", dir, "err", err)
+	}
 }
 
 // reload rereads the batch's tasks, which the task tool's notes may have
@@ -600,6 +610,7 @@ func (h *Harness) check(
 	if fp, err := wt.Fingerprint(ctx); err != nil || fp == hookPassed {
 		return err == nil, "", err
 	}
+	h.settling(dir, "Running the gate `"+repo.Config.Gate+"`")
 	start := h.now()
 	r, err := h.runGate(ctx, wt.Dir, repo.Config)
 	if err == nil {

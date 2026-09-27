@@ -177,6 +177,8 @@ func steps(events []session.Event) []step {
 		case session.EventGate:
 			out = append(out, step{at: e.Time, kind: e.Type, summary: e.Summary, output: e.Detail,
 				failed: e.Failed, done: true})
+		case session.EventSettle:
+			out = append(out, step{at: e.Time, kind: e.Type, summary: e.Summary})
 		default:
 			out = append(out, step{at: e.Time, kind: e.Type, summary: e.Text, input: e.Text})
 		}
@@ -355,6 +357,19 @@ func (sv *sessionView) line(width int) string {
 			line += tui.Dim(" · ") + oneLine(l, width/3)
 		}
 		return line
+	case !sv.settled && sv.err == "":
+		// Claude is done, and diatom is checking and committing its work.
+		line = tui.Color(
+			"▶ diatom wrapping up",
+			tui.Green,
+		) + tui.Dim(
+			fmt.Sprintf(" · Claude %s · %s · started %s",
+				sv.outcome, steps, at),
+		)
+		if l := sv.latest(); l != "" {
+			line += tui.Dim(" · ") + oneLine(l, width/3)
+		}
+		return line
 	case sv.err != "":
 		line = tui.Color("✗ Claude failed", tui.Red) + tui.Dim(" · "+steps+" · "+at)
 	case sv.settleErr != "":
@@ -402,7 +417,7 @@ func (sv *sessionView) render(width, room int) string {
 			mark, sel = tui.Color("› ", tui.Cyan), len(lines)
 		}
 		lines = append(lines, mark+tui.Dim(st.at.Local().Format("15:04:05"))+" "+
-			st.line(width-14, sv.running() && i == len(sv.steps)-1))
+			st.line(width-14, !sv.settled && i == len(sv.steps)-1))
 	}
 	return scroll(lines, sel, sel, &sv.top, room)
 }
@@ -418,6 +433,10 @@ func (st step) line(width int, last bool) string {
 		return tui.Color("✗ "+text, tui.Red)
 	case st.kind == session.EventGate:
 		return tui.Color("✓ "+text, tui.Green)
+	case st.kind == session.EventSettle && last:
+		return tui.Color("▶ ", tui.Green) + tui.Dim("diatom: ") + text
+	case st.kind == session.EventSettle:
+		return tui.Dim("✓ diatom: " + text)
 	case !st.done && last:
 		return tui.Color("▶ "+text, tui.Green)
 	case !st.done:

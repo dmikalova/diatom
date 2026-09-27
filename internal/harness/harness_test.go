@@ -745,3 +745,35 @@ func TestOneBadGoalDoesNotStopTheRest(t *testing.T) {
 		t.Errorf("batches = %+v, want set's to run anyway", batches)
 	}
 }
+
+func TestSessionLogsWhatDiatomDoesAfterTheAgent(t *testing.T) {
+	f := newFixture(t)
+	task := f.add("engine", "Add ward")
+	f.agent.act = func(t *testing.T, wt string, s agentSession) {
+		writeFile(t, wt, "ward.txt", "ward\n")
+		s.report(session.EntryDone, task.ID, "")
+	}
+	f.step()
+	dirs, _ := filepath.Glob(filepath.Join(f.store.SessionsDir("set"), "*"))
+	events, err := session.ReadEvents(dirs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range events {
+		summary := e.Summary
+		if e.Type == session.EventGate {
+			summary, _, _ = strings.Cut(summary, " in ")
+		}
+		got = append(got, e.Type+": "+summary)
+	}
+	want := []string{
+		"settle: Running the gate `check`",
+		"gate: Gate `check` passed",
+		"settle: Committing the work",
+		"settle: Merging it into the goal's integration branch",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("events:\n%s", strings.Join(got, "\n"))
+	}
+}

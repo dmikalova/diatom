@@ -24,6 +24,7 @@ import (
 	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/review"
+	"github.com/dmikalova/diatom/internal/schedule"
 	"github.com/dmikalova/diatom/internal/session"
 	"github.com/dmikalova/diatom/internal/tui"
 )
@@ -68,6 +69,9 @@ type goalRow struct {
 	intake bool
 	// waiting names the goals this one waits for that aren't finished.
 	waiting []string
+	// ready counts the tasks that could start now, on a workstream with no
+	// session running.
+	ready int
 }
 
 // Status shows every goal in the repo, the intake triage is sorting, and the
@@ -92,6 +96,10 @@ type Status struct {
 	// health says what keeps the scheduler from starting work, when
 	// something does: it isn't running, or every pass fails.
 	health string
+	// maxSessions is the repo's cap on sessions at once, and full is set
+	// when that many are running, so ready tasks wait for one to end.
+	maxSessions int
+	full        bool
 
 	// detail is the row opened with enter: its tasks, or one of them.
 	detail *detail
@@ -144,6 +152,14 @@ func (s *Status) reload() {
 			continue
 		}
 		rows = append(rows, row)
+	}
+	s.maxSessions, s.full = 0, false
+	if cfg, err := config.Load(store.Repo(), s.env.Paths); err == nil {
+		running := 0
+		for _, r := range rows {
+			running += len(r.activeWork)
+		}
+		s.maxSessions, s.full = cfg.MaxSessions, running >= cfg.MaxSessions
 	}
 	keep := s.selected()
 	s.rows = rows
@@ -211,6 +227,13 @@ func (s *Status) row(store *queue.Store, g *queue.Goal) (goalRow, error) {
 	}
 	slices.Sort(row.activeWork)
 	row.activeWork = slices.Compact(row.activeWork)
+	if g.State == queue.GoalActive && len(row.waiting) == 0 {
+		for _, t := range schedule.Ready(tasks) {
+			if !slices.Contains(row.activeWork, t.Workstream) {
+				row.ready++
+			}
+		}
+	}
 	return row, nil
 }
 
@@ -706,6 +729,11 @@ func (s *Status) renderRow(b *strings.Builder, i int, r goalRow) {
 				tui.Yellow,
 			) + "\n",
 		)
+	}
+	if r.ready > 0 && s.full {
+		b.WriteString("      " + tui.Color(fmt.Sprintf(
+			"%d ready, waiting for a free session: this repo runs %d at a time (maxSessions)",
+			r.ready, s.maxSessions), tui.Yellow) + "\n")
 	}
 	if r.goal.State == queue.GoalDone {
 		b.WriteString("      " + landingLine(r) + "\n")

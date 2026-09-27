@@ -764,3 +764,61 @@ func TestStatusSaysWhenNothingCanStart(t *testing.T) {
 		t.Errorf("a stuck scheduler:\n%s", out)
 	}
 }
+
+func TestStatusSaysReadyTasksWaitForASession(t *testing.T) {
+	f := newFixture(t)
+	busy, _ := f.store.Task("set", "0001")
+	if err := f.store.Move("set", busy, queue.Active); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.AddTask("set", &queue.Task{Title: "Add cards", Kind: queue.Planned,
+		Workstream: "cards"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.AddTask("set", &queue.Task{Title: "More engine", Kind: queue.Planned,
+		Workstream: "engine"}); err != nil {
+		t.Fatal(err)
+	}
+	s := NewStatus(context.Background(), f.env)
+	s.Update(tea.WindowSizeMsg{Width: 200, Height: 30})
+	// The engine task waits for its own workstream's session, so only the
+	// cards task counts.
+	if out := ansi.Strip(s.render()); !strings.Contains(out,
+		"1 ready, waiting for a free session: this repo runs 1 at a time (maxSessions)") {
+		t.Errorf("status:\n%s", out)
+	}
+	write(t, filepath.Join(f.repo, ".diatom", "config.toml"), "maxSessions = 2\n")
+	s.reload()
+	if out := ansi.Strip(s.render()); strings.Contains(out, "waiting for a free session") {
+		t.Errorf("with a session free:\n%s", out)
+	}
+}
+
+func TestSessionShowsDiatomWrappingUp(t *testing.T) {
+	f := newFixture(t)
+	dir := filepath.Join(f.store.SessionsDir("set"), "20260101T000000Z-engine")
+	if err := session.Create(dir, session.Spec{ID: "20260101T000000Z-engine",
+		Tasks: []string{"0001"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.WriteResult(dir, map[string]any{"outcome": "completed"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AppendEvent(
+		dir,
+		session.Settling(time.Unix(1, 0), "Running the gate `check`"),
+	); err != nil {
+		t.Fatal(err)
+	}
+	sv, err := latestSession(f.store.SessionsDir("set"), "0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := ansi.Strip(sv.line(200))
+	steps := ansi.Strip(sv.render(200, 20))
+	if !strings.Contains(line, "▶ diatom wrapping up") ||
+		!strings.Contains(line, "Running the gate") ||
+		!strings.Contains(steps, "▶ diatom: Running the gate `check`") {
+		t.Errorf("line %q, steps:\n%s", line, steps)
+	}
+}
