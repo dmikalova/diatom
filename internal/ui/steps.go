@@ -373,7 +373,7 @@ func (tv *taskView) render(s *Status, room int) string {
 	// Past the last session, the keys scroll through the rest to read it.
 	tv.read = min(tv.read, max(len(lines)-1-sel, 0))
 	target := sel + tv.read
-	return scroll(lines, target, target, &tv.top, room)
+	return scroll(lines, target, target, &tv.top, room, s.width)
 }
 
 // line is the session as one of a task's: whether Claude is running or how
@@ -457,7 +457,7 @@ func (sv *sessionView) render(width, room int) string {
 		lines = append(lines, mark+tui.Dim(st.at.Local().Format("15:04:05"))+" "+
 			st.line(width-14, !sv.settled && i == len(sv.steps)-1))
 	}
-	return scroll(lines, sel, sel, &sv.top, room)
+	return scroll(lines, sel, sel, &sv.top, room, width)
 }
 
 // line is a step as one of a session's: a mark for how it went and its

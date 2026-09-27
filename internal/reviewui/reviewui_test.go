@@ -16,6 +16,7 @@ import (
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/review"
+	"github.com/dmikalova/diatom/internal/tui"
 )
 
 func TestWordDiff(t *testing.T) {
@@ -400,7 +401,7 @@ func TestTaskLinesHang(t *testing.T) {
 	}
 	lines := m.taskLines(it)
 	if len(lines) != taskLines || !strings.HasPrefix(lines[0], "task 0002") ||
-		!strings.HasPrefix(lines[1], hangIndent) ||
+		!strings.HasPrefix(lines[1], tui.HangIndent) ||
 		!strings.HasSuffix(lines[2], "…") {
 		t.Errorf("task lines = %q", lines)
 	}
@@ -411,5 +412,25 @@ func TestTaskLinesHang(t *testing.T) {
 	}
 	if got := m.taskLines(review.Item{}); len(got) != 1 {
 		t.Errorf("no tasks = %q", got)
+	}
+}
+
+func TestHunkHeadWraps(t *testing.T) {
+	m := &Model{width: 40, height: 30}
+	it := review.Item{Commit: "b64fe6b0000", Path: "b/.agents/skills/implement-cards/SKILL.md",
+		Subject: "Merge remote-tracking branch 'origin/main' into diatom/strip/ws/retire",
+		Index:   1, Of: 2}
+	head := m.hunkHead(it)
+	if len(head) < 4 || !strings.HasPrefix(ansi.Strip(head[1]), tui.HangIndent) {
+		t.Fatalf("head = %q", head)
+	}
+	for _, l := range head {
+		if ansi.StringWidth(l) > m.width {
+			t.Errorf("%q is wider than %d", l, m.width)
+		}
+	}
+	m.items, m.cur = []review.Item{it}, 0
+	if got := m.bodyHeight(); got != 30-headerLines-len(head)-footerLines {
+		t.Errorf("body = %d with a head of %d", got, len(head))
 	}
 }

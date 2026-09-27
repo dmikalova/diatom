@@ -917,8 +917,10 @@ func (s *Status) foot() []string {
 }
 
 // scroll shows room lines, moved from *top just enough to show the lines
-// from first to last, or first when they don't all fit.
-func scroll(lines []string, first, last int, top *int, room int) string {
+// from first to last, or first when they don't all fit. Lines wider than w
+// are wrapped first, under where their text starts.
+func scroll(lines []string, first, last int, top *int, room, w int) string {
+	lines, first, last = wrapLines(lines, w, first, last)
 	if last >= *top+room {
 		*top = last - room + 1
 	}

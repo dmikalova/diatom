@@ -777,7 +777,7 @@ func (a *App) View() tea.View {
 func (a *App) render() string {
 	mw := a.mainWidth()
 	main := lipgloss.NewStyle().Width(mw).MaxWidth(mw).Height(a.height).MaxHeight(a.height).
-		Render(a.renderMain())
+		Render(hangAll(a.renderMain(), mw))
 	nw := a.nw()
 	if nw == 0 {
 		return main

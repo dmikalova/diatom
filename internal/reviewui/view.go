@@ -13,19 +13,32 @@ import (
 )
 
 // headerLines and footerLines are the rows around the diff, besides the
-// hunk's tasks; taskLines is the most rows the tasks take.
+// hunk's own header; taskLines is the most rows the tasks take.
 const (
-	headerLines = 4
+	headerLines = 2
 	footerLines = 2
 	taskLines   = 3
 )
 
 func (m *Model) bodyHeight() int {
-	tasks := 1
+	head := 3
 	if m.cur >= 0 {
-		tasks = len(m.taskLines(m.items[m.cur]))
+		head = len(m.hunkHead(m.items[m.cur]))
 	}
-	return max(m.height-headerLines-tasks-footerLines-len(m.causes()), 3)
+	return max(m.height-headerLines-head-footerLines-len(m.causes()), 3)
+}
+
+// hunkHead is what heads a hunk: its commit, the tasks that made it, and its
+// file and state, each wrapped to the width under where it starts.
+func (m *Model) hunkHead(it review.Item) []string {
+	w := max(m.width, 20)
+	lines := tui.Hang(fmt.Sprintf("%s%s%s %s", sgr(fgCode(yellow)), short(it.Commit), reset,
+		it.Subject), w)
+	for _, l := range m.taskLines(it) {
+		lines = append(lines, dim(l))
+	}
+	return append(lines, tui.Hang(fmt.Sprintf("%s%s%s · hunk %d of %d · %s", sgr(1), it.Path,
+		reset, it.Index, it.Of, m.state(it)), w)...)
 }
 
 func (m *Model) render() string {
@@ -38,21 +51,9 @@ func (m *Model) render() string {
 		b.WriteString("\n" + m.footer())
 		return b.String()
 	}
-	it := m.items[m.cur]
-	fmt.Fprintf(&b, "%s%s%s %s\n", sgr(fgCode(yellow)), short(it.Commit), reset, it.Subject)
-	for _, l := range m.taskLines(it) {
-		b.WriteString(dim(l) + "\n")
+	for _, l := range m.hunkHead(m.items[m.cur]) {
+		b.WriteString(l + "\n")
 	}
-	fmt.Fprintf(
-		&b,
-		"%s%s%s · hunk %d of %d · %s\n",
-		sgr(1),
-		it.Path,
-		reset,
-		it.Index,
-		it.Of,
-		m.state(it),
-	)
 	for _, c := range m.causes() {
 		b.WriteString(c + "\n")
 	}
@@ -91,10 +92,6 @@ func autoApproved(items []review.Item) int {
 	return n
 }
 
-// hangIndent is how far the tasks' later lines sit in from their first, so
-// they read as one paragraph.
-const hangIndent = "  "
-
 // taskLines names the tasks that made the hunk's commit, wrapped to the
 // width with the later lines indented, and cut short past taskLines.
 func (m *Model) taskLines(it review.Item) []string {
@@ -102,10 +99,10 @@ func (m *Model) taskLines(it review.Item) []string {
 	for _, t := range it.Tasks {
 		parts = append(parts, fmt.Sprintf("task %s: %s", t.ID, t.Title))
 	}
-	w := max(m.width-len(hangIndent), 10)
+	w := max(m.width-len(tui.HangIndent), 10)
 	lines := strings.Split(ansi.Wordwrap(strings.Join(parts, " · "), w, ""), "\n")
 	for i := 1; i < len(lines); i++ {
-		lines[i] = hangIndent + lines[i]
+		lines[i] = tui.HangIndent + lines[i]
 	}
 	if len(lines) > taskLines {
 		lines = lines[:taskLines]

@@ -244,7 +244,7 @@ func (s *Status) renderMenu(d *detail, room int) string {
 		}
 		lines = append(lines, s.taskLine(d, t, mark))
 	}
-	return scroll(lines, sel, sel, &d.top, room)
+	return scroll(lines, sel, sel, &d.top, room, s.width)
 }
 
 // pageHead says where the goal or intake open stands: its state, what it is
