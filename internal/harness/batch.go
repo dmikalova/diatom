@@ -545,7 +545,7 @@ func (h *Harness) finish(
 	}
 
 	h.settling(dir, "Committing the work")
-	shas, err := h.commit(ctx, repo, wt, b.Kind, g.Base, tasks, report)
+	shas, err := h.commit(ctx, repo, wt, dir, b.Kind, g.Base, tasks, report)
 	if err != nil {
 		return h.requeue(s, g.Name, tasks, asked, err)
 	}
@@ -662,6 +662,7 @@ func (h *Harness) commit(
 	ctx context.Context,
 	repo Repo,
 	wt git.Repo,
+	dir string,
 	kind queue.Kind,
 	base string,
 	tasks []*queue.Task,
@@ -684,7 +685,7 @@ func (h *Harness) commit(
 		}
 		return h.commitFixups(ctx, wt, base, tasks, finished)
 	default:
-		sha, err = h.commitMessage(ctx, repo, wt, tasks, report.Done)
+		sha, err = h.commitMessage(ctx, repo, wt, dir, tasks, report.Done)
 	}
 	if err != nil || sha == "" {
 		return nil, err
@@ -702,6 +703,7 @@ func (h *Harness) commitMessage(
 	ctx context.Context,
 	repo Repo,
 	wt git.Repo,
+	dir string,
 	tasks []*queue.Task,
 	done map[string]bool,
 ) (string, error) {
@@ -725,10 +727,17 @@ func (h *Harness) commitMessage(
 		return "", err
 	}
 	gen := commitmsg.Generator{Runner: h.Runner, Profile: profile, Check: repo.Config.CommitCheck}
-	msg, err := gen.Generate(
+	msg, cost, err := gen.Generate(
 		ctx,
 		commitmsg.Input{Dir: wt.Dir, Stat: stat, Diff: diff, Titles: titles},
 	)
+	// Its cost is the session's, whether or not the message came out.
+	if cerr := session.UpdateState(
+		dir,
+		func(st *session.State) { st.CommitCostUSD += cost },
+	); cerr != nil {
+		h.log().Warn("recording the commit message's cost failed", "dir", dir, "err", cerr)
+	}
 	if err != nil {
 		return "", err
 	}

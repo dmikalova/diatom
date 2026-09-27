@@ -63,25 +63,25 @@ func (s *scripted) Run(
 	}
 	r := s.replies[0]
 	s.replies = s.replies[1:]
-	return runner.Result{Text: r}, nil
+	return runner.Result{Text: r, Usage: runner.Usage{CostUSD: 0.25}}, nil
 }
 
 func TestGenerateRetriesOnce(t *testing.T) {
 	ctx := context.Background()
 	r := &scripted{replies: []string{"I changed stuff.", "feat: add ward\n"}}
-	msg, err := Generator{Runner: r}.Generate(ctx, Input{Dir: t.TempDir()})
-	if err != nil || msg != "feat: add ward\n" {
-		t.Fatalf("Generate = %q, %v", msg, err)
+	msg, cost, err := Generator{Runner: r}.Generate(ctx, Input{Dir: t.TempDir()})
+	if err != nil || msg != "feat: add ward\n" || cost != 0.5 {
+		t.Fatalf("Generate = %q, $%v, %v; want both calls' cost", msg, cost, err)
 	}
 	if len(r.prompts) != 2 || !strings.Contains(r.prompts[1], "I changed stuff.") {
 		t.Errorf("retry prompt = %q", r.prompts)
 	}
 
 	r = &scripted{replies: []string{"nope", "still nope"}}
-	if _, err := (Generator{Runner: r}).Generate(ctx, Input{Dir: t.TempDir()}); err == nil {
+	if _, _, err := (Generator{Runner: r}).Generate(ctx, Input{Dir: t.TempDir()}); err == nil {
 		t.Error("Generate accepted two bad messages")
 	}
-	if _, err := (Generator{Runner: &scripted{}}).Generate(
+	if _, _, err := (Generator{Runner: &scripted{}}).Generate(
 		ctx,
 		Input{Dir: t.TempDir()},
 	); err == nil {
@@ -97,7 +97,7 @@ func TestGenerateRunsCheck(t *testing.T) {
 		Runner: &scripted{replies: []string{"feat: a very long subject line\n", "feat: short\n"}},
 		Check:  "sh -c '" + check + "' check",
 	}
-	msg, err := g.Generate(ctx, Input{Dir: t.TempDir()})
+	msg, _, err := g.Generate(ctx, Input{Dir: t.TempDir()})
 	if err != nil || msg != "feat: short\n" {
 		t.Errorf("Generate with check = %q, %v", msg, err)
 	}

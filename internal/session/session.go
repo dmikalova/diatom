@@ -266,6 +266,9 @@ type State struct {
 	// Error is why diatom couldn't settle the session's work, such as a
 	// gate that couldn't run; its tasks went back to the queue.
 	Error string `json:"error,omitempty"`
+	// CommitCostUSD is what writing the session's commit messages cost,
+	// beside the agent's own cost in its result.
+	CommitCostUSD float64 `json:"commitCostUSD,omitempty"`
 }
 
 // LoadState reads a session's state; a session without one has just begun.

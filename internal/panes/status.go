@@ -277,8 +277,11 @@ func (s *Status) goalCost(root string) (float64, map[string]float64) {
 				continue
 			}
 			c = sessionCost{usd: res.Usage.CostUSD, tasks: spec.Tasks}
-			if st, err := session.LoadState(dir); err == nil && st.Settled {
-				s.costs[dir] = c
+			if st, err := session.LoadState(dir); err == nil {
+				c.usd += st.CommitCostUSD
+				if st.Settled {
+					s.costs[dir] = c
+				}
 			}
 		}
 		total += c.usd
@@ -650,18 +653,13 @@ func describe(fc focus.Focus) string {
 func (s *Status) View() tea.View {
 	v := tea.NewView(s.render())
 	v.AltScreen = true
-	v.WindowTitle = "status · " + filepath.Base(
-		s.env.Store.Repo(),
-	) + " · focus " + describe(
-		s.focus,
-	)
+	// The total comes first, so a narrow frame cuts the focus instead.
 	total := 0.0
 	for _, r := range s.rows {
 		total += r.cost
 	}
-	if total > 0 {
-		v.WindowTitle += fmt.Sprintf(" · $%.2f", total)
-	}
+	v.WindowTitle = fmt.Sprintf("status · $%.2f · %s · focus %s",
+		total, filepath.Base(s.env.Store.Repo()), describe(s.focus))
 	return v
 }
 

@@ -64,7 +64,10 @@ func (a *agent) Run(
 		func(e string) bool { return strings.HasPrefix(e, session.EnvVar+"=") },
 	) {
 		// The commit-message call, the only one outside a session.
-		return runner.Result{Text: "Sure! Here it is:\nfeat: do the work\n"}, nil
+		return runner.Result{
+			Text:  "Sure! Here it is:\nfeat: do the work\n",
+			Usage: runner.Usage{CostUSD: 0.01},
+		}, nil
 	}
 	a.mu.Lock()
 	a.sessions++
@@ -766,6 +769,9 @@ func TestSessionLogsWhatDiatomDoesAfterTheAgent(t *testing.T) {
 			summary, _, _ = strings.Cut(summary, " in ")
 		}
 		got = append(got, e.Type+": "+summary)
+	}
+	if st, _ := session.LoadState(dirs[0]); st.CommitCostUSD != 0.01 {
+		t.Errorf("commit message cost = %v, want it recorded", st.CommitCostUSD)
 	}
 	want := []string{
 		"settle: Running the gate `check`",

@@ -142,7 +142,7 @@ func TestStatus(t *testing.T) {
 			t.Errorf("status lacks %q:\n%s", want, out)
 		}
 	}
-	if title := s.View().WindowTitle; title != "status · vex · focus the repo" {
+	if title := s.View().WindowTitle; title != "status · $0.00 · vex · focus the repo" {
 		t.Errorf("titled %q", title)
 	}
 
@@ -168,7 +168,7 @@ func TestStatus(t *testing.T) {
 		t.Errorf("enter past the actions didn't open the task:\n%s", s.render())
 	}
 	key(s, "esc", "esc")
-	if s.detail != nil || s.View().WindowTitle != "status · vex · focus set" {
+	if s.detail != nil || s.View().WindowTitle != "status · $0.00 · vex · focus set" {
 		t.Errorf("esc didn't back out to the list, titled %q", s.View().WindowTitle)
 	}
 	key(s, "esc")
@@ -843,6 +843,13 @@ func TestStatusShowsCosts(t *testing.T) {
 		); err != nil {
 			t.Fatal(err)
 		}
+		// Writing the commit message costs a little on top.
+		if err := session.UpdateState(
+			dir,
+			func(st *session.State) { st.CommitCostUSD = 0.25 },
+		); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := f.store.AddTask("set", &queue.Task{Title: "Add cards", Kind: queue.Planned,
 		Workstream: "cards"}); err != nil {
@@ -850,13 +857,13 @@ func TestStatusShowsCosts(t *testing.T) {
 	}
 	s := NewStatus(context.Background(), f.env)
 	s.Update(tea.WindowSizeMsg{Width: 200, Height: 30})
-	if out := ansi.Strip(s.render()); !strings.Contains(out, "1 to review · $4.50") ||
-		!strings.HasSuffix(s.View().WindowTitle, " · $4.50") {
+	if out := ansi.Strip(s.render()); !strings.Contains(out, "1 to review · $5.00") ||
+		s.View().WindowTitle != "status · $5.00 · vex · focus the repo" {
 		t.Errorf("titled %q:\n%s", s.View().WindowTitle, out)
 	}
 	key(s, "enter")
 	out := ansi.Strip(s.render())
-	if !strings.Contains(out, "Add ward · $3.00") || !strings.Contains(out, "Add cards · $1.50") {
+	if !strings.Contains(out, "Add ward · $3.38") || !strings.Contains(out, "Add cards · $1.62") {
 		t.Errorf("goal opened:\n%s", out)
 	}
 }

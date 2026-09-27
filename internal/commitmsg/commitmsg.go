@@ -48,7 +48,10 @@ type Input struct {
 }
 
 // Generate returns a checked commit message for the staged change.
-func (g Generator) Generate(ctx context.Context, in Input) (string, error) {
+func (g Generator) Generate(
+	ctx context.Context,
+	in Input,
+) (msg string, costUSD float64, err error) {
 	prompt := Prompt(in)
 	var lastErr error
 	for range 2 {
@@ -57,15 +60,16 @@ func (g Generator) Generate(ctx context.Context, in Input) (string, error) {
 			runner.Spec{Dir: in.Dir, Prompt: prompt, Profile: g.Profile},
 			func(runner.Event) {},
 		)
+		costUSD += res.Usage.CostUSD
 		if err != nil {
-			return "", err
+			return "", costUSD, err
 		}
 		msg, err := Clean(res.Text)
 		if err == nil {
 			err = g.check(ctx, in.Dir, msg)
 		}
 		if err == nil {
-			return msg, nil
+			return msg, costUSD, nil
 		}
 		lastErr = err
 		prompt += fmt.Sprintf(
@@ -74,7 +78,7 @@ func (g Generator) Generate(ctx context.Context, in Input) (string, error) {
 			err,
 		)
 	}
-	return "", fmt.Errorf("commit message: %w", lastErr)
+	return "", costUSD, fmt.Errorf("commit message: %w", lastErr)
 }
 
 // Prompt builds the instructions for one commit message.
