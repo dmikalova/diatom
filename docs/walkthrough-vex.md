@@ -68,13 +68,10 @@ cd ~/Code/github.com/dmikalova/vex && diatom workspace
     - A session opens to its steps, one line each in Claude's own words, and
       the gate's runs. It follows the latest step while the session runs.
     - A step opens to its full command and the end of its output.
-
-```
-At the top, `esc` focuses the repo itself, and `f` focuses a goal
-without opening it.
-```
-- **Questions** is where you answer the agents and sign off plans.
-- **Intake** is where you type new work or notes.
+    - At the top, `esc` focuses the repo itself, and `f` focuses a goal
+      without opening it.
+  - **Questions** is where you answer the agents and sign off plans.
+  - **Intake** is where you type new work or notes.
 - **Scheduler tab:** `diatom run` and its log. It starts sessions as soon as
   work is ready.
 
