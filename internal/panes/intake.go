@@ -23,6 +23,9 @@ type Intake struct {
 	area    textarea.Model
 	focus   focus.Focus
 	pending int
+	// compact is the box at the foot of the app's nav, with room for a line
+	// of hint.
+	compact bool
 
 	width, height int
 	flash         string
@@ -108,6 +111,15 @@ func (m *Intake) reload() {
 // placeholder is what the empty pane says: what just happened, then how to
 // use it. The pane is nothing but the text, so this is where hints go.
 func (m *Intake) placeholder() string {
+	if m.compact {
+		if m.flash != "" {
+			return m.flash
+		}
+		if m.pending > 0 {
+			return fmt.Sprintf("%d waiting for triage · tell diatom anything", m.pending)
+		}
+		return "Tell diatom anything · i"
+	}
 	var lines []string
 	if m.flash != "" {
 		lines = append(lines, m.flash, "")
@@ -169,8 +181,12 @@ func (m *Intake) resize() {
 	if m.err != nil {
 		h--
 	}
+	least := 2
+	if m.compact {
+		least = 1
+	}
 	m.area.SetWidth(max(m.width, 10))
-	m.area.SetHeight(max(h, 2))
+	m.area.SetHeight(max(h, least))
 }
 
 func (m *Intake) submit() {

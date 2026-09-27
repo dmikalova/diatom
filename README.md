@@ -50,8 +50,17 @@ repos, run two diatoms.
 
 ```bash
 cd ~/Code/github.com/dmikalova/vex
-diatom workspace    # everything below in one zellij session, scheduler included
+diatom              # one window with the scheduler inside; quitting suspends its sessions
+diatom workspace    # the older zellij session, until the window covers review
 ```
+
+The window has a nav down the left: Next, with what waits on you; the intake;
+the repo's goals; and the intake box at its foot. The main pane shows what the
+nav has selected. Tab moves between the nav, the main pane and the intake box,
+and `i` jumps to the intake box. Quitting with `q` or ctrl+c, or closing the
+terminal, suspends the running sessions, which carry on the next time diatom
+opens: nothing runs while it is closed. A second diatom on the same repo only
+views.
 
 Type what you want into the intake pane, such as "Turn docs/todo-agent.md into
 goals, one per section". Triage, an agent, sorts every intake into the repo's

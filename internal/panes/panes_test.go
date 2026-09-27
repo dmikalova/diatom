@@ -114,6 +114,12 @@ func key(m tea.Model, keys ...string) {
 			msg = tea.KeyPressMsg{Code: tea.KeyDown}
 		case "esc":
 			msg = tea.KeyPressMsg{Code: tea.KeyEscape}
+		case "tab":
+			msg = tea.KeyPressMsg{Code: tea.KeyTab}
+		case "shift+tab":
+			msg = tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}
+		case "ctrl+c":
+			msg = tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
 		case "shift+enter":
 			msg = tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift}
 		case "alt+a", "alt+c":

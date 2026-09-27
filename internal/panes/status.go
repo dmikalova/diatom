@@ -812,37 +812,40 @@ func planningLine(r goalRow) string {
 	return tui.Dim("grilling: the next round is queued")
 }
 
-// goalState is the goal's state as the human sees it. An active goal is
-// queued while it has work ready and no session running, and reviewing once
-// every task is done while hunks are left to review; with those reviewed
-// too it is ready to finish.
+// goalState is the goal's state as the human sees it, in its color.
 func goalState(r goalRow) string {
+	name, c := goalStatus(r)
+	return tui.Color(name, c)
+}
+
+// goalStatus is the goal's state as the human sees it, and its color. An
+// active goal is queued while it has work ready and no session running, and
+// reviewing once every task is done while hunks are left to review; with
+// those reviewed too it is ready to finish.
+func goalStatus(r goalRow) (string, int) {
 	if len(r.waiting) > 0 &&
 		(r.goal.State == queue.GoalActive || r.goal.State == queue.GoalPlanning) {
 		// Opening the goal says which goals it waits for.
-		return tui.Color("blocked", tui.Red)
+		return "blocked", tui.Red
 	}
 	if r.goal.State != queue.GoalActive || len(r.activeWork) > 0 {
-		return stateColor(r.goal.State)
+		return string(r.goal.State), stateColors[r.goal.State]
 	}
 	left := r.counts[queue.Pending] + r.counts[queue.Blocked]
 	switch {
 	case r.ready > 0:
-		return tui.Color("queued", tui.Yellow)
+		return "queued", tui.Yellow
 	case left == 0 && r.counts[queue.Done] > 0 && r.toReview > 0:
-		return tui.Color("reviewing", tui.Cyan)
+		return "reviewing", tui.Cyan
 	case left == 0 && r.counts[queue.Done] > 0:
-		return tui.Color("ready to finish", tui.Magenta)
+		return "ready to finish", tui.Magenta
 	}
-	return stateColor(r.goal.State)
+	return string(r.goal.State), stateColors[r.goal.State]
 }
 
-func stateColor(st queue.GoalState) string {
-	c := map[queue.GoalState]int{
-		queue.GoalActive: tui.Green, queue.GoalParked: tui.Yellow, queue.GoalPlanning: tui.Blue,
-		queue.GoalDone: tui.Magenta,
-	}[st]
-	return tui.Color(string(st), c)
+var stateColors = map[queue.GoalState]int{
+	queue.GoalActive: tui.Green, queue.GoalParked: tui.Yellow, queue.GoalPlanning: tui.Blue,
+	queue.GoalDone: tui.Magenta,
 }
 
 // lastEvent is the latest step of a workstream's running session.

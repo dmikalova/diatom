@@ -207,8 +207,8 @@ func TestHookCommands(t *testing.T) {
 }
 
 func TestUsage(t *testing.T) {
-	if code, _, _ := diatom(t, ""); code != 2 {
-		t.Error("no command did not print usage")
+	if code, stdout, _ := diatom(t, "", "help"); code != 0 || !strings.Contains(stdout, "Usage:") {
+		t.Error("help did not print usage")
 	}
 	if code, _, stderr := diatom(
 		t,

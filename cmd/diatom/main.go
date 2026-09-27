@@ -64,11 +64,12 @@ var errUsage = errors.New("usage")
 
 func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		_, _ = fmt.Fprintln(stderr, usage)
-		return 2
+		args = []string{"open"}
 	}
 	var err error
 	switch cmd, rest := args[0], args[1:]; cmd {
+	case "open":
+		err = cmdApp(ctx)
 	case "run":
 		err = cmdRun(ctx, stderr)
 	case "stop":
@@ -116,6 +117,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 }
 
 const usage = `Usage:
+  diatom                            open diatom on the repo; quitting suspends its sessions
   diatom run                        run the scheduler; Ctrl-C suspends its sessions
   diatom stop [-drain]              suspend the running scheduler, or let it drain
   diatom status                     show every goal in the repo
