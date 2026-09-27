@@ -291,3 +291,70 @@ func TestLoadMissingReview(t *testing.T) {
 		t.Errorf("History = %v, %v", hist, err)
 	}
 }
+
+func TestMatch(t *testing.T) {
+	pats := []string{"*_test.go", "docs/*.md", "testdata/**"}
+	for p, want := range map[string]string{
+		"ward_test.go":                 "*_test.go",
+		"internal/engine/ward_test.go": "*_test.go",
+		"internal/engine/ward.go":      "",
+		"docs/todo.md":                 "docs/*.md",
+		"docs/adr/0001.md":             "",
+		"testdata/a/b.json":            "testdata/**",
+		"internal/testdata/b.json":     "",
+	} {
+		if got := Match(pats, p); got != want {
+			t.Errorf("Match(%q) = %q, want %q", p, got, want)
+		}
+	}
+}
+
+func TestAutoApprove(t *testing.T) {
+	f := newFixture(t)
+	f.write("ward.go", "package ward\n")
+	f.write("engine/ward_test.go", "package ward\n")
+	f.write("engine/poison_test.go", "package ward\n")
+	sha := f.commit("feat: ward")
+	ctx := context.Background()
+	store := Store{Dir: f.store.GoalDir("set")}
+	hunks, err := Hunks(ctx, f.repo, sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A human's decision on a matching hunk stands.
+	for _, h := range hunks {
+		if h.Path == "engine/poison_test.go" {
+			if _, err := store.Decide(h, Reject, nil, time.Unix(1, 0)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	n, err := AutoApprove(ctx, f.repo, store, sha, []string{"*_test.go"}, time.Unix(2, 0))
+	if err != nil || n != 1 {
+		t.Fatalf("AutoApprove = %d, %v", n, err)
+	}
+	c, _ := store.Load(sha)
+	if r := c.Hunks["engine/ward_test.go#1"]; r == nil || r.Decision != Approve ||
+		r.Auto != "*_test.go" {
+		t.Errorf("the test file's record = %+v", r)
+	}
+	if r := c.Hunks["engine/poison_test.go#1"]; r.Decision != Reject || r.Auto != "" {
+		t.Errorf("the human's rejection = %+v", r)
+	}
+	if c.Hunks["ward.go#1"] != nil {
+		t.Error("ward.go was approved")
+	}
+	if n, _ := AutoApprove(
+		ctx,
+		f.repo,
+		store,
+		sha,
+		[]string{"*_test.go"},
+		time.Unix(3, 0),
+	); n != 0 {
+		t.Errorf("approved %d again", n)
+	}
+	if events, _ := store.History(); len(events) != 1 {
+		t.Errorf("history = %+v, want only the human's decision", events)
+	}
+}

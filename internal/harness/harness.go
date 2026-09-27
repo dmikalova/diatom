@@ -46,6 +46,9 @@ type Harness struct {
 	// batches share: creating branches and worktrees, and moving the
 	// integration branch.
 	gitMu sync.Map
+	// autoApproved holds the commits autoApprove has looked at, each with
+	// the patterns it used: a commit's hunks never change.
+	autoApproved sync.Map
 }
 
 // lockRepo takes the repo's git lock and returns its unlock.
@@ -226,7 +229,7 @@ func (h *Harness) load(ctx context.Context, path string) (Repo, []*schedule.Goal
 		if g.State != queue.GoalActive && g.State != queue.GoalPlanning {
 			continue
 		}
-		ready, err := h.loadGoal(ctx, repo.Store, g)
+		ready, err := h.loadGoal(ctx, repo, g)
 		if err != nil {
 			return repo, nil, fmt.Errorf("goal %s: %w", g.Name, err)
 		}
@@ -245,9 +248,10 @@ func (h *Harness) load(ctx context.Context, path string) (Repo, []*schedule.Goal
 // answers, reviews and feedback, and returns its tasks ready to run.
 func (h *Harness) loadGoal(
 	ctx context.Context,
-	s *queue.Store,
+	repo Repo,
 	g *queue.Goal,
 ) ([]*queue.Task, error) {
+	s := repo.Store
 	if err := h.applyAnswers(s, g.Name); err != nil {
 		return nil, err
 	}
@@ -263,7 +267,9 @@ func (h *Harness) loadGoal(
 	switch {
 	case g.Name == queue.IntakeGoal:
 	case g.State == queue.GoalActive:
-		err = h.applyReviews(ctx, s, g.Name)
+		if err = h.autoApprove(ctx, repo, g.Name, tasks); err == nil {
+			err = h.applyReviews(ctx, s, g.Name)
+		}
 	default:
 		err = h.applyFeedback(s, g.Name, tasks)
 	}

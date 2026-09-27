@@ -125,6 +125,7 @@ gate = "mage ci:check"            # this repo's gate
 gateAttempts = 3                  # gate failures sent back before a retry at more effort
 gateTimeout = "2m"                # a gate running longer is stuck, and fails
 commandTimeout = "30s"            # an agent's command running longer is stopped
+autoApprove = ["*_test.go"]       # files whose hunks are approved without review
 maxSessions = 1                   # sessions at once in this repo
 maxBatch = 10                     # tasks per session
 commitCheck = "project-standards commit-msg"   # lints a commit message file

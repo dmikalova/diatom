@@ -64,6 +64,40 @@ func (h *Harness) applyReviews(ctx context.Context, s *queue.Store, goal string)
 	return nil
 }
 
+// autoApprove approves the hunks of the goal's commits that the repo's
+// autoApprove patterns match, before the human sees them.
+func (h *Harness) autoApprove(
+	ctx context.Context,
+	repo Repo,
+	goal string,
+	tasks []*queue.Task,
+) error {
+	patterns := repo.Config.AutoApprove
+	if len(patterns) == 0 {
+		return nil
+	}
+	store := review.Store{Dir: repo.Store.GoalDir(goal)}
+	main := git.Repo{Dir: repo.Store.Repo()}
+	key := strings.Join(patterns, "\x00")
+	for _, t := range tasks {
+		for _, sha := range t.Commits {
+			if done, ok := h.autoApproved.Load(sha); ok && done == key {
+				continue
+			}
+			n, err := review.AutoApprove(ctx, main, store, sha, patterns, h.now())
+			if err != nil {
+				return err
+			}
+			if n > 0 {
+				h.log().
+					Info("hunks approved automatically", "goal", goal, "commit", sha, "hunks", n)
+			}
+			h.autoApproved.Store(sha, key)
+		}
+	}
+	return nil
+}
+
 // reviewedCommits lists the commits that have a review record.
 func reviewedCommits(goalDir string) ([]string, error) {
 	files, err := filepath.Glob(filepath.Join(goalDir, "reviews", "*.yaml"))

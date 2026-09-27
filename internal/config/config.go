@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -59,6 +60,11 @@ type Repo struct {
 	// stopped after that, so agents run narrow checks and leave the whole
 	// gate to diatom.
 	CommandTimeout time.Duration `toml:"commandTimeout"`
+	// AutoApprove are the files whose hunks are approved without review,
+	// such as *_test.go. A pattern without a slash matches a file's name in
+	// any directory; one with a slash matches its path from the repo's root,
+	// and one ending in /** everything below a directory.
+	AutoApprove []string `toml:"autoApprove"`
 	// MaxSessions caps the agent sessions running in this repo at once.
 	MaxSessions int `toml:"maxSessions"`
 	// MaxBatch caps the tasks one session takes (ADR 0004).
@@ -186,6 +192,11 @@ func Load(root string, paths Paths) (*Config, error) {
 	c, err := decode(merged)
 	if err != nil {
 		return nil, err
+	}
+	for _, p := range c.AutoApprove {
+		if _, err := path.Match(strings.TrimSuffix(p, "/**"), ""); err != nil {
+			return nil, fmt.Errorf("config: autoApprove %q: %w", p, err)
+		}
 	}
 	if c.Gate == "" && root != "" {
 		if c.Gate, err = kindGate(root, c.Gates); err != nil {

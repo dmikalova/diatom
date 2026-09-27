@@ -44,6 +44,9 @@ type Record struct {
 	// Seq counts the changes to the record. A revision records the Seq of
 	// each rejection it carries, so a changed rejection is noticed.
 	Seq int `yaml:"seq"`
+	// Auto is the autoApprove pattern that approved the hunk, which no human
+	// looked at; empty for a human's decision.
+	Auto string `yaml:"auto,omitempty"`
 }
 
 // Store holds the review records of one goal:
@@ -96,11 +99,7 @@ func (s Store) Decide(h Hunk, d Decision, comments []Comment, now time.Time) (*R
 	}
 	rec = &Record{Decision: d, Comments: comments, At: now, Seq: seq}
 	c.Hunks[h.ID] = rec
-	b, err := yaml.Marshal(c)
-	if err != nil {
-		return nil, err
-	}
-	if err := writeAtomic(s.path(h.Commit), b); err != nil {
+	if err := s.save(h.Commit, c); err != nil {
 		return nil, err
 	}
 	if err := s.appendHistory(
@@ -114,6 +113,15 @@ func (s Store) Decide(h Hunk, d Decision, comments []Comment, now time.Time) (*R
 		}
 	}
 	return rec, nil
+}
+
+// save writes a commit's review.
+func (s Store) save(sha string, c *Commit) error {
+	b, err := yaml.Marshal(c)
+	if err != nil {
+		return err
+	}
+	return writeAtomic(s.path(sha), b)
 }
 
 // Event is one decision in the history.

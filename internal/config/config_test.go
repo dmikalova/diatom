@@ -104,6 +104,7 @@ func TestLoadErrors(t *testing.T) {
 		{"unknown key", "repo", "gaet = \"x\"\n", "unknown setting gaet"},
 		{"unknown nested key", "repo", "[adr]\nfolder = \"x\"\n", "unknown setting adr.folder"},
 		{"invalid TOML", "xdg", "gate = [\n", "config.toml"},
+		{"bad autoApprove pattern", "repo", "autoApprove = [\"[\"]\n", "autoApprove \"[\""},
 		{"unknown kind", "repo", "[gates]\ncobol = \"make\"\n", "gates.cobol: no such kind"},
 	}
 	for _, tt := range tests {

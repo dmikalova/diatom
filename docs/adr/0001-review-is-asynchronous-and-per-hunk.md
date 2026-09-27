@@ -17,6 +17,7 @@ Synchronous review tools (Cline, Aider, pi-hunk) pause the agent until the human
   - **The reviewer only records decisions.** The scheduler turns them into revision tasks on its next pass, within seconds, because only the harness writes task files (ADR 0002).
 - **Defer means "not now" for the human only.** A deferred hunk stays in the review queue behind unreviewed hunks and creates no agent work. The human is warned about deferred hunks before the goal is finished.
 - **A comment on an approved hunk becomes an intake** (ADR 0009), not a revision.
+- **Files the repo trusts are approved without review.** The `autoApprove` config lists file patterns, such as `*_test.go`. The scheduler approves each unreviewed hunk in a matching file on its next pass, recording the pattern that approved it. A human's decision on a hunk is never replaced, and these approvals stay out of the history the human steps back through, since they made none of them.
 - **Decisions can be changed.** The reviewer keeps a history the human can step back through, to fix a hunk approved on autopilot.
   - Approve → reject creates or extends a revision.
   - Reject → approve before the scheduler picks the revision up removes that hunk's comments from it.

@@ -251,3 +251,30 @@ func TestFixupTarget(t *testing.T) {
 		t.Errorf("shared subject target = %q, want the SHA", got)
 	}
 }
+
+func TestAutoApprovedFilesSkipReview(t *testing.T) {
+	f := newFixture(t)
+	writeFile(t, f.store.Repo(), ".diatom/config.toml",
+		"gate = \"check\"\nmaxSessions = 2\nautoApprove = [\"*_test.go\"]\n")
+	task := f.add("engine", "Add ward")
+	f.agent.act = func(t *testing.T, wt string, s agentSession) {
+		writeFile(t, wt, "ward.go", "package ward\n")
+		writeFile(t, wt, "ward_test.go", "package ward\n")
+		s.report(session.EntryDone, task.ID, "")
+	}
+	f.step()
+	f.step() // the next look at the goal approves them
+	items, err := review.Load(context.Background(), f.store, "set")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := review.Pending(items)
+	if len(items) != 2 || len(pending) != 1 || pending[0].Path != "ward.go" {
+		t.Fatalf("items %d, pending %+v", len(items), pending)
+	}
+	for _, it := range items {
+		if it.Path == "ward_test.go" && (it.Record == nil || it.Record.Auto != "*_test.go") {
+			t.Errorf("ward_test.go record = %+v", it.Record)
+		}
+	}
+}

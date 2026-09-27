@@ -177,6 +177,9 @@ What needs you:
     comes back as a `fixup!` commit, and `v` shows it folded into the original.
   - Review doesn't hold up the agents, but you have to review everything before
     step 6.
+  - Hunks in files matching `autoApprove` in `.diatom/config.toml`, which is
+    `*_test.go` for vex, are approved for you and never reach the reviewer. Its
+    header counts them.
 - **New thoughts mid-goal:** focus the goal and type in intake. Triage turns it
   into tasks, a question, or a separate goal. A task on a workstream the goal
   doesn't have comes back to you as a question.

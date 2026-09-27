@@ -69,12 +69,26 @@ func (m *Model) summary() string {
 	if counts[review.Defer] > 0 {
 		s += fmt.Sprintf(" (%d deferred)", counts[review.Defer])
 	}
-	s += fmt.Sprintf(" · %s✓ %d%s  %s✗ %d%s", sgr(fgCode(green)), counts[review.Approve], reset,
-		sgr(fgCode(red)), counts[review.Reject], reset)
+	s += fmt.Sprintf(" · %s✓ %d%s", sgr(fgCode(green)), counts[review.Approve], reset)
+	if n := autoApproved(m.items); n > 0 {
+		s += dim(fmt.Sprintf(" (%d automatically)", n))
+	}
+	s += fmt.Sprintf("  %s✗ %d%s", sgr(fgCode(red)), counts[review.Reject], reset)
 	if m.err != nil {
 		s += "  " + sgr(fgCode(red)) + m.err.Error() + reset
 	}
 	return s
+}
+
+// autoApproved counts the hunks approved by an autoApprove pattern.
+func autoApproved(items []review.Item) int {
+	n := 0
+	for _, it := range items {
+		if it.Record != nil && it.Record.Auto != "" {
+			n++
+		}
+	}
+	return n
 }
 
 func (m *Model) taskLine(it review.Item) string {
@@ -90,6 +104,9 @@ func (m *Model) state(it review.Item) string {
 	if it.Record != nil {
 		color := map[review.Decision]int{review.Approve: green, review.Reject: red, review.Defer: yellow}[it.Record.Decision]
 		s = sgr(fgCode(color)) + string(it.Record.Decision) + reset
+		if it.Record.Auto != "" {
+			s += dim(" automatically, by autoApprove " + it.Record.Auto)
+		}
 	}
 	if it.Revision != nil && it.Revision.Revises != "" {
 		s += " · fixup of " + short(it.Revision.Revises)
