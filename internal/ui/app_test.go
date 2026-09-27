@@ -230,6 +230,11 @@ func TestAppNavLooksAndWraps(t *testing.T) {
 	if !strings.Contains(out, bar+tui.SGR(1)+"⏩ Next") || strings.Contains(out, tui.SGR(7)) {
 		t.Errorf("the selected entry:\n%q", out)
 	}
+	// A selected goal's title is bold, past its emoji's reset.
+	key(a, "j", "j")
+	if out := a.render(); !strings.Contains(out, tui.Reset+tui.SGR(1)+" set") {
+		t.Errorf("the selected goal's title isn't bold:\n%q", out)
+	}
 	// The intake box's rule joins the border, green beside the box.
 	key(a, "i")
 	lines := strings.Split(ansi.Strip(a.render()), "\n")

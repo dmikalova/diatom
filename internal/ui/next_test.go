@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -39,7 +38,8 @@ func TestNextOrdersPlansQuestionsFinishReview(t *testing.T) {
 		t.Errorf("items = %v, want %v", got, want)
 	}
 	out := ansi.Strip(a.render())
-	if !regexp.MustCompile(`⏩ Next +4 `).MatchString(out) {
+	// Next counts what waits across the goals, one kind at a time.
+	if !strings.Contains(out, "⏩ Next") || !strings.Contains(out, "   📝 1  ❓ 2  🔎 1") {
 		t.Errorf("the nav doesn't count Next's items:\n%s", out)
 	}
 }

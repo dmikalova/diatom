@@ -893,13 +893,10 @@ func (a *App) renderNav() string {
 // to fit, and for a goal or the intake, the thing about it that matters most
 // now on a line under it.
 func (a *App) navEntry(i int, e entry) []string {
-	var glyph, name, badge, under string
+	var glyph, name, under string
 	switch e.kind {
 	case entryNext:
-		glyph, name = "⏩", "Next"
-		if n := len(a.next.items); n > 0 {
-			badge = tui.Color(strconv.Itoa(n), tui.Magenta)
-		}
+		glyph, name, under = "⏩", "Next", a.nextCounts()
 	case entryIntake:
 		glyph, name = "➕", "Intake"
 		if e.row != nil {
@@ -918,36 +915,72 @@ func (a *App) navEntry(i int, e entry) []string {
 	case entryFinishedGoal:
 		glyph, name = tui.Dim("✓"), e.goal.Title
 	case entryLog:
-		glyph, name = "📜", "Scheduler log"
+		glyph, name = "📒", "Scheduler log"
 	}
 	// Glyphs take two columns, as an emoji does.
 	glyph += strings.Repeat(" ", max(2-ansi.StringWidth(glyph), 0))
-	room := a.nw() - 5 - ansi.StringWidth(badge)
-	if badge != "" {
-		room--
-	}
-	name = ansi.Truncate(name, max(room, 4), "…")
-	pad := strings.Repeat(" ", max(room-ansi.StringWidth(name), 0))
-	if badge != "" {
-		pad += " "
-	}
-	lines := []string{" " + glyph + " " + name + pad + badge}
+	lines := []string{glyph + " " + ansi.Truncate(name, max(a.nw()-5, 4), "…")}
 	if under != "" {
-		lines = append(lines, "    "+ansi.Truncate(under, max(a.nw()-5, 4), "…"))
+		lines = append(lines, "   "+ansi.Truncate(under, max(a.nw()-5, 4), "…"))
 	}
 	if i != a.sel {
+		for j, l := range lines {
+			lines[j] = " " + l
+		}
 		return lines
 	}
-	// The selected entry has a bar down its left, bright while the nav has
-	// the keyboard.
+	// The selected entry is bold, with a bar down its left, bright while the
+	// nav has the keyboard.
 	bar := tui.Dim("▌")
 	if a.focus == partNav {
 		bar = tui.Color("▌", tui.Accent)
 	}
 	for j, l := range lines {
-		lines[j] = bar + tui.Bold(strings.TrimPrefix(l, " "))
+		lines[j] = bar + boldAll(l)
 	}
 	return lines
+}
+
+// boldAll renders s bold throughout, the colors in it included: each of its
+// resets would otherwise end the bold.
+func boldAll(s string) string {
+	return tui.SGR(1) + strings.ReplaceAll(s, tui.Reset, tui.Reset+tui.SGR(1)) + tui.Reset
+}
+
+// nextCounts sums up what waits across every goal: plans to sign off,
+// questions, goals ready to finish, hunks to review, and goals blocked.
+func (a *App) nextCounts() string {
+	var plans, questions, finishing, hunks, blocked int
+	for _, it := range a.next.items {
+		switch it.kind {
+		case itemPlan:
+			plans++
+		case itemQuestion:
+			questions++
+		case itemFinish:
+			finishing++
+		case itemReview:
+			hunks += it.row.toReview
+		}
+	}
+	for _, r := range a.status.rows {
+		if name, _ := goalStatus(r); name == "blocked" {
+			blocked++
+		}
+	}
+	var parts []string
+	for _, c := range []struct {
+		emoji string
+		n     int
+	}{{"📝", plans}, {"❓", questions}, {"📩", finishing}, {"🔎", hunks}, {"🔗", blocked}} {
+		if c.n > 0 {
+			parts = append(parts, c.emoji+" "+strconv.Itoa(c.n))
+		}
+	}
+	if len(parts) == 0 {
+		return tui.Dim("nothing needs you")
+	}
+	return strings.Join(parts, "  ")
 }
 
 // relevant is the one thing about a goal that matters most now, in its

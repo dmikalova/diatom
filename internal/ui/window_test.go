@@ -65,7 +65,7 @@ func TestAppShowsTheLog(t *testing.T) {
 		t.Errorf("esc from the log selected %+v, focus %d", a.selected(), a.focus)
 	}
 	// It is in the menu at the nav's foot, and the footer opens it too.
-	if out := ansi.Strip(a.render()); !strings.Contains(out, "📜 Scheduler log") {
+	if out := ansi.Strip(a.render()); !strings.Contains(out, "📒 Scheduler log") {
 		t.Errorf("the nav has no log:\n%s", out)
 	}
 	a.sel = 0
