@@ -736,3 +736,31 @@ func TestIntakeHidesItsCursorWhenNotFocused(t *testing.T) {
 		t.Error("the intake didn't take its cursor back")
 	}
 }
+
+func TestStatusSaysWhenNothingCanStart(t *testing.T) {
+	f := newFixture(t)
+	if out := ansi.Strip(NewStatus(context.Background(), f.env).render()); !strings.Contains(out,
+		"The scheduler isn't running") {
+		t.Errorf("no scheduler:\n%s", out)
+	}
+	unlock, err := f.store.LockScheduler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	if out := ansi.Strip(NewStatus(context.Background(), f.env).render()); strings.Contains(out,
+		"scheduler") {
+		t.Errorf("a healthy scheduler was reported:\n%s", out)
+	}
+	if err := f.store.SetStuck("config: unknown setting autoApprove", time.Unix(0, 0)); err != nil {
+		t.Fatal(err)
+	}
+	s := NewStatus(context.Background(), f.env)
+	s.Update(tea.WindowSizeMsg{Width: 200, Height: 30})
+	if out := ansi.Strip(s.render()); !strings.Contains(
+		out,
+		"The scheduler is stuck, so no work starts",
+	) || !strings.Contains(out, "unknown setting autoApprove") {
+		t.Errorf("a stuck scheduler:\n%s", out)
+	}
+}

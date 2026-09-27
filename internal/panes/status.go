@@ -6,6 +6,7 @@ package panes
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/dmikalova/diatom/internal/config"
 	"github.com/dmikalova/diatom/internal/finish"
@@ -87,6 +89,10 @@ type Status struct {
 	// doing; it takes no other job until that one ends.
 	busy string
 
+	// health says what keeps the scheduler from starting work, when
+	// something does: it isn't running, or every pass fails.
+	health string
+
 	// detail is the row opened with enter: its tasks, or one of them.
 	detail *detail
 	// top is the first line of the list on screen.
@@ -112,6 +118,7 @@ func (s *Status) reload() {
 	}
 	s.focus = fc
 	store := s.env.Store
+	s.health = health(store)
 	goals, err := store.Goals()
 	if err != nil {
 		s.err = err
@@ -581,6 +588,12 @@ func (s *Status) render() string {
 		return s.renderDetail()
 	}
 	var b strings.Builder
+	used := 0
+	if s.health != "" {
+		h := ansi.Wordwrap(s.health, max(s.width, 20), "")
+		b.WriteString(tui.Color(h, tui.Red) + "\n\n")
+		used = strings.Count(h, "\n") + 2
+	}
 	if len(s.rows) == 0 {
 		b.WriteString(
 			"No goals yet. Describe what you want in the intake pane, and triage turns it " +
@@ -601,11 +614,25 @@ func (s *Status) render() string {
 		}
 	}
 	foot := s.foot()
-	b.WriteString(scroll(lines, first, last, &s.top, max(s.height-len(foot), 3)))
+	b.WriteString(scroll(lines, first, last, &s.top, max(s.height-len(foot)-used, 3)))
 	if len(foot) > 0 {
 		b.WriteString("\n" + strings.Join(foot, "\n"))
 	}
 	return b.String()
+}
+
+// health says what keeps the scheduler from starting work, or "" when
+// nothing does.
+func health(store *queue.Store) string {
+	if _, err := store.Scheduler(); errors.Is(err, queue.ErrNotRunning) {
+		return "The scheduler isn't running, so no work starts: run `diatom run` in the scheduler tab."
+	}
+	st, err := store.Stuck()
+	if err != nil || st == nil {
+		return ""
+	}
+	return fmt.Sprintf("The scheduler is stuck, so no work starts, since %s: %s",
+		st.Since.Local().Format("15:04"), st.Error)
 }
 
 // foot is what the last key and the background job said.

@@ -7,6 +7,7 @@ package harness
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -108,6 +109,12 @@ func (h *Harness) Run(stop, kill context.Context) error {
 		if err != nil && kill.Err() == nil {
 			h.log().Error("planning failed", "err", err)
 		}
+		if kill.Err() == nil {
+			// The status pane shows it: until it clears, nothing starts.
+			if err := queue.Open(h.Root).SetStuck(errString(err), h.now()); err != nil {
+				h.log().Warn("recording the planning error failed", "err", err)
+			}
+		}
 		for _, b := range batches {
 			key := schedule.Running{Repo: b.Repo, Goal: b.Goal, Workstream: b.Workstream}
 			p.start(key, func() error {
@@ -194,14 +201,14 @@ func (h *Harness) plan(
 	busy []schedule.Running,
 ) ([]schedule.Batch, map[string]Repo, error) {
 	repo, goals, err := h.load(ctx, h.Root)
-	if err != nil {
+	if repo.Config == nil {
 		return nil, nil, err
 	}
 	lim := schedule.Limits{Repos: map[string]schedule.RepoLimits{h.Root: {
 		Sessions: repo.Config.MaxSessions,
 		Batch:    repo.Config.MaxBatch,
 	}}}
-	return schedule.Next(goals, busy, lim), map[string]Repo{h.Root: repo}, nil
+	return schedule.Next(goals, busy, lim), map[string]Repo{h.Root: repo}, err
 }
 
 // load reads one repo's active goals and their ready tasks, applying answered
@@ -225,13 +232,16 @@ func (h *Harness) load(ctx context.Context, path string) (Repo, []*schedule.Goal
 		all = append([]*queue.Goal{g}, all...)
 	}
 	var goals []*schedule.Goal
+	// A goal that fails to load waits, and says why; the others go on.
+	var errs []error
 	for _, g := range all {
 		if g.State != queue.GoalActive && g.State != queue.GoalPlanning {
 			continue
 		}
 		ready, err := h.loadGoal(ctx, repo, g)
 		if err != nil {
-			return repo, nil, fmt.Errorf("goal %s: %w", g.Name, err)
+			errs = append(errs, fmt.Errorf("goal %s: %w", g.Name, err))
+			continue
 		}
 		goals = append(goals, &schedule.Goal{
 			Repo:    path,
@@ -241,7 +251,7 @@ func (h *Harness) load(ctx context.Context, path string) (Repo, []*schedule.Goal
 			Ready:   ready,
 		})
 	}
-	return repo, goals, ctx.Err()
+	return repo, goals, errors.Join(append(errs, ctx.Err())...)
 }
 
 // loadGoal brings in what the human decided for a goal since the last look,

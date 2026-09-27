@@ -721,3 +721,27 @@ func TestRepeatedErrorsStopRetrying(t *testing.T) {
 		t.Errorf("session state = %+v", st)
 	}
 }
+
+func TestOneBadGoalDoesNotStopTheRest(t *testing.T) {
+	f := newFixture(t)
+	f.add("engine", "Add ward")
+	if err := f.store.CreateGoal(
+		&queue.Goal{Name: "bad", State: queue.GoalActive, Base: "main"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	// An answered question for a task that isn't there fails the goal's load.
+	if err := f.store.AddQuestion("bad", &queue.Question{Task: "0099", Text: "?"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.Answer("bad", "0001", "yes", time.Unix(1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	batches, _, err := f.h.plan(context.Background(), nil)
+	if err == nil || !strings.Contains(err.Error(), "goal bad") {
+		t.Errorf("plan error = %v, want goal bad's", err)
+	}
+	if len(batches) != 1 || batches[0].Goal != "set" {
+		t.Errorf("batches = %+v, want set's to run anyway", batches)
+	}
+}

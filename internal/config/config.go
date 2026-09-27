@@ -384,7 +384,8 @@ func decode(m map[string]any) (*Config, error) {
 		// MCP servers are in Claude Code's format, which diatom passes on
 		// as it is.
 		if key[0] != "mcpServers" {
-			return nil, fmt.Errorf("config: unknown setting %s", key)
+			return nil, fmt.Errorf("config: unknown setting %s: a typo, or a setting "+
+				"newer than this diatom, which updating it would fix", key)
 		}
 	}
 	return &c, nil
