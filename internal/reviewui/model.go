@@ -12,14 +12,16 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 	"github.com/bluekeyes/go-gitdiff/gitdiff"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/review"
 	"github.com/dmikalova/diatom/internal/termimg"
+	"github.com/dmikalova/diatom/internal/tui"
 )
 
 // Model is the reviewer's state.
@@ -40,7 +42,7 @@ type Model struct {
 	drafts []review.Comment
 
 	editing bool
-	input   textinput.Model
+	input   textarea.Model
 
 	// combined shows a fixup folded into the commit it revises.
 	combined      bool
@@ -61,8 +63,8 @@ type Model struct {
 
 // New loads a goal's review and puts the first hunk to review on screen.
 func New(ctx context.Context, s *queue.Store, goal string) (*Model, error) {
-	in := textinput.New()
-	in.Placeholder = "comment on this line; enter saves, esc cancels"
+	in := tui.TextBox()
+	in.Placeholder = "A comment on this line"
 	m := &Model{
 		ctx: ctx, store: s, goal: goal, rev: review.Store{Dir: s.GoalDir(goal)},
 		repo: git.Repo{Dir: s.Repo()}, now: time.Now, input: in, cur: -1, width: 100, height: 30,
@@ -194,9 +196,28 @@ func (m *Model) updateEditing(msg tea.KeyPressMsg) (*Model, tea.Cmd) {
 		m.input.Reset()
 		return m, nil
 	}
+	if cmd, ok := tui.Cut(&m.input, msg); ok {
+		return m, cmd
+	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
+	m.fitInput()
 	return m, cmd
+}
+
+// commentLines is the most lines the comment box grows to.
+const commentLines = 10
+
+// fitInput grows the comment box with its text, up to commentLines.
+func (m *Model) fitInput() {
+	w := max(m.width-4, 10)
+	m.input.SetWidth(w)
+	text := strings.TrimSuffix(m.input.Value(), "\n")
+	n := len(strings.Split(ansi.Wordwrap(text, w, ""), "\n"))
+	if strings.HasSuffix(m.input.Value(), "\n") {
+		n++
+	}
+	m.input.SetHeight(min(max(n, 1), commentLines))
 }
 
 func (m *Model) updateKey(msg tea.KeyPressMsg) (*Model, tea.Cmd) {
@@ -218,6 +239,7 @@ func (m *Model) updateKey(msg tea.KeyPressMsg) (*Model, tea.Cmd) {
 					m.input.SetValue(c.Text)
 				}
 			}
+			m.fitInput()
 			return m, m.input.Focus()
 		}
 	case "x":
@@ -231,11 +253,11 @@ func (m *Model) updateKey(msg tea.KeyPressMsg) (*Model, tea.Cmd) {
 		m.decide(review.Reject)
 	case "d":
 		m.decide(review.Defer)
-	case "n":
+	case "s":
 		m.skip(1)
-	case "p":
+	case "S", "shift+s":
 		m.skip(-1)
-	case "u", "backspace":
+	case "b", "backspace":
 		m.stepBack()
 	case "v":
 		m.toggleCombined()

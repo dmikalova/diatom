@@ -2,13 +2,10 @@ package ui
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
-	keybind "charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"github.com/dmikalova/diatom/internal/intake"
 	"github.com/dmikalova/diatom/internal/tui"
@@ -32,65 +29,11 @@ type Intake struct {
 
 // NewIntake loads the intake pane.
 func NewIntake(env Env) *Intake {
-	area := textarea.New()
-	area.ShowLineNumbers = false
-	area.Prompt = ""
-	editKeys(&area)
-	area.SetStyles(plainStyles())
+	area := tui.TextBox()
 	m := &Intake{env: env, area: area, width: 80, height: 1}
 	m.reload()
 	m.resize()
 	return m
-}
-
-// plainStyles styles a text box in the terminal's own colors, as the rest of
-// the window is, rather than for a dark background: plain text, and the
-// placeholder in the window's gray.
-func plainStyles() textarea.Styles {
-	s := textarea.DefaultDarkStyles()
-	plain := textarea.StyleState{
-		Base:        lipgloss.NewStyle(),
-		Text:        lipgloss.NewStyle(),
-		CursorLine:  lipgloss.NewStyle(),
-		EndOfBuffer: lipgloss.NewStyle(),
-		Prompt:      lipgloss.NewStyle(),
-		Placeholder: lipgloss.NewStyle().Foreground(lipgloss.Color(strconv.Itoa(tui.Gray))),
-		Selection:   lipgloss.NewStyle().Reverse(true),
-	}
-	s.Focused, s.Blurred = plain, plain
-	s.Cursor.Color = lipgloss.Color(strconv.Itoa(tui.Accent))
-	return s
-}
-
-// The keys the text boxes edit with, beside the text box's own. The shifted
-// ones need a terminal that tells them apart, as Ghostty does; the alt ones
-// work in any.
-var (
-	// newline adds a line to the text instead of sending it.
-	newline   = keybind.NewBinding(keybind.WithKeys("shift+enter", "alt+enter", "ctrl+j"))
-	selectAll = keybind.NewBinding(keybind.WithKeys("alt+a", "ctrl+shift+a"))
-	copyText  = keybind.NewBinding(keybind.WithKeys("ctrl+shift+c", "alt+c"))
-	cutText   = keybind.NewBinding(keybind.WithKeys("ctrl+x", "alt+x"))
-)
-
-// editKeys gives a text box the window's editing keys. Pasting, with the
-// terminal's paste or ctrl+v, and selecting with shift and the arrows are the
-// text box's own.
-func editKeys(area *textarea.Model) {
-	area.KeyMap.InsertNewline = newline
-	area.KeyMap.SelectAll = selectAll
-	area.KeyMap.CopySelection = copyText
-}
-
-// cut copies the selected text and deletes it, which the text box has no key
-// for.
-func cut(area *textarea.Model, msg tea.KeyPressMsg) (tea.Cmd, bool) {
-	if !keybind.Matches(msg, cutText) || !area.HasSelection() {
-		return nil, false
-	}
-	cmd := area.CopySelection()
-	area.DeleteSelection()
-	return cmd, true
 }
 
 func (m *Intake) reload() {
@@ -119,7 +62,7 @@ func (m *Intake) key(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 	m.flash = ""
-	if cmd, ok := cut(&m.area, msg); ok {
+	if cmd, ok := tui.Cut(&m.area, msg); ok {
 		return cmd
 	}
 	var cmd tea.Cmd

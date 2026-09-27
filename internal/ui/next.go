@@ -109,11 +109,7 @@ const (
 
 // NewNext loads what waits on the human, from the status's rows.
 func NewNext(ctx context.Context, env Env, status *Status) *Next {
-	area := textarea.New()
-	area.ShowLineNumbers = false
-	area.Prompt = ""
-	editKeys(&area)
-	area.SetStyles(plainStyles())
+	area := tui.TextBox()
 	n := &Next{
 		ctx:       ctx,
 		env:       env,
@@ -376,7 +372,7 @@ func (n *Next) reviewKey(it item, msg tea.KeyPressMsg) nextKey {
 }
 
 func (n *Next) answerKey(it item, msg tea.KeyPressMsg) nextKey {
-	if cmd, ok := cut(&n.answer, msg); ok {
+	if cmd, ok := tui.Cut(&n.answer, msg); ok {
 		return nextKey{cmd: cmd}
 	}
 	switch msg.String() {

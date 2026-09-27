@@ -9,7 +9,7 @@ import (
 // SetSize fits the reviewer to its part of the window.
 func (m *Model) SetSize(width, height int) {
 	m.width, m.height = width, height
-	m.input.SetWidth(max(width-4, 10))
+	m.fitInput()
 }
 
 // Render is the reviewer as it shows now.

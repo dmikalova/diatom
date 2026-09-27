@@ -182,10 +182,14 @@ What needs you:
   unblocks its task.
 - **Review, whenever you like**, in Next once the questions are answered, or
   with `r` on a goal's page:
-  - `a`, `r` and `d` approve, reject and defer the hunk on screen, and `n` and
-    `p` move between hunks.
-  - `c` comments on the line under the cursor, and `u` steps back through
-    earlier decisions.
+  - `a` approves the hunk on screen. `r` rejects it, which sends it back to an
+    agent to fix. `d` defers it, which asks you again once the rest are done.
+    `s` skips it for now, and `shift+s` goes to the one before.
+  - `c` comments on the line under the cursor, in a box that grows to ten
+    lines: `enter` saves and `shift+enter` adds a line. The comments go with
+    your decision: a rejection's tell the agent what to change, and an
+    approval's go to intake as notes. `b` goes back through earlier
+    decisions.
   - Rejecting with a comment becomes a revision task within seconds. The fix
     comes back as a `fixup!` commit, and `v` shows it folded into the original.
   - Review doesn't hold up the agents, but you have to review everything before

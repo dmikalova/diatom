@@ -97,9 +97,9 @@ With the terminal in the background, a notification says when something comes
 to wait on you.
 
 In review, `a`, `r` and `d` approve, reject and defer the hunk on screen, `c`
-comments on the line under the cursor, `n` and `p` move between hunks, `u` steps
-back through earlier decisions, and `v` shows a fixup folded into the commit it
-revises. A rejection's comments become a revision task within seconds, and the
+comments on the line under the cursor, `s` and `shift+s` skip to the next or
+last hunk left without deciding, `b` goes back through earlier decisions, and on
+a fixup, `v` shows it folded into the commit it revises. A rejection's comments become a revision task within seconds, and the
 agent's fix lands as a `fixup!` commit that comes back for review.
 
 A goal ready to finish comes up in Next. `P` merges it into the base branch,

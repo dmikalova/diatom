@@ -2,6 +2,7 @@ package reviewui
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -27,7 +28,7 @@ func (m *Model) bodyHeight() int {
 		it := m.items[m.cur]
 		head = len(m.hunkHead(it)) + len(m.preview(it))
 	}
-	return max(m.height-headerLines-head-footerLines-len(m.causes()), 3)
+	return max(m.height-headerLines-head-m.footerHeight()-len(m.causes()), 3)
 }
 
 // hunkHead is what heads a hunk: its commit, the tasks that made it, and its
@@ -185,10 +186,7 @@ func (m *Model) body() string {
 			cursorEnd = len(rows) - 1
 		}
 		if text, ok := comments[i]; ok {
-			rows = append(
-				rows,
-				sgr(fgCode(magenta))+strings.Repeat(" ", 2*gutter+4)+"💬 "+text+reset,
-			)
+			rows = append(rows, commentRows(text, gutter, width)...)
 		}
 	}
 	// Keep the cursor's line in view, wrapped rows and comments and all.
@@ -209,6 +207,23 @@ func (m *Model) body() string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// commentRows are a comment under its line, wrapped here so that the rows
+// fit and the footer stays on screen.
+func commentRows(text string, gutter, width int) []string {
+	lead := strings.Repeat(" ", 2*gutter+4)
+	var rows []string
+	for j, l := range strings.Split(text, "\n") {
+		mark := "💬 "
+		if j > 0 {
+			mark = "   "
+		}
+		for _, r := range tui.Hang(lead+mark+l, width) {
+			rows = append(rows, sgr(fgCode(magenta))+r+reset)
+		}
+	}
+	return rows
 }
 
 // row renders one line of the hunk, wrapped to the width: the rows after
@@ -259,13 +274,35 @@ func (m *Model) row(l line, cursor bool, gutter, width int) []string {
 
 func (m *Model) footer() string {
 	if m.editing {
-		return m.input.View() + "\n"
+		return m.input.View() + "\n" + dim("enter saves · shift+enter adds a line · esc cancels")
 	}
-	keys := "a approve · r reject · d defer · c comment · x drop comment · n/p skip · u back · v combined"
+	keys := "a approve · r reject · d defer · c comment"
+	if m.hasDraft() {
+		keys += " · x drop comment"
+	}
+	keys += " · s skip · b back"
+	if m.cur >= 0 && m.items[m.cur].Revision != nil && m.items[m.cur].Revision.Revises != "" {
+		keys += " · v combined"
+	}
 	if m.flash != "" {
 		return sgr(fgCode(cyan)) + m.flash + reset + "\n" + dim(keys)
 	}
 	return "\n" + dim(keys)
+}
+
+// footerHeight is how many rows the footer takes: the comment box and its
+// keys while a comment is written, else a line for what happened and one of
+// keys.
+func (m *Model) footerHeight() int {
+	if m.editing {
+		return m.input.Height() + 1
+	}
+	return footerLines
+}
+
+// hasDraft reports whether the line under the cursor has a comment.
+func (m *Model) hasDraft() bool {
+	return slices.ContainsFunc(m.drafts, func(c review.Comment) bool { return c.Line == m.cursor })
 }
 
 func dim(s string) string { return tui.Dim(s) }

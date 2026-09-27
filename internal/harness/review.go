@@ -253,7 +253,9 @@ func hunkSection(h review.Hunk, rec *review.Record) string {
 		if !h.Binary() && c.Line >= 0 && c.Line < len(h.Fragment.Lines) {
 			line = " (`" + strings.TrimRight(h.Fragment.Lines[c.Line].String(), "\n") + "`)"
 		}
-		fmt.Fprintf(&b, "- Line %d%s: %s\n", h.NewLine(c.Line), line, c.Text)
+		// A comment of several lines stays in its item of the list.
+		fmt.Fprintf(&b, "- Line %d%s: %s\n", h.NewLine(c.Line), line,
+			strings.ReplaceAll(c.Text, "\n", "\n  "))
 	}
 	fmt.Fprintf(&b, "<!-- /diatom:hunk %s -->\n", h.ID)
 	return b.String()

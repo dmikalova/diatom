@@ -210,6 +210,8 @@ func press(m *Model, keys ...string) {
 			msg = tea.KeyPressMsg{Code: tea.KeyEscape}
 		case "down":
 			msg = tea.KeyPressMsg{Code: tea.KeyDown}
+		case "shift+enter":
+			msg = tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift}
 		default:
 			r, _ := utf8.DecodeRuneInString(k)
 			msg = tea.KeyPressMsg{Code: r, Text: k}
@@ -273,7 +275,7 @@ func TestReviewFlow(t *testing.T) {
 	}
 
 	// Step back to the approval and defer it instead.
-	press(m, "u")
+	press(m, "b")
 	if m.cur < 0 || m.items[m.cur].Record.Decision != review.Approve {
 		t.Fatalf("step back = %d", m.cur)
 	}
@@ -282,7 +284,7 @@ func TestReviewFlow(t *testing.T) {
 		!strings.Contains(m.render(), "(1 deferred)") {
 		t.Errorf("a deferred hunk that is the only one left should stay on screen:\n%s", m.render())
 	}
-	press(m, "u", "u")
+	press(m, "b", "b")
 	if m.cur < 0 || m.items[m.cur].ID != first.ID || len(m.drafts) != 1 {
 		t.Errorf(
 			"stepping back twice should reach the rejected hunk with its comment, got %d",
@@ -323,7 +325,7 @@ func TestCommentEditing(t *testing.T) {
 	if len(m.drafts) != 0 {
 		t.Error("x did not drop the comment")
 	}
-	press(m, "down", "n", "p")
+	press(m, "down", "s", "S")
 	if m.cur < 0 {
 		t.Error("skipping lost the only hunk")
 	}
@@ -496,5 +498,41 @@ func TestImagesBeforeAndAfter(t *testing.T) {
 	m.pics.on = false
 	if m.preview(m.items[m.cur]) != nil {
 		t.Error("a preview without images")
+	}
+}
+
+func TestCommentBoxGrowsAndTheFooterStays(t *testing.T) {
+	f := newFixture(t)
+	f.write("ward.go", body("ward", "u"))
+	f.task(&queue.Task{Title: "Add ward", Kind: queue.Planned, Workstream: "engine",
+		Commits: []string{f.commit("feat: ward")}})
+	m := f.model()
+	if foot := ansi.Strip(m.footer()); !strings.Contains(foot, "s skip · b back") ||
+		strings.Contains(foot, "combined") || strings.Contains(foot, "drop comment") {
+		t.Errorf("footer = %q", foot)
+	}
+	press(m, "c")
+	typeText(m, "first")
+	for range 14 {
+		press(m, "shift+enter")
+		typeText(m, "more")
+	}
+	if m.input.Height() != commentLines || !strings.Contains(ansi.Strip(m.footer()),
+		"enter saves · shift+enter adds a line") {
+		t.Errorf("box height %d, footer %q", m.input.Height(), ansi.Strip(m.footer()))
+	}
+	if lines := strings.Split(strings.TrimRight(m.render(), "\n"), "\n"); len(lines) > m.height {
+		t.Errorf("editing drew %d lines in %d", len(lines), m.height)
+	}
+	press(m, "enter")
+	if len(m.drafts) != 1 || !strings.HasPrefix(m.drafts[0].Text, "first\nmore") {
+		t.Fatalf("drafts = %+v", m.drafts)
+	}
+	// A long comment wraps inside the reviewer, and the keys stay on screen.
+	m.drafts[0].Text = strings.Repeat("this needs another look ", 12)
+	out := strings.Split(strings.TrimRight(ansi.Strip(m.render()), "\n"), "\n")
+	if len(out) > m.height || !strings.Contains(out[len(out)-1], "a approve") ||
+		!strings.Contains(ansi.Strip(m.footer()), "x drop comment") {
+		t.Errorf("%d lines in %d, last %q", len(out), m.height, out[len(out)-1])
 	}
 }
