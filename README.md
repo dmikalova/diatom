@@ -58,8 +58,8 @@ Type what you want into the intake pane, such as "Turn docs/todo-agent.md into
 goals, one per section". Triage, an agent, sorts every intake into the repo's
 goals: new goals, tasks on existing ones, feedback for a goal being planned, or
 questions back to you. A new goal is grilled first: answer its questions, then
-sign off its plan. Work the intake already decides skips grilling and waits for
-your sign-off.
+sign off its plan, which comes to the top of the questions pane. Work the intake
+already decides skips grilling and waits for your sign-off.
 
 The same from the command line:
 

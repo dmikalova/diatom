@@ -21,6 +21,7 @@ import (
 	"github.com/dmikalova/diatom/internal/finish"
 	"github.com/dmikalova/diatom/internal/focus"
 	"github.com/dmikalova/diatom/internal/git"
+	"github.com/dmikalova/diatom/internal/intake"
 	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/review"
@@ -57,6 +58,9 @@ type goalRow struct {
 	// task's state, for a goal in planning.
 	plan     *plan.Plan
 	grilling queue.State
+	// sentBack is set once the human has asked for changes to the plan
+	// that grilling hasn't taken in yet.
+	sentBack bool
 	// landing is a done goal's layout, nil when it has none.
 	landing *finish.Result
 	// intake marks the row of the intake triage is sorting, which isn't a
@@ -78,9 +82,8 @@ type Status struct {
 	// hunks caches each commit's hunk count; commits never change.
 	hunks map[string]int
 
-	// viewing shows the selected goal's plan; confirm names the key and
-	// goal a first press asked to confirm, such as a sign-off.
-	viewing bool
+	// confirm names the key and goal a first press asked to confirm, such
+	// as a sign-off.
 	confirm string
 	// busy says what a background job, such as laying a goal out, is
 	// doing; it takes no other job until that one ends.
@@ -88,6 +91,8 @@ type Status struct {
 
 	// detail is the row opened with enter: its tasks, or one of them.
 	detail *detail
+	// top is the first line of the list on screen.
+	top int
 
 	width, height int
 	flash         string
@@ -163,6 +168,11 @@ func (s *Status) row(store *queue.Store, g *queue.Goal) (goalRow, error) {
 		if row.plan, err = plan.Load(store.GoalDir(g.Name)); err != nil {
 			return row, err
 		}
+		sent, err := intake.Pending(plan.FeedbackDir(store.GoalDir(g.Name)))
+		if err != nil {
+			return row, err
+		}
+		row.sentBack = len(sent) > 0
 	case queue.GoalDone:
 		if row.landing, err = finish.Load(store.GoalDir(g.Name)); err != nil {
 			return row, err
@@ -270,6 +280,11 @@ func (s *Status) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		s.flash = "intake isn't a goal: enter shows what triage is doing with it"
 		return s, nil
 	}
+	if row != nil {
+		if cmd, ok := s.act(row, key); ok {
+			return s, cmd
+		}
+	}
 	switch key {
 	case "q", "ctrl+c":
 		return s, tea.Quit
@@ -290,31 +305,6 @@ func (s *Status) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case "esc":
 		s.setFocus(focus.Focus{})
-	case "p":
-		if row != nil {
-			s.toggleParked(row)
-		}
-	case "P":
-		if row != nil {
-			row.goal.Pinned = !row.goal.Pinned
-			what := "unpinned"
-			if row.goal.Pinned {
-				what = "pinned"
-			}
-			s.save(row, what)
-		}
-	case "v":
-		s.viewing = !s.viewing
-	case "s":
-		if row != nil {
-			s.signOff(row)
-		}
-		return s, nil
-	case "d", "D", "F", "U":
-		if row != nil {
-			return s, s.finishKey(row, msg.String())
-		}
-		return s, nil
 	case "r":
 		s.reload()
 	}
@@ -322,11 +312,85 @@ func (s *Status) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return s, nil
 }
 
+// act does what one of a goal's keys does, and reports whether key is one.
+func (s *Status) act(row *goalRow, key string) (tea.Cmd, bool) {
+	switch key {
+	case "p":
+		s.toggleParked(row)
+	case "P":
+		row.goal.Pinned = !row.goal.Pinned
+		what := "unpinned"
+		if row.goal.Pinned {
+			what = "pinned"
+		}
+		s.save(row, what)
+	case "s":
+		s.signOff(row)
+		return nil, true
+	case "d", "D", "F", "U":
+		return s.finishKey(row, key), true
+	default:
+		return nil, false
+	}
+	s.confirm = ""
+	return nil, true
+}
+
+// action is one thing a goal's menu offers, and the key that does it.
+type action struct{ key, label string }
+
+// actions lists what can be done with a goal now, the step it is waiting
+// for first.
+func actions(r *goalRow) []action {
+	if r == nil || r.intake {
+		return nil
+	}
+	g := r.goal
+	var a []action
+	switch g.State {
+	case queue.GoalPlanning:
+		if r.plan != nil && !r.sentBack {
+			a = append(a, action{"s", fmt.Sprintf("Sign off the plan: %d workstreams, %d tasks",
+				len(r.plan.Workstreams), len(r.plan.Tasks))})
+		}
+	case queue.GoalActive:
+		left := r.counts[queue.Pending] + r.counts[queue.Active] + r.counts[queue.Blocked]
+		if left == 0 && r.toReview == 0 {
+			a = append(a, action{"d", "Mark it done and lay it out for landing"})
+		} else {
+			a = append(a, action{"D", fmt.Sprintf(
+				"Mark it done with work left: %d tasks not done, %d hunks to review",
+				left, r.toReview)})
+		}
+		a = append(a, action{"p", "Park it: start nothing new"})
+	case queue.GoalParked:
+		a = append(a, action{"p", "Resume it"})
+	case queue.GoalDone:
+		if l := r.landing; l == nil || l.Landing == nil || l.Landing.How == "" {
+			a = append(a,
+				action{"F", "Open its stacked pull requests"},
+				action{"U", "Push it straight to " + g.Base})
+		}
+	}
+	if g.State != queue.GoalDone {
+		pin := action{"P", "Pin it, so its tasks run before other goals'"}
+		if g.Pinned {
+			pin.label = "Unpin it"
+		}
+		a = append(a, pin)
+	}
+	return a
+}
+
 // signOff signs the selected goal's plan off on a second s (ADR 0010).
 func (s *Status) signOff(row *goalRow) {
 	name := row.repo + "/" + row.goal.Name
 	if row.plan == nil {
 		s.flash, s.confirm = row.goal.Name+" has no plan to sign off", ""
+		return
+	}
+	if row.sentBack {
+		s.flash, s.confirm = row.goal.Name+"'s plan went back with changes: grilling hands in the next", ""
 		return
 	}
 	if !s.confirmed("s", name, fmt.Sprintf(
@@ -501,10 +565,16 @@ func describe(fc focus.Focus) string {
 	return fc.Goal
 }
 
-// View implements tea.Model.
+// View implements tea.Model. The repo and focus are in the title, which
+// zellij shows on the pane's frame, so the pane itself is only the goals.
 func (s *Status) View() tea.View {
 	v := tea.NewView(s.render())
 	v.AltScreen = true
+	v.WindowTitle = "status · " + filepath.Base(
+		s.env.Store.Repo(),
+	) + " · focus " + describe(
+		s.focus,
+	)
 	return v
 }
 
@@ -513,38 +583,57 @@ func (s *Status) render() string {
 		return s.renderDetail()
 	}
 	var b strings.Builder
-	b.WriteString(
-		tui.Bold(
-			filepath.Base(s.env.Store.Repo()),
-		) + tui.Dim(
-			" · focus "+describe(s.focus),
-		) + "\n\n",
-	)
 	if len(s.rows) == 0 {
 		b.WriteString(
 			"No goals yet. Describe what you want in the intake pane, and triage turns it " +
 				"into goals.\n",
 		)
 	}
+	var lines []string
+	first, last := 0, 0
 	for i, r := range s.rows {
-		s.renderRow(&b, i, r)
+		var rb strings.Builder
+		s.renderRow(&rb, i, r)
+		if i == s.sel {
+			first = len(lines)
+		}
+		lines = append(lines, strings.Split(strings.TrimRight(rb.String(), "\n"), "\n")...)
+		if i == s.sel {
+			last = len(lines) - 1
+		}
 	}
+	foot := s.foot()
+	b.WriteString(scroll(lines, first, last, &s.top, max(s.height-len(foot), 3)))
+	if len(foot) > 0 {
+		b.WriteString("\n" + strings.Join(foot, "\n"))
+	}
+	return b.String()
+}
+
+// foot is what the last key and the background job said.
+func (s *Status) foot() []string {
+	var foot []string
 	if s.err != nil {
-		b.WriteString("\n" + tui.Color(s.err.Error(), tui.Red) + "\n")
+		foot = append(foot, tui.Color(s.err.Error(), tui.Red))
 	}
 	if s.flash != "" {
-		b.WriteString("\n" + tui.Color(s.flash, tui.Cyan) + "\n")
+		foot = append(foot, tui.Color(s.flash, tui.Cyan))
 	}
 	if s.busy != "" {
-		b.WriteString("\n" + tui.Color(s.busy+"…", tui.Yellow) + "\n")
+		foot = append(foot, tui.Color(s.busy+"…", tui.Yellow))
 	}
-	b.WriteString(
-		"\n" + tui.Dim(
-			"enter open · f focus · p park/resume · P pin · v view plan · s sign off · d done · "+
-				"F open PRs · U push · esc focus the repo · q quit",
-		),
-	)
-	return b.String()
+	return foot
+}
+
+// scroll shows room lines, moved from *top just enough to show the lines
+// from first to last, or first when they don't all fit.
+func scroll(lines []string, first, last int, top *int, room int) string {
+	if last >= *top+room {
+		*top = last - room + 1
+	}
+	*top = min(*top, first)
+	*top = max(min(*top, len(lines)-room), 0)
+	return strings.Join(lines[*top:min(*top+room, len(lines))], "\n")
 }
 
 // renderRow renders one goal and what is running for it.
@@ -598,11 +687,6 @@ func (s *Status) renderRow(b *strings.Builder, i int, r goalRow) {
 	}
 	if r.goal.State == queue.GoalPlanning {
 		b.WriteString("      " + planningLine(r) + "\n")
-		if s.viewing && i == s.sel && r.plan != nil {
-			for l := range strings.SplitSeq(strings.TrimRight(plan.Describe(r.plan), "\n"), "\n") {
-				b.WriteString("      " + tui.Dim("│ ") + l + "\n")
-			}
-		}
 	}
 	s.renderActive(b, r)
 }
@@ -641,8 +725,10 @@ func landingLine(r goalRow) string {
 // planningLine says where a goal in planning stands.
 func planningLine(r goalRow) string {
 	switch {
+	case r.sentBack:
+		return tui.Color("plan sent back with your changes: grilling takes them next", tui.Blue)
 	case r.plan != nil:
-		return tui.Color(fmt.Sprintf("plan ready: %d workstreams, %d tasks · v view · s sign off",
+		return tui.Color(fmt.Sprintf("plan ready to sign off: %d workstreams, %d tasks",
 			len(r.plan.Workstreams), len(r.plan.Tasks)), tui.Green)
 	case r.grilling == queue.Blocked:
 		return tui.Color("grilling: waiting on your answers", tui.Magenta)

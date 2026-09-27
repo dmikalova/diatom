@@ -107,10 +107,10 @@ func triageBody(s *queue.Store, in intake.Intake) string {
 	return body + "\n"
 }
 
-// feedbackDir holds the feedback triage passes to a goal in grilling, until
-// its next round.
+// feedbackDir holds the feedback passed to a goal in grilling, until its
+// next round.
 func feedbackDir(s *queue.Store, goal string) string {
-	return filepath.Join(s.GoalDir(goal), "feedback")
+	return plan.FeedbackDir(s.GoalDir(goal))
 }
 
 // applyFeedback passes feedback to a goal's grilling. A plan handed in and

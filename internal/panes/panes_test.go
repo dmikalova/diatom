@@ -136,36 +136,71 @@ func TestStatus(t *testing.T) {
 	f := newFixture(t)
 	s := NewStatus(context.Background(), f.env)
 	out := s.render()
-	for _, want := range []string{"vex", "set", "active", "1 pending", "1 questions", "1 to review", "focus the repo"} {
+	for _, want := range []string{"set", "active", "1 pending", "1 questions", "1 to review"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status lacks %q:\n%s", want, out)
 		}
 	}
+	if title := s.View().WindowTitle; title != "status · vex · focus the repo" {
+		t.Errorf("titled %q", title)
+	}
 
+	// A goal opens to what can be done with it, then its tasks.
 	key(s, "enter")
 	fc, _ := f.env.Focus.Read()
-	if fc.Goal != "set" || !strings.Contains(ansi.Strip(s.render()), "0001 [engine] Add ward") {
-		t.Errorf("focus = %+v, and the goal opened:\n%s", fc, s.render())
+	out = ansi.Strip(s.render())
+	if fc.Goal != "set" || !strings.Contains(out, "0001 [engine] Add ward") ||
+		!strings.Contains(
+			out,
+			"› D  Mark it done with work left: 1 tasks not done, 1 hunks to review",
+		) ||
+		!strings.Contains(out, "p  Park it") || !strings.Contains(out, "1 to review") {
+		t.Errorf("focus = %+v, and the goal opened:\n%s", fc, out)
 	}
-	key(s, "esc")
-	if !strings.Contains(s.render(), "focus set") {
-		t.Errorf("esc didn't back out to the list:\n%s", s.render())
+	key(s, "j", "enter")
+	if g, _ := f.store.Goal("set"); g.State != queue.GoalParked ||
+		!strings.Contains(ansi.Strip(s.render()), "p  Resume it") {
+		t.Errorf("enter on park left the goal %s:\n%s", g.State, s.render())
+	}
+	key(s, "j", "j", "enter")
+	if s.detail.task == nil || s.detail.task.id != "0001" {
+		t.Errorf("enter past the actions didn't open the task:\n%s", s.render())
+	}
+	key(s, "esc", "esc")
+	if s.detail != nil || s.View().WindowTitle != "status · vex · focus set" {
+		t.Errorf("esc didn't back out to the list, titled %q", s.View().WindowTitle)
 	}
 	key(s, "esc")
 	if fc, _ := f.env.Focus.Read(); fc.Goal != "" {
 		t.Errorf("after esc at the list, focus = %+v, want the repo", fc)
 	}
 
-	key(s, "p")
-	if g, _ := f.store.Goal("set"); g.State != queue.GoalParked {
-		t.Errorf("after p, goal is %s", g.State)
-	}
 	key(s, "p", "P")
 	g, _ := f.store.Goal("set")
 	if g.State != queue.GoalActive || !g.Pinned {
 		t.Errorf("after p and P, goal = %+v", g)
 	}
 	s.Update(tickMsg{})
+}
+
+func TestStatusScrolls(t *testing.T) {
+	f := newFixture(t)
+	for i := range 10 {
+		if err := f.store.CreateGoal(&queue.Goal{Name: fmt.Sprintf("g%02d", i),
+			State: queue.GoalActive}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := NewStatus(context.Background(), f.env)
+	s.Update(tea.WindowSizeMsg{Width: 60, Height: 6})
+	for range 8 {
+		key(s, "j")
+	}
+	out := ansi.Strip(s.render())
+	if !strings.Contains(out, "› ") || strings.Count(out, "\n") > 5 ||
+		strings.Contains(out, "g00") {
+		t.Errorf("list after moving down 8, in 6 lines:\n%s", out)
+	}
 }
 
 func TestStatusShowsWaitingGoal(t *testing.T) {
@@ -274,7 +309,7 @@ func TestStatusShowsIntakeBeingSorted(t *testing.T) {
 
 func TestQuestions(t *testing.T) {
 	f := newFixture(t)
-	q := NewQuestions(f.env)
+	q := NewQuestions(context.Background(), f.env)
 	out := ansi.Strip(q.render())
 	if q.View().WindowTitle != "questions · 1 open" ||
 		!strings.Contains(out, "set\n› Does ward stack?") || strings.Contains(out, "questions") {
@@ -300,7 +335,7 @@ func TestQuestions(t *testing.T) {
 		t.Fatalf("answer = %+v", open)
 	}
 	if q.View().WindowTitle != "questions · 0 open" || q.answering ||
-		!strings.Contains(q.render(), "no questions left") {
+		!strings.Contains(q.render(), "nothing else waiting") {
 		t.Errorf("after the last answer, titled %q:\n%s", q.View().WindowTitle, q.render())
 	}
 }
@@ -315,7 +350,7 @@ func TestAnsweringMovesOn(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	q := NewQuestions(f.env)
+	q := NewQuestions(context.Background(), f.env)
 	key(q, "j", "enter") // the second
 	typeText(q, "Two.")
 	key(q, "enter")
@@ -347,7 +382,7 @@ func TestQuestionsScroll(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	q := NewQuestions(f.env)
+	q := NewQuestions(context.Background(), f.env)
 	q.Update(tea.WindowSizeMsg{Width: 60, Height: 8})
 	for range 15 {
 		key(q, "j")
@@ -456,9 +491,12 @@ func TestStatusSignsOffAPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.reload()
-	key(s, "v")
-	out := s.render()
-	if !strings.Contains(out, "plan ready: 1 workstreams, 1 tasks") ||
+	if !strings.Contains(s.render(), "plan ready to sign off: 1 workstreams, 1 tasks") {
+		t.Errorf("plan not listed:\n%s", s.render())
+	}
+	key(s, "enter")
+	out := ansi.Strip(s.render())
+	if !strings.Contains(out, "› s  Sign off the plan: 1 workstreams, 1 tasks") ||
 		!strings.Contains(out, "[engine] Add ward") {
 		t.Errorf("plan not shown:\n%s", out)
 	}
@@ -472,6 +510,75 @@ func TestStatusSignsOffAPlan(t *testing.T) {
 	key(s, "s")
 	if got, _ := f.store.Goal(g.Name); got.State != queue.GoalActive {
 		t.Errorf("after two s, goal is %s: %v", got.State, s.err)
+	}
+}
+
+// newPlan starts a goal in planning with a plan handed in.
+func newPlan(t *testing.T, f *fixture, name string) {
+	t.Helper()
+	if _, err := plan.NewGoal(context.Background(), f.store, name, "Title of "+name, "",
+		queue.Origin{}, f.env.Now()); err != nil {
+		t.Fatal(err)
+	}
+	p, _ := plan.Parse([]byte("summary: Do " + name + ".\nworkstreams: [{name: engine}]\n" +
+		"tasks: [{key: a, title: Add ward, workstream: engine}]\n"))
+	if err := plan.Save(f.store.GoalDir(name), p); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestQuestionsSignOffPlans(t *testing.T) {
+	f := newFixture(t)
+	q := NewQuestions(context.Background(), f.env)
+	newPlan(t, f, "grim")
+	q.Update(tickMsg{})
+	if title := q.View().WindowTitle; title != "questions · 1 open · 1 plan to sign off" ||
+		!strings.Contains(
+			ansi.Strip(q.render()),
+			"grim\n  plan to sign off: 1 workstreams, 1 tasks · Title of grim",
+		) {
+		t.Fatalf("titled %q:\n%s", title, ansi.Strip(q.render()))
+	}
+	// Answering a question moves on to the plan waiting.
+	key(q, "j", "enter")
+	typeText(q, "Yes.")
+	key(q, "enter")
+	out := ansi.Strip(q.render())
+	if !q.answering || !strings.Contains(out, "grim › plan to sign off Title of grim") ||
+		!strings.Contains(out, "[engine] Add ward") {
+		t.Fatalf("after answering, not on the plan:\n%s", out)
+	}
+	key(q, "enter")
+	if g, _ := f.store.Goal("grim"); g.State != queue.GoalPlanning ||
+		!strings.Contains(q.render(), "press enter again to sign off grim") {
+		t.Fatal("one enter signed the plan off")
+	}
+	key(q, "enter")
+	if g, _ := f.store.Goal("grim"); g.State != queue.GoalActive || q.err != nil ||
+		!strings.Contains(q.render(), "grim is signed off and active; nothing else waiting") {
+		t.Fatalf("after two enters, grim is %s, %v:\n%s", g.State, q.err, q.render())
+	}
+
+	// Typing sends the plan back with the changes.
+	newPlan(t, f, "hex")
+	q.reload()
+	key(q, "enter")
+	typeText(q, "Split the engine.")
+	key(q, "enter")
+	fb, err := intake.Pending(plan.FeedbackDir(f.store.GoalDir("hex")))
+	if err != nil || len(fb) != 1 || fb[0].Text != "Split the engine." {
+		t.Fatalf("feedback = %+v, %v", fb, err)
+	}
+	if g, _ := f.store.Goal("hex"); g.State != queue.GoalPlanning || q.answering ||
+		!strings.Contains(
+			q.render(),
+			"sent back to hex's grilling with your changes; nothing else waiting",
+		) {
+		t.Errorf("hex is %s:\n%s", g.State, q.render())
+	}
+	if out := ansi.Strip(NewStatus(context.Background(), f.env).render()); !strings.Contains(out,
+		"plan sent back with your changes") {
+		t.Errorf("status of a plan sent back:\n%s", out)
 	}
 }
 
@@ -545,7 +652,7 @@ func TestStatusEndsAndLandsAGoal(t *testing.T) {
 
 func TestPasteAndCut(t *testing.T) {
 	f := newFixture(t)
-	q := NewQuestions(f.env)
+	q := NewQuestions(context.Background(), f.env)
 	key(q, "enter")
 	q.Update(tea.PasteMsg{Content: "pasted from elsewhere"})
 	if q.area.Value() != "pasted from elsewhere" {

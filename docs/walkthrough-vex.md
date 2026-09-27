@@ -55,12 +55,15 @@ cd ~/Code/github.com/dmikalova/vex && diatom workspace
 
 - **Work tab:**
   - **Reviewer** on the left, 60% wide.
-  - **Status** lists the intake triage is sorting, then every goal. `enter`
-    opens one: its tasks, each running one with the agent's latest step.
-    `enter` on a task shows its session step by step as it runs, with its
-    questions and text. `esc` backs out, and at the top focuses the repo
-    itself. `f` focuses a goal without opening it.
-  - **Questions** is where you answer the agents.
+  - **Status** lists the intake triage is sorting, then every goal; its title
+    shows the repo and the focus. `enter` opens one: a menu of what can be
+    done with it now (sign off, mark done, open PRs, push, park, pin), then
+    its tasks, each running one with the agent's latest step. `enter` on a
+    task shows its session step by step as it runs, with its questions and
+    text. `esc` backs out, and at the top focuses the repo itself. `f`
+    focuses a goal without opening it. Each menu entry shows its key, which
+    also works straight from the list.
+  - **Questions** is where you answer the agents and sign off plans.
   - **Intake** is where you type new work or notes.
 - **Scheduler tab:** `diatom run` and its log. It starts sessions as soon as
   work is ready.
@@ -122,18 +125,21 @@ Each planning goal gets grilling rounds. These are read-only planning sessions
 on Opus that ask questions and then hand in a plan.
 
 1. **Answer questions** in the questions pane: `j`/`k` to move, `enter` to
-   open a question with its full text, `enter` again to send your answer, and
-   `esc` to go back. Each question comes with its context. The next
-   round starts only after every question in the current round is answered.
-2. **Review the plan.** When status shows **plan ready**, press `v` to see its
-   workstreams and tasks in order (or run `diatom goal plan <goal>`).
-3. **Correct it or approve it.**
-   - To correct it, focus the goal (`enter`) and type the correction in the
-     intake pane. The plan is set aside and a new round starts with your
-     feedback.
-   - To approve it, press `s` twice (or run `diatom goal approve <goal>`). This
-     queues the tasks and commits any ADR drafts from grilling, which then come
-     up in the reviewer like any other commit.
+   open a question with its full text, `enter` again to send your answer and
+   move on to the next, and `esc` to go back. Each question comes with its
+   context. The next round starts only after every question in the current
+   round is answered.
+2. **Review the plan.** A plan ready for sign-off goes to the top of the
+   questions pane, and answering a question takes you straight to a plan you
+   haven't seen yet. It shows the workstreams and tasks in order (or run
+   `diatom goal plan <goal>`).
+3. **Correct it or approve it** from the plan's answer box.
+   - To correct it, write what to change and press `enter`. The plan is set
+     aside and a new round starts with your feedback.
+   - To approve it, press `enter` twice with nothing typed (or `s` twice on the
+     goal in status, or run `diatom goal approve <goal>`). This queues the
+     tasks and commits any ADR drafts from grilling, which then come up in
+     the reviewer like any other commit.
 
 ## 5. While the work runs
 
@@ -169,19 +175,21 @@ What needs you:
 
 ## 6. Mark a goal done
 
-Once every task is done and every hunk reviewed, press `d` twice in status (or
-run `diatom goal done <goal>`).
+Once every task is done and every hunk reviewed, open the goal in status and
+pick **Mark it done** with `enter` twice, or press `d` twice (or run
+`diatom goal done <goal>`).
 
 - diatom replays the goal's commits onto `main` without the merge commits, with
   each fixup squashed into its target. It runs the gate on each PR's tip and
   shows the stack.
-- `D` twice (or `-force`) marks it done even with work left.
+- **Mark it done with work left**, `D` twice (or `-force`), marks it done
+  even with work left.
 - If the workstreams can't be put in stack order, you get one PR, and the
   status line says why.
 
 ## 7. Land it
 
-In status, choose one:
+Open the goal in status and choose one from its menu:
 
 - **`U` twice pushes straight to `main`.** You've already reviewed every hunk
   inside diatom, so this is the simple path for a solo repo, and vex's CI/CD

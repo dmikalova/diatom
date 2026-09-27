@@ -14,6 +14,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/session"
 	"github.com/dmikalova/diatom/internal/tui"
@@ -25,7 +26,9 @@ type detail struct {
 	goal  string
 	title string
 	tasks []*queue.Task
-	sel   int
+	// sel runs over the goal's actions, then its tasks; top is the first
+	// line on screen.
+	sel, top int
 	// task is the task opened, with its latest session; nil shows the list.
 	task *taskView
 }
@@ -86,7 +89,7 @@ func (s *Status) reloadDetail() {
 		func(a, b *queue.Task) int { return order[a.State] - order[b.State] },
 	)
 	d.tasks = tasks
-	d.sel = min(d.sel, max(len(tasks)-1, 0))
+	d.sel = min(d.sel, max(len(s.detailActions())+len(tasks)-1, 0))
 	if d.task == nil {
 		return
 	}
@@ -184,11 +187,35 @@ func readEvents(path string) ([]event, error) {
 	return events, sc.Err()
 }
 
-// updateDetail handles keys while a goal or task is open: esc backs out one
-// level.
+// detailRow is the status row of the goal open, nil for the intake or a
+// goal gone from the list.
+func (s *Status) detailRow() *goalRow {
+	for i := range s.rows {
+		if !s.rows[i].intake && s.rows[i].goal.Name == s.detail.goal {
+			return &s.rows[i]
+		}
+	}
+	return nil
+}
+
+func (s *Status) detailActions() []action { return actions(s.detailRow()) }
+
+// updateDetail handles keys while a goal or task is open: enter does the
+// action or opens the task selected, a goal's keys work as in the list, and
+// esc backs out one level.
 func (s *Status) updateDetail(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	d := s.detail
-	switch msg.String() {
+	acts := s.detailActions()
+	key := msg.String()
+	if row := s.detailRow(); row != nil && d.task == nil {
+		if cmd, ok := s.act(row, key); ok {
+			return s, cmd
+		}
+	}
+	if key != "enter" {
+		s.confirm = ""
+	}
+	switch key {
 	case "q", "ctrl+c":
 		return s, tea.Quit
 	case "esc", "left", "h":
@@ -198,12 +225,19 @@ func (s *Status) updateDetail(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			s.detail = nil
 		}
 	case "j", "down":
-		d.sel = min(d.sel+1, max(len(d.tasks)-1, 0))
+		d.sel = min(d.sel+1, max(len(acts)+len(d.tasks)-1, 0))
 	case "k", "up":
 		d.sel = max(d.sel-1, 0)
 	case "enter", "right", "l":
-		if d.task == nil && d.sel < len(d.tasks) {
-			tv, err := loadTask(s.env.Store, d.goal, d.tasks[d.sel].ID)
+		switch {
+		case d.task != nil:
+		case d.sel < len(acts):
+			if key == "enter" {
+				cmd, _ := s.act(s.detailRow(), acts[d.sel].key)
+				return s, cmd
+			}
+		case d.sel-len(acts) < len(d.tasks):
+			tv, err := loadTask(s.env.Store, d.goal, d.tasks[d.sel-len(acts)].ID)
 			if err != nil {
 				s.err = err
 				break
@@ -222,51 +256,88 @@ func (s *Status) renderDetail() string {
 		b.WriteString(tui.Dim(" › ") + tui.Bold(d.task.id) + " " + d.task.task.Title)
 	}
 	b.WriteString("\n\n")
+	foot := s.foot()
 	if d.task != nil {
 		s.renderTask(&b, d.task)
 	} else {
-		s.renderTasks(&b, d)
+		room := max(s.height-2-len(foot), 3)
+		b.WriteString(s.renderMenu(d, room))
 	}
-	if s.err != nil {
-		b.WriteString("\n" + tui.Color(s.err.Error(), tui.Red) + "\n")
+	if len(foot) > 0 {
+		b.WriteString("\n\n" + strings.Join(foot, "\n"))
 	}
-	help := "enter open · j/k move · esc back · q quit"
-	if d.task != nil {
-		help = "esc back · q quit"
-	}
-	b.WriteString("\n" + tui.Dim(help))
 	return b.String()
 }
 
-// renderTasks lists a goal's tasks, the running ones first with their latest
-// step.
-func (s *Status) renderTasks(b *strings.Builder, d *detail) {
-	if len(d.tasks) == 0 {
-		b.WriteString(tui.Dim("No tasks.") + "\n")
+// renderMenu shows where a goal stands, what can be done with it, and its
+// tasks, the running ones first with their latest step, scrolled to keep the
+// one selected in view.
+func (s *Status) renderMenu(d *detail, room int) string {
+	var lines []string
+	row := s.detailRow()
+	if row != nil {
+		var rb strings.Builder
+		s.renderRow(&rb, -1, *row)
+		// The row's first line repeats the title; the rest says where it
+		// stands.
+		lines = strings.Split(strings.TrimRight(rb.String(), "\n"), "\n")[1:]
+		for i := range lines {
+			lines[i] = strings.TrimPrefix(lines[i], "    ")
+		}
+		lines = append(lines, "")
 	}
-	for i, t := range d.tasks {
+	sel := 0
+	for i, a := range actions(row) {
 		mark := "  "
 		if i == d.sel {
-			mark = tui.Color("› ", tui.Cyan)
+			mark, sel = tui.Color("› ", tui.Cyan), len(lines)
 		}
-		ws := ""
-		if t.Workstream != "" {
-			ws = tui.Dim("[" + t.Workstream + "] ")
+		lines = append(lines, mark+tui.Color(a.key, tui.Yellow)+"  "+a.label)
+	}
+	if len(actions(row)) > 0 {
+		lines = append(lines, "")
+	}
+	if row != nil && row.plan != nil {
+		lines = append(lines, tui.Dim("─── plan"))
+		lines = append(
+			lines,
+			strings.Split(strings.TrimRight(plan.Describe(row.plan), "\n"), "\n")...)
+		lines = append(lines, "", tui.Dim("─── tasks"))
+	}
+	if len(d.tasks) == 0 {
+		lines = append(lines, tui.Dim("No tasks."))
+	}
+	for i, t := range d.tasks {
+		var b strings.Builder
+		mark := "  "
+		if len(actions(row))+i == d.sel {
+			mark, sel = tui.Color("› ", tui.Cyan), len(lines)
 		}
-		fmt.Fprintf(b, "%s%s %s %s%s", mark, stateMark(t.State), t.ID, ws, t.Title)
-		switch t.State {
-		case queue.Active:
-			if sv, _ := lastSession(
-				s.env.Store.SessionsDir(d.goal),
-				t.ID,
-			); sv != nil &&
-				len(sv.events) > 0 {
-				b.WriteString(tui.Dim(" · " + oneLine(sv.events[len(sv.events)-1].Text, s.width/2)))
-			}
-		case queue.Blocked:
-			b.WriteString(tui.Color(" · waiting on your answer", tui.Magenta))
+		s.renderTaskLine(&b, d, t, mark)
+		lines = append(lines, b.String())
+	}
+	return scroll(lines, sel, sel, &d.top, room)
+}
+
+// renderTaskLine is one of a goal's tasks, with its latest step while it
+// runs.
+func (s *Status) renderTaskLine(b *strings.Builder, d *detail, t *queue.Task, mark string) {
+	ws := ""
+	if t.Workstream != "" {
+		ws = tui.Dim("[" + t.Workstream + "] ")
+	}
+	fmt.Fprintf(b, "%s%s %s %s%s", mark, stateMark(t.State), t.ID, ws, t.Title)
+	switch t.State {
+	case queue.Active:
+		if sv, _ := lastSession(
+			s.env.Store.SessionsDir(d.goal),
+			t.ID,
+		); sv != nil &&
+			len(sv.events) > 0 {
+			b.WriteString(tui.Dim(" · " + oneLine(sv.events[len(sv.events)-1].Text, s.width/2)))
 		}
-		b.WriteString("\n")
+	case queue.Blocked:
+		b.WriteString(tui.Color(" · waiting on your answer", tui.Magenta))
 	}
 }
 

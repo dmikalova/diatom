@@ -218,6 +218,10 @@ func Supersede(goalDir string, now time.Time) error {
 	return err
 }
 
+// FeedbackDir holds what the human or triage asks to change in a goal in
+// grilling, until its next round.
+func FeedbackDir(goalDir string) string { return filepath.Join(goalDir, "feedback") }
+
 // DraftsDir is where grilling drafts a goal's ADRs.
 func DraftsDir(goalDir string) string { return filepath.Join(goalDir, "adr") }
 

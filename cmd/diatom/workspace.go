@@ -182,7 +182,7 @@ func cmdPane(ctx context.Context, args []string, _ io.Writer) error {
 	case "status":
 		m = panes.NewStatus(ctx, env)
 	case "questions":
-		m = panes.NewQuestions(env)
+		m = panes.NewQuestions(ctx, env)
 	case "intake":
 		m = panes.NewIntake(env)
 	default:
