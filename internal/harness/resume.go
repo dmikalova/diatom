@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/dmikalova/diatom/internal/config"
 	"github.com/dmikalova/diatom/internal/git"
@@ -187,6 +188,17 @@ func (h *Harness) resume(ctx context.Context, r Resumable) error {
 			runErr = errors.New(res.Error)
 		}
 		return h.settleSession(ctx, repo, g, b, wt, r.Dir, res.Result, runErr)
+	}
+	if !planningKind(b.Kind) {
+		if strings.TrimSpace(cfg.Gate) == "" {
+			return h.askAll(repo.Store, g.Name, b.Tasks, noGate)
+		}
+		// The Stop hook reads the gate from the spec, which an older diatom
+		// or config may have written: it checks against the config of now.
+		r.Spec.Gate, r.Spec.GateAttempts, r.Spec.GateTimeout = cfg.Gate, cfg.GateAttempts, cfg.GateTimeout
+		if err := session.Create(r.Dir, r.Spec); err != nil {
+			return err
+		}
 	}
 	if err := session.UpdateState(r.Dir, func(st *session.State) { st.Resumes++ }); err != nil {
 		return err

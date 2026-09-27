@@ -65,10 +65,7 @@ func (h *Harness) runBatch(ctx context.Context, repo Repo, b schedule.Batch) err
 	if strings.TrimSpace(repo.Config.Gate) == "" {
 		// Without a gate nothing can be checked or committed, so a session
 		// would only be thrown away.
-		return h.askAll(s, g.Name, b.Tasks, "No gate is configured for this repo, so diatom can't "+
-			"check or commit any work. Set `gate` in .diatom/config.toml to the command every commit "+
-			"must pass, such as `gate = \"mage ci:check\"`, or set one for every repo of its kind "+
-			"under `[gates]` in ~/.config/diatom/config.toml, then answer this to carry on.")
+		return h.askAll(s, g.Name, b.Tasks, noGate)
 	}
 	main := git.Repo{Dir: s.Repo()}
 	wt := git.Repo{Dir: s.WorktreeDir(g.Name, b.Workstream)}
@@ -821,6 +818,12 @@ func (h *Harness) requeue(
 	}
 	return cause
 }
+
+// noGate is the question a task without a gate to pass waits on.
+const noGate = "No gate is configured for this repo, so diatom can't check or commit any work. " +
+	"Set `gate` in .diatom/config.toml to the command every commit must pass, such as " +
+	"`gate = \"mage ci:check\"`, or set one for every repo of its kind under `[gates]` in " +
+	"~/.config/diatom/config.toml, then answer this to carry on."
 
 // askAll blocks each task on a question saying why none of them can run.
 func (h *Harness) askAll(s *queue.Store, goal string, tasks []*queue.Task, text string) error {

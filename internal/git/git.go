@@ -33,7 +33,25 @@ func (r Repo) Run(ctx context.Context, args ...string) (string, error) {
 	return r.run(ctx, nil, nil, args...)
 }
 
+// Output runs git in the working tree and returns its stdout as it is. A
+// diff needs it untrimmed: its last line can be a blank context line, a lone
+// space.
+func (r Repo) Output(ctx context.Context, args ...string) (string, error) {
+	return r.raw(ctx, nil, nil, args...)
+}
+
+// run runs git and returns its trimmed stdout.
 func (r Repo) run(
+	ctx context.Context,
+	env []string,
+	stdin io.Reader,
+	args ...string,
+) (string, error) {
+	out, err := r.raw(ctx, env, stdin, args...)
+	return strings.TrimSpace(out), err
+}
+
+func (r Repo) raw(
 	ctx context.Context,
 	env []string,
 	stdin io.Reader,
@@ -46,15 +64,13 @@ func (r Repo) run(
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
-		return strings.TrimSpace(
-			stdout.String(),
-		), &Error{
+		return stdout.String(), &Error{
 			Args:   args,
 			Err:    err,
 			Stderr: strings.TrimSpace(stderr.String()),
 		}
 	}
-	return strings.TrimSpace(stdout.String()), nil
+	return stdout.String(), nil
 }
 
 // locating are the variables that point git at a repository other than the

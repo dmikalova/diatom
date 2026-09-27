@@ -128,6 +128,19 @@ func TestHunks(t *testing.T) {
 	}
 }
 
+// TestHunksEndingInABlankLine pins that a diff whose last line is a blank
+// context line, a lone space, still parses.
+func TestHunksEndingInABlankLine(t *testing.T) {
+	f := newFixture(t)
+	f.write("ward.go", "a\nb\nc\nd\ne\nf\n\n")
+	f.commit("feat: ward")
+	f.write("ward.go", "a\nb\nc\nD\ne\nf\n\n")
+	hunks, err := Hunks(context.Background(), f.repo, f.commit("fix: ward"))
+	if err != nil || len(hunks) != 1 || len(hunks[0].Fragment.Lines) != 8 {
+		t.Fatalf("hunks = %+v, %v", hunks, err)
+	}
+}
+
 func TestHunksOfMerge(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()

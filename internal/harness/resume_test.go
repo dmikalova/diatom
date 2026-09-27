@@ -59,6 +59,13 @@ func TestStopMidSessionResumesIt(t *testing.T) {
 		t.Error("a stopped agent's session has a result")
 	}
 
+	// A session made under an older config gets the gate of now.
+	spec, _ := session.Load(dirs[0])
+	spec.Gate, spec.GateTimeout = "", time.Second
+	if err := session.Create(dirs[0], spec); err != nil {
+		t.Fatal(err)
+	}
+
 	// The next scheduler resumes the same agent session in the same
 	// worktree, with the half-done work still there.
 	runStop, cancel := context.WithCancel(context.Background())
@@ -102,6 +109,9 @@ func TestStopMidSessionResumesIt(t *testing.T) {
 	}
 	if len(f.sessionDirs()) != 1 {
 		t.Error("resuming made a new session")
+	}
+	if spec, _ := session.Load(dirs[0]); spec.Gate != "check" || spec.GateTimeout != 2*time.Minute {
+		t.Errorf("resumed spec = %+v, want the gate of now", spec)
 	}
 	if rs, err := f.h.Recover(context.Background()); err != nil || len(rs) != 0 {
 		t.Errorf("Recover after it settled = %+v, %v", rs, err)

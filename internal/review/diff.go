@@ -44,7 +44,7 @@ var diffArgs = []string{
 // has none.
 func Hunks(ctx context.Context, repo git.Repo, sha string) ([]Hunk, error) {
 	args := append([]string{"show", "--remerge-diff"}, diffArgs...)
-	out, err := repo.Run(ctx, append(args, sha)...)
+	out, err := repo.Output(ctx, append(args, sha)...)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +68,7 @@ func Combined(ctx context.Context, repo git.Repo, original, fixup string) ([]Hun
 	}
 	args := append([]string{"diff"}, diffArgs[1:]...)
 	args = append(args, original+"^", tree, "--")
-	out, err := repo.Run(ctx, append(args, strings.Fields(paths)...)...)
+	out, err := repo.Output(ctx, append(args, strings.Fields(paths)...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +79,7 @@ func parse(sha, diff string) ([]Hunk, error) {
 	if strings.TrimSpace(diff) == "" {
 		return nil, nil
 	}
-	files, _, err := gitdiff.Parse(strings.NewReader(diff + "\n"))
+	files, _, err := gitdiff.Parse(strings.NewReader(diff))
 	if err != nil {
 		return nil, fmt.Errorf("diff of %s: %w", short(sha), err)
 	}
