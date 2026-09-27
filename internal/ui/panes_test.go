@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -521,9 +522,11 @@ func TestGoalPageEndsAndLandsAGoal(t *testing.T) {
 	a, _ := newApp(t, f)
 	openGoal(t, a, "set")
 	s := a.status
+	// Landing marks the goal done first, which refuses with a hunk unreviewed.
 	press(t, a, "F")
-	if !strings.Contains(s.flash, "isn't done") {
-		t.Error("F landed a goal that isn't done")
+	press(t, a, "F")
+	if s.err == nil || !strings.Contains(s.err.Error(), "1 unreviewed") {
+		t.Fatalf("F with a hunk unreviewed = %v", s.err)
 	}
 	press(t, a, "d")
 	press(t, a, "d")
@@ -537,7 +540,10 @@ func TestGoalPageEndsAndLandsAGoal(t *testing.T) {
 	press(t, a, "D")
 	out := ansi.Strip(a.render())
 	if g, _ := f.store.Goal("set"); g.State != queue.GoalDone ||
-		!strings.Contains(out, "laid out as 1 pull request, not landed yet · F open PRs · P push") {
+		!strings.Contains(
+			out,
+			"laid out as 1 pull request, not landed yet · P merge into main · F open PRs",
+		) {
 		t.Fatalf("after two D, goal is %s: %v\n%s", g.State, s.err, out)
 	}
 	press(t, a, "P")
@@ -712,5 +718,66 @@ func TestTaskListsItsDependencies(t *testing.T) {
 	if !strings.Contains(out, "depends on:\n  ○ 0001 [engine] Add ward pending") ||
 		strings.Count(out, "Add ward") != 1 {
 		t.Errorf("task:\n%s", out)
+	}
+}
+
+func TestNoticesStayUntilTheHumanActs(t *testing.T) {
+	f := newFixture(t)
+	a, _ := newApp(t, f)
+	openGoal(t, a, "set")
+	a.Update(jobMsg{err: errors.New("main moved on")})
+	for range 3 {
+		a.Update(tickMsg{})
+	}
+	if !strings.Contains(ansi.Strip(a.render()), "main moved on") {
+		t.Fatalf("the notice went with a reload:\n%s", ansi.Strip(a.render()))
+	}
+	key(a, "j")
+	if strings.Contains(ansi.Strip(a.render()), "main moved on") {
+		t.Error("the notice stayed after a key")
+	}
+}
+
+func TestLandingOntoAConflictingMainGoesToAnAgent(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	r := git.Repo{Dir: f.repo}
+	if _, err := r.Run(ctx, "branch", "diatom/set/integration"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.CommitFiles(ctx, "diatom/set/integration",
+		map[string][]byte{"poison.go": []byte("package poison\n")}, "feat: poison"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.CommitFiles(ctx, "main",
+		map[string][]byte{"poison.go": []byte("package venom\n")}, "feat: venom"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.SaveGoal(&queue.Goal{Name: "set", State: queue.GoalActive, Base: "main",
+		Workstreams: []queue.Workstream{{Name: "engine"}}}); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := newApp(t, f)
+	openGoal(t, a, "set")
+	press(t, a, "P")
+	press(t, a, "P")
+	if !strings.Contains(
+		a.status.flash,
+		"main has moved on and conflicts with set: an agent is merging it in",
+	) {
+		t.Errorf("flash = %q, err = %v", a.status.flash, a.status.err)
+	}
+	tasks, _ := f.store.Tasks("set")
+	var merge *queue.Task
+	for _, task := range tasks {
+		if task.Merge != "" {
+			merge = task
+		}
+	}
+	if merge == nil || merge.Kind != queue.Conflict || merge.Workstream != "engine" {
+		t.Errorf("tasks = %+v", tasks)
+	}
+	if g, _ := f.store.Goal("set"); g.State != queue.GoalActive {
+		t.Errorf("the goal is %s", g.State)
 	}
 }

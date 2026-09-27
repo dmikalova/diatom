@@ -236,7 +236,8 @@ func TestNextOffersToFinishAGoal(t *testing.T) {
 	a.next.cur = finish.id()
 	out := ansi.Strip(a.render())
 	for _, want := range []string{"All its work is done and reviewed", "Finishing unblocks: poison",
-		"d  Mark it done and lay it out for landing"} {
+		"› P  Merge it into main", "F  Open its stacked pull requests",
+		"d  Mark it done and lay it out, to land later"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the finish item lacks %q:\n%s", want, out)
 		}
@@ -246,7 +247,7 @@ func TestNextOffersToFinishAGoal(t *testing.T) {
 		t.Fatalf("tab to the actions: area %d, typing %v", a.next.area, a.typing())
 	}
 	key(a, "enter")
-	if !strings.Contains(a.status.flash, "enter again to mark ward done") {
+	if !strings.Contains(a.status.flash, "enter again to merge ward into main") {
 		t.Errorf("first enter: %q", a.status.flash)
 	}
 	if _, cmd := a.Update(tea.KeyPressMsg{Code: tea.KeyEnter}); cmd == nil {

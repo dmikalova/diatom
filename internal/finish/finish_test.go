@@ -382,7 +382,7 @@ func TestPushAndOpenPRs(t *testing.T) {
 	f.commitAll("docs: add a readme")
 	f.git("push", "--quiet", "origin", "HEAD:main")
 	if err := push(f.ctx, f.store, f.goal, res, "origin"); err == nil ||
-		!strings.Contains(err.Error(), "main on origin has moved on") {
+		!strings.Contains(err.Error(), "main on origin moved on") {
 		t.Errorf("push onto a moved main = %v", err)
 	}
 }

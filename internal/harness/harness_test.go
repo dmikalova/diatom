@@ -15,9 +15,11 @@ import (
 	"time"
 
 	"github.com/dmikalova/diatom/internal/config"
+	"github.com/dmikalova/diatom/internal/finish"
 	"github.com/dmikalova/diatom/internal/gate"
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/queue"
+	"github.com/dmikalova/diatom/internal/review"
 	"github.com/dmikalova/diatom/internal/runner"
 	"github.com/dmikalova/diatom/internal/schedule"
 	"github.com/dmikalova/diatom/internal/session"
@@ -500,6 +502,69 @@ func TestConflictBetweenWorkstreams(t *testing.T) {
 	}
 	if got := f.show("diatom/set/integration", "shared.txt"); got != "both" {
 		t.Errorf("integration shared.txt = %q, want the resolution", got)
+	}
+}
+
+func TestCatchingUpWithMainGoesToAnAgent(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	f.add("engine", "Engine edit")
+	var mainTip string
+	f.agent.act = func(t *testing.T, wt string, s agentSession) {
+		task, err := f.store.Task("set", s.spec.Tasks[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if task.Kind == queue.Conflict {
+			w := git.Repo{Dir: wt}
+			if head, _ := w.Run(ctx, "rev-parse", "MERGE_HEAD"); head != mainTip {
+				t.Errorf("merging %q, not main's tip %s", head, mainTip)
+			}
+			writeFile(t, wt, "shared.txt", "both\n")
+		} else {
+			writeFile(t, wt, "shared.txt", "goal\n")
+		}
+		for _, id := range s.spec.Tasks {
+			s.report(session.EntryDone, id, "")
+		}
+	}
+	f.step()
+	// main moves on in the same file while the goal runs.
+	writeFile(t, f.main.Dir, "shared.txt", "main\n")
+	if _, err := f.main.StageAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var err error
+	if mainTip, err = f.main.Commit(ctx, "feat: main's own edit"); err != nil {
+		t.Fatal(err)
+	}
+	g, _ := f.store.Goal("set")
+	if up, err := finish.CatchUp(ctx, f.store, g, "", time.Now()); err != nil || up {
+		t.Fatalf("catching up = %v, %v", up, err)
+	}
+	if got := f.step(); len(got) != 1 || got[0].Kind != queue.Conflict {
+		t.Fatalf("catch-up step = %+v", got)
+	}
+	tasks, _ := f.store.Tasks("set")
+	var merge *queue.Task
+	for _, task := range tasks {
+		if task.Merge != "" {
+			merge = task
+		}
+	}
+	if merge == nil || merge.State != queue.Done || len(merge.Commits) != 1 {
+		t.Fatalf("the catch-up task = %+v", merge)
+	}
+	if got := f.show("diatom/set/integration", "shared.txt"); got != "both" {
+		t.Errorf("integration shared.txt = %q, want the resolution", got)
+	}
+	if ok, _ := f.main.IsAncestor(ctx, mainTip, "diatom/set/integration"); !ok {
+		t.Error("the integration branch doesn't hold main")
+	}
+	// The resolution comes back for review.
+	hunks, err := review.Hunks(ctx, f.main, merge.Commits[0])
+	if err != nil || len(hunks) == 0 {
+		t.Errorf("the resolution's hunks = %+v, %v", hunks, err)
 	}
 }
 

@@ -118,7 +118,7 @@ func (e *ConflictError) Error() string {
 // the order its commits were made.
 func Build(ctx context.Context, s *queue.Store, g *queue.Goal, opts Options) (*Result, error) {
 	repo := git.Repo{Dir: s.Repo()}
-	base, err := repo.RevParse(ctx, g.Base)
+	base, err := repo.RevParse(ctx, BaseTip(ctx, repo, g))
 	if err != nil {
 		return nil, err
 	}
@@ -222,12 +222,10 @@ func expectedTree(
 	tree, conflicted, err := repo.MergeTree(ctx, base, integration)
 	if conflicted {
 		return "", fmt.Errorf(
-			"%s has moved on and conflicts with goal %s: merge %s into %s, resolve the conflicts, "+
-				"and finish again",
+			"%s has moved on and conflicts with goal %s: finish it again, and an agent merges %s in",
 			g.Base,
 			g.Name,
 			g.Base,
-			g.IntegrationBranch(),
 		)
 	}
 	return tree, err

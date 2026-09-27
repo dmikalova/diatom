@@ -95,14 +95,20 @@ back through earlier decisions, and `v` shows a fixup folded into the commit it
 revises. A rejection's comments become a revision task within seconds, and the
 agent's fix lands as a `fixup!` commit that comes back for review.
 
-A goal ready to finish comes up in Next. Finishing it with `d` lays it out on
-`diatom/<goal>/final`: its commits replayed onto the base branch without the
-merges, fixups squashed into the commits they revise, and split into one pull
-request per workstream on `diatom/<goal>/pr/<ws>`, each stacked on the one
-before. `F` pushes those branches and opens the stack with `gh`, and `P` pushes
-the lot straight to the base branch. The goal stays in the nav until it is
+A goal ready to finish comes up in Next. `P` merges it into the base branch,
+and `F` opens it as a stack of pull requests instead, one per workstream on
+`diatom/<goal>/pr/<ws>`, each stacked on the one before; `d` only lays it out,
+to land later. Either way, the goal first catches up with the base branch,
+fetched from the remote: what the base gained is merged in, and when that
+conflicts, an agent resolves it and the resolution comes back for review before
+the goal can land. The goal is then laid out on `diatom/<goal>/final`, its
+commits replayed onto the base branch's tip without the merges and fixups
+squashed into the commits they revise. It stays in the nav until it is
 finished: diatom watches the base branch on the remote and finishes the goal
 once it holds all of the goal's changes and its checks pass.
+
+What an action comes to stays under it until you press a key, click, or move
+to another view.
 
 Stopping never loses work. Each agent stops within seconds with its files as
 they are, and the next time diatom opens it carries the agent's own Claude

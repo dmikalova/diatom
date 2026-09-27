@@ -161,6 +161,15 @@ func (a *App) openReview(goal string) {
 	a.layout()
 }
 
+// clearNotices drops what the last action came to, once the human does
+// something else: a key, a click, or moving to another view. Until then it
+// stays on screen, however often the window reloads.
+func (a *App) clearNotices() {
+	a.flash = ""
+	a.status.flash, a.status.err = "", nil
+	a.next.flash, a.next.err = "", nil
+}
+
 // Restart is the diatom to run once the app has quit, "" for none.
 func (a *App) Restart() string { return a.restart }
 
@@ -215,6 +224,7 @@ func (a *App) show() {
 	}
 	a.shown = e.key()
 	a.status.detail, a.review, a.logOpen = nil, nil, false
+	a.clearNotices()
 	if e.row != nil {
 		a.status.openDetail(e.row)
 	}
@@ -325,7 +335,7 @@ func (a *App) typing() bool {
 
 func (a *App) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
-	a.flash = ""
+	a.clearNotices()
 	switch key {
 	case "ctrl+c":
 		return a.quit(a.quitting)
@@ -605,6 +615,7 @@ func (a *App) click(m tea.Mouse) (tea.Model, tea.Cmd) {
 	if m.Button != tea.MouseLeft || a.quitting {
 		return a, nil
 	}
+	a.clearNotices()
 	nw := a.nw()
 	if nw > 0 && m.X == nw {
 		// The nav's edge, held to drag it.

@@ -105,8 +105,8 @@ func Prompt(in PromptInput) string {
 		)
 	case queue.Conflict:
 		b.WriteString(
-			"## A merge is in progress\n\nThe integration branch is being merged into this workstream " +
-				"and some files conflict. Resolve every conflict (`git status` and `git diff` show them), keeping " +
+			"## A merge is in progress\n\nThe integration branch, or the base branch for a task below that " +
+				"says so, is being merged into this workstream and some files conflict. Resolve every conflict (`git status` and `git diff` show them), keeping " +
 				"the intent of both sides, and remove every conflict marker. Don't commit: diatom completes the " +
 				"merge once the gate passes.\n\n",
 		)

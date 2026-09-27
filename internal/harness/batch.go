@@ -165,9 +165,10 @@ func errString(err error) string {
 }
 
 // prepare merges the integration branch into the workstream before the batch
-// and reports whether the batch can run. A merge that conflicts or fails the
-// gate is left in progress for a conflict or gate-repair task, which runs
-// first because it has the higher priority (ADR 0004).
+// and reports whether the batch can run, then the base branch too for a task
+// catching the goal up with it. A merge that conflicts or fails the gate is
+// left in progress for a conflict or gate-repair task, which runs first
+// because it has the higher priority (ADR 0004).
 func (h *Harness) prepare(
 	ctx context.Context,
 	repo Repo,
@@ -183,56 +184,24 @@ func (h *Harness) prepare(
 		}
 		return fixing, nil
 	}
-	res, err := wt.MergeNoCommit(ctx, g.IntegrationBranch())
-	if err != nil {
-		return false, err
+	refs := []string{g.IntegrationBranch()}
+	for _, t := range b.Tasks {
+		if t.Merge != "" {
+			refs = append(refs, t.Merge)
+		}
 	}
-	switch res {
-	case git.Conflicted:
-		if fixing {
-			return true, nil
-		}
-		return false, h.addFix(
-			repo.Store,
-			g.Name,
-			b.Workstream,
-			queue.Conflict,
-			"Merging the integration branch into this workstream conflicts. The merge is in progress in the "+
-				"worktree: resolve every conflicted file, keeping the intent of both sides.",
-		)
-	case git.Merged:
-		r, err := h.runGate(ctx, wt.Dir, repo.Config)
-		if ctx.Err() != nil {
-			// Stopped: undo the merge, which is made again next time.
-			return false, errors.Join(errSuspended, wt.AbortMerge(context.WithoutCancel(ctx)))
-		}
-		if err != nil {
-			return false, err
-		}
-		if !r.Passed {
-			if fixing {
-				return true, nil
-			}
-			return false, h.addFix(
-				repo.Store,
-				g.Name,
-				b.Workstream,
-				queue.GateRepair,
-				"Merging the integration branch into this workstream fails the gate. The merge is in progress in "+
-					"the worktree: make the gate pass.\n\n```text\n"+r.Output+"\n```",
-			)
-		}
-		if _, err := wt.CommitMerge(ctx); err != nil {
-			return false, err
+	for _, ref := range refs {
+		if merged, run, err := h.mergeIn(ctx, repo, g, b, wt, ref, fixing); err != nil || !merged {
+			return run, err
 		}
 	}
 	if b.Kind == queue.Conflict {
-		// The merge went through cleanly, so nothing is left to resolve.
+		// The merges went through cleanly, so nothing is left to resolve.
 		for _, t := range b.Tasks {
 			t.Body = appendSection(
 				t.Body,
 				"Resolved",
-				"The integration branch merged into the workstream without conflicts.",
+				"Everything merged into the workstream without conflicts.",
 			)
 			if err := repo.Store.Move(g.Name, t, queue.Done); err != nil {
 				return false, err
@@ -241,6 +210,68 @@ func (h *Harness) prepare(
 		return false, h.integrate(ctx, repo, g, b.Workstream)
 	}
 	return true, nil
+}
+
+// mergeIn merges ref into the workstream. It reports whether the merge is
+// made, and when it isn't, whether the batch runs to fix it: a conflict, or a
+// merge failing the gate, is left in progress for the batch when it is the
+// fix, and queues one otherwise.
+func (h *Harness) mergeIn(
+	ctx context.Context,
+	repo Repo,
+	g *queue.Goal,
+	b schedule.Batch,
+	wt git.Repo,
+	ref string,
+	fixing bool,
+) (merged, run bool, err error) {
+	res, err := wt.MergeNoCommit(ctx, ref)
+	if err != nil {
+		return false, false, err
+	}
+	switch res {
+	case git.Conflicted:
+		if fixing {
+			return false, true, nil
+		}
+		return false, false, h.addFix(
+			repo.Store,
+			g.Name,
+			b.Workstream,
+			queue.Conflict,
+			"Merging "+ref+" into this workstream conflicts. The merge is in progress in the "+
+				"worktree: resolve every conflicted file, keeping the intent of both sides.",
+		)
+	case git.Merged:
+		r, err := h.runGate(ctx, wt.Dir, repo.Config)
+		if ctx.Err() != nil {
+			// Stopped: undo the merge, which is made again next time.
+			return false, false, errors.Join(
+				errSuspended,
+				wt.AbortMerge(context.WithoutCancel(ctx)),
+			)
+		}
+		if err != nil {
+			return false, false, err
+		}
+		if !r.Passed {
+			if fixing {
+				return false, true, nil
+			}
+			return false, false, h.addFix(
+				repo.Store,
+				g.Name,
+				b.Workstream,
+				queue.GateRepair,
+				"Merging "+ref+" into this workstream fails the gate. The merge is in progress in "+
+					"the worktree: make the gate pass.\n\n```text\n"+r.Output+"\n```",
+			)
+		}
+		if _, err := wt.CommitMerge(ctx); err != nil {
+			return false, false, err
+		}
+	}
+	return true, false, nil
 }
 
 // addFix queues a conflict or gate-repair task for a workstream, or adds the

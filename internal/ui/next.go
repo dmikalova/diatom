@@ -94,8 +94,10 @@ type Next struct {
 	bounds [nextAreas]int
 
 	width, height int
-	flash         string
-	err           error
+	// flash and err are what the human's last action came to, kept until
+	// they do something else; loadErr is why the last reload failed.
+	flash        string
+	err, loadErr error
 }
 
 // The answer box's hints, for a question and for a plan.
@@ -122,7 +124,7 @@ func NewNext(ctx context.Context, env Env, status *Status) *Next {
 
 // reload rebuilds the items from the status's rows, reloaded first.
 func (n *Next) reload() {
-	n.err = nil
+	n.loadErr = nil
 	store := n.env.Store
 	var tiers [4][]item
 	n.earlier, n.described = map[string]int{}, map[string]string{}
@@ -165,7 +167,7 @@ func (n *Next) reviewer(goal string) *reviewui.Model {
 	}
 	rv, err := reviewui.New(n.ctx, n.env.Store, goal)
 	if err != nil {
-		n.err = err
+		n.loadErr = err
 		return nil
 	}
 	n.reviews[goal] = rv
@@ -178,7 +180,7 @@ func (n *Next) questions(r *goalRow) []item {
 	store, name := n.env.Store, r.goal.Name
 	qs, err := store.Questions(name, queue.QuestionOpen)
 	if err != nil {
-		n.err = err
+		n.loadErr = err
 	}
 	var items []item
 	for _, q := range qs {
@@ -439,8 +441,10 @@ func (n *Next) finishKey(it item, k string) tea.Cmd {
 // render shows the item: what it is about, the item, and the answer box or
 // what can be done, each marked when it has the keyboard.
 func (n *Next) render(focused bool, foot []string) string {
-	if n.err != nil {
-		foot = append([]string{tui.Color(n.err.Error(), tui.Red)}, foot...)
+	for _, err := range []error{n.err, n.loadErr} {
+		if err != nil {
+			foot = append([]string{tui.Color(err.Error(), tui.Red)}, foot...)
+		}
 	}
 	if n.flash != "" {
 		foot = append(foot, tui.Color(n.flash, tui.Cyan))
@@ -601,10 +605,9 @@ func (n *Next) finishText(it item) string {
 	if g.State == queue.GoalDone {
 		b.WriteString(landingLine(*it.row) + "\n\n")
 	} else {
-		b.WriteString(
-			"Every task is done and every hunk reviewed. Finishing marks it done and lays " +
-				"it out for landing, running the gate, then lands it upstream.\n\n",
-		)
+		fmt.Fprintf(&b, "Every task is done and every hunk reviewed. Landing it first merges in "+
+			"what %s gained since: an agent resolves anything that conflicts, and its resolution comes back "+
+			"for review. It is then laid out on %s's tip, the gate runs, and it lands.\n\n", g.Base, g.Base)
 	}
 	if stat := n.diffStat(g); stat != "" {
 		fmt.Fprintf(&b, "%s against %s: %s\n", g.IntegrationBranch(), g.Base, stat)

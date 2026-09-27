@@ -357,14 +357,7 @@ func stillBlocked(task, answered string, open []*queue.Question) bool {
 // or the upstream branch that one follows when it is ahead, as it is once a
 // goal this one waited for has landed there and before the human has pulled.
 func goalStart(ctx context.Context, main git.Repo, g *queue.Goal) string {
-	up := main.Upstream(ctx, g.Base)
-	if up == "" {
-		return g.Base
-	}
-	if ahead, err := main.IsAncestor(ctx, g.Base, up); err != nil || !ahead {
-		return g.Base
-	}
-	return up
+	return finish.BaseTip(ctx, main, g)
 }
 
 // watchTimeout bounds one check of a done goal's landing upstream.

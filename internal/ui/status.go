@@ -108,8 +108,10 @@ type Status struct {
 	openReview func(goal string)
 
 	width, height int
-	flash         string
-	err           error
+	// flash and err are what the human's last action came to, kept until
+	// they do something else; loadErr is why the last reload failed.
+	flash        string
+	err, loadErr error
 }
 
 // NewStatus loads the status pane.
@@ -123,12 +125,12 @@ func NewStatus(ctx context.Context, env Env) *Status {
 }
 
 func (s *Status) reload() {
-	s.err = nil
+	s.loadErr = nil
 	store := s.env.Store
 	s.health = health(store)
 	goals, err := store.Goals()
 	if err != nil {
-		s.err = err
+		s.loadErr = err
 		return
 	}
 	var rows []goalRow
@@ -136,7 +138,7 @@ func (s *Status) reload() {
 	if g, err := store.Goal(queue.IntakeGoal); err == nil {
 		row, err := s.row(store, g)
 		if err != nil {
-			s.err = err
+			s.loadErr = err
 		}
 		row.intake = true
 		rows = append(rows, row)
@@ -147,7 +149,7 @@ func (s *Status) reload() {
 		}
 		row, err := s.row(store, g)
 		if err != nil {
-			s.err = err
+			s.loadErr = err
 			continue
 		}
 		rows = append(rows, row)
@@ -360,7 +362,10 @@ func actions(r *goalRow) []action {
 	case queue.GoalActive:
 		left := r.counts[queue.Pending] + r.counts[queue.Active] + r.counts[queue.Blocked]
 		if left == 0 && r.toReview == 0 {
-			a = append(a, action{"d", "Mark it done and lay it out for landing"})
+			a = append(a,
+				action{"P", "Merge it into " + g.Base},
+				action{"F", "Open its stacked pull requests"},
+				action{"d", "Mark it done and lay it out, to land later"})
 		} else {
 			a = append(a, action{"D", fmt.Sprintf(
 				"Mark it done with work left: %d tasks not done, %d hunks to review",
@@ -372,8 +377,8 @@ func actions(r *goalRow) []action {
 	case queue.GoalDone:
 		if l := r.landing; l == nil || l.Landing == nil || l.Landing.How == "" {
 			a = append(a,
-				action{"F", "Open its stacked pull requests"},
-				action{"P", "Push it straight to " + g.Base})
+				action{"P", "Merge it into " + g.Base},
+				action{"F", "Open its stacked pull requests"})
 		}
 	}
 	return a
@@ -428,10 +433,10 @@ type jobMsg struct {
 }
 
 // finishKey handles the keys that end and land a goal (ADR 0003), each
-// confirmed with a second press: d marks it done and lays it out, D does so
-// with hunks unreviewed or tasks not done, F opens its pull requests, and P
-// pushes it straight to its base branch. Laying out runs the gate, so the
-// job runs in the background.
+// confirmed with a second press: P merges it into its base branch, F opens
+// its pull requests, d marks it done and lays it out, and D does so with
+// hunks unreviewed or tasks not done. Landing an active goal marks it done
+// first. Laying out runs the gate, so the job runs in the background.
 func (s *Status) finishKey(row *goalRow, key string) tea.Cmd {
 	if s.busy != "" {
 		s.flash = "still " + s.busy
@@ -444,7 +449,7 @@ func (s *Status) finishKey(row *goalRow, key string) tea.Cmd {
 	switch key {
 	case "d", "D":
 		if g.State == queue.GoalDone {
-			s.flash = g.Name + " is done already: F opens its pull requests, P pushes it"
+			s.flash = g.Name + " is done already: P merges it, F opens its pull requests"
 			return nil
 		}
 		prompt = fmt.Sprintf(
@@ -456,13 +461,13 @@ func (s *Status) finishKey(row *goalRow, key string) tea.Cmd {
 			prompt += ", unreviewed hunks and all"
 		}
 	default:
-		if g.State != queue.GoalDone {
-			s.flash = g.Name + " isn't done: press d to mark it done first"
+		if g.State != queue.GoalDone && g.State != queue.GoalActive {
+			s.flash = fmt.Sprintf("%s is %s: only an active or done goal lands", g.Name, g.State)
 			return nil
 		}
 		prompt = fmt.Sprintf("press F again to push %s and open its pull requests", g.Name)
 		if key == "P" {
-			prompt = fmt.Sprintf("press P again to push %s straight to %s", g.Name, g.Base)
+			prompt = fmt.Sprintf("press P again to merge %s into %s", g.Name, g.Base)
 		}
 	}
 	if !s.confirmed(key, name, prompt) {
@@ -476,7 +481,9 @@ func (s *Status) finishKey(row *goalRow, key string) tea.Cmd {
 	}
 }
 
-// runFinish does what finishKey confirmed.
+// runFinish does what finishKey confirmed. The goal first catches up with
+// its base branch: when that conflicts, an agent merges it in, and the goal
+// is active again until the resolution is reviewed.
 func runFinish(
 	ctx context.Context,
 	s *queue.Store,
@@ -484,7 +491,20 @@ func runFinish(
 	g *queue.Goal,
 	key string,
 ) (string, error) {
-	if key == "d" || key == "D" {
+	remote := "origin"
+	if old, err := finish.Load(s.GoalDir(g.Name)); err == nil && old != nil && old.Landing != nil &&
+		old.Landing.Remote != "" {
+		remote = old.Landing.Remote
+	}
+	up, err := finish.CatchUp(ctx, s, g, remote, time.Now())
+	if err != nil {
+		return "", err
+	}
+	if !up {
+		return fmt.Sprintf("%s has moved on and conflicts with %s: an agent is merging it in, and "+
+			"its resolution comes back for review before the goal lands", g.Base, g.Name), nil
+	}
+	if g.State == queue.GoalActive {
 		if err := finish.MarkDone(ctx, s, g, key == "D"); err != nil {
 			return "", err
 		}
@@ -504,17 +524,13 @@ func runFinish(
 	if err != nil {
 		return "", err
 	}
-	remote := "origin"
-	if res.Landing != nil && res.Landing.Remote != "" {
-		remote = res.Landing.Remote
-	}
 	switch key {
 	case "F":
 		urls, err := finish.Land(ctx, s, g, res, finish.PRs, remote, false, finish.RunGH)
 		return fmt.Sprintf("opened %s", strings.Join(urls, " ")), err
 	case "P":
 		_, err := finish.Land(ctx, s, g, res, finish.Push, remote, false, nil)
-		return fmt.Sprintf("pushed %s to %s on %s", g.Name, g.Base, remote), err
+		return fmt.Sprintf("merged %s into %s on %s", g.Name, g.Base, remote), err
 	}
 	return fmt.Sprintf("%s is done and laid out as %d pull requests", g.Name, len(res.Stack)), nil
 }
@@ -562,8 +578,10 @@ func health(store *queue.Store) string {
 // foot is what the last key and the background job said.
 func (s *Status) foot() []string {
 	var foot []string
-	if s.err != nil {
-		foot = append(foot, tui.Color(s.err.Error(), tui.Red))
+	for _, err := range []error{s.loadErr, s.err} {
+		if err != nil {
+			foot = append(foot, tui.Color(err.Error(), tui.Red))
+		}
 	}
 	if s.flash != "" {
 		foot = append(foot, tui.Color(s.flash, tui.Cyan))
@@ -653,7 +671,7 @@ func landingLine(r goalRow) string {
 	case l == nil:
 		return tui.Color(line, tui.Yellow)
 	case l.Landing == nil || l.Landing.How == "":
-		return tui.Color(line+" · F open PRs · P push", tui.Green)
+		return tui.Color(line+" · P merge into "+r.goal.Base+" · F open PRs", tui.Green)
 	case l.Landing.Checks == finish.ChecksFailed || l.Landing.Error != "":
 		return tui.Color(line, tui.Red)
 	}

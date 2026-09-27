@@ -185,31 +185,35 @@ git worktree add --detach ../vex-check diatom/<goal>/integration
 cd ../vex-check && mage web
 ```
 
-## 6. Finish a goal
+## 6. Land a goal
 
 Once every task is done and every hunk reviewed, the goal comes up in Next,
-with what it changes and the goals waiting for it. Finish it with `enter` twice
-on **Mark it done**, or `d` twice on its page.
+with what it changes and the goals waiting for it. Choose one, with `enter`
+twice or its key twice:
 
-- diatom replays the goal's commits onto `main` without the merge commits, with
-  each fixup squashed into its target. It runs the gate on each PR's tip and
-  shows the stack.
-- **Mark it done with work left**, `D` twice on its page, marks it done even
-  with work left.
-- If the workstreams can't be put in stack order, you get one PR, and the
-  goal's page says why.
+- **`P`, Merge it into `main`.** You've already reviewed every hunk inside
+  diatom, so this is the simple path for a solo repo, and vex's CI/CD runs on
+  the push.
+- **`F`, Open its stacked pull requests**, one per workstream, each based on
+  the one before. Use this when you want CI per PR. Merge them bottom-up using
+  **"Create a merge commit"**. Squash or rebase merges rewrite the lower PR's
+  commits, so the next PR up would show them all again.
+- **`d`, Mark it done and lay it out**, to land later with `P` or `F`. `D`
+  on its page marks it done even with work left.
 
-## 7. Land it
+First the goal catches up with `main`, fetched from origin. What `main` gained
+since the goal started is merged in. When that conflicts, landing stops there:
+an agent merges `main` into the goal's last workstream and resolves the
+conflicts, the goal is active again, and the resolution comes to Next as hunks
+to review. Once they're reviewed, the goal is ready to finish again.
 
-The done goal stays in Next until it has landed. Choose one:
+Then diatom replays the goal's commits onto `main` without the merge commits,
+with each fixup squashed into its target, runs the gate on each PR's tip, and
+lands it. If the workstreams can't be put in stack order, you get one PR, and
+the goal's page says why. What landing came to stays on screen until you press
+a key or move on.
 
-- **`P` twice pushes straight to `main`.** You've already reviewed every hunk
-  inside diatom, so this is the simple path for a solo repo, and vex's CI/CD
-  runs on the push.
-- **`F` twice opens the stacked PRs**, one per workstream, each based on the one
-  before. Use this when you want CI per PR. Merge them bottom-up using **"Create
-  a merge commit"**. Squash or rebase merges rewrite the lower PR's commits, so
-  the next PR up would show them all again.
+## 7. Wait for it to land
 
 The goal stays in the nav until it's **finished**. Every two minutes the
 scheduler checks whether `origin/main` holds all of the goal's changes and

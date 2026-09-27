@@ -48,7 +48,7 @@ func (s *Status) reloadDetail() {
 	store := s.env.Store
 	tasks, err := store.Tasks(d.goal)
 	if err != nil {
-		s.err = err
+		s.loadErr = err
 		return
 	}
 	order := map[queue.State]int{queue.Active: 0, queue.Blocked: 1, queue.Pending: 2, queue.Done: 3}
@@ -63,7 +63,7 @@ func (s *Status) reloadDetail() {
 	}
 	tv, err := loadTask(store, d.goal, d.task.id)
 	if err != nil {
-		s.err = err
+		s.loadErr = err
 		return
 	}
 	tv.keep(d.task)

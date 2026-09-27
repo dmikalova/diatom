@@ -35,9 +35,8 @@ func push(ctx context.Context, s *queue.Store, g *queue.Goal, res *Result, remot
 	_, err := repo.Run(ctx, "push", remote, res.Tip()+":refs/heads/"+g.Base)
 	if gitErr := (*git.Error)(nil); errors.As(err, &gitErr) &&
 		strings.Contains(gitErr.Stderr, "non-fast-forward") {
-		return fmt.Errorf("%s on %s has moved on since goal %s was laid out: bring your %s up to "+
-			"date, with `git pull` say, and finish the goal again to lay it out on top", g.Base, remote,
-			g.Name, g.Base)
+		return fmt.Errorf("%s on %s moved on while goal %s was being laid out: merge it again",
+			g.Base, remote, g.Name)
 	}
 	return err
 }

@@ -160,6 +160,10 @@ type Task struct {
 	// Revises is the commit a revision reworks; its work lands as a fixup of
 	// that commit (ADR 0003).
 	Revises string `yaml:"revises,omitempty"`
+	// Merge is the branch a conflict task merges into its workstream after
+	// the integration branch: the base branch, when it has moved on and
+	// conflicts with the goal.
+	Merge string `yaml:"merge,omitempty"`
 	// Hunks are the rejections a revision carries, each as <hunk ID>@<seq>
 	// of the review record it came from.
 	Hunks []string `yaml:"hunks,omitempty"`
