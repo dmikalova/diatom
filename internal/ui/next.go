@@ -142,7 +142,7 @@ func (n *Next) reload() {
 		if r.questions > 0 {
 			tiers[itemQuestion] = append(tiers[itemQuestion], n.questions(r)...)
 		}
-		if readyToFinish(*r) {
+		if readyToFinish(*r) && r.goal.Name != n.status.busyGoal {
 			tiers[itemFinish] = append(tiers[itemFinish], item{kind: itemFinish, row: r})
 			n.stats[r.goal.Name] = n.diffStat(r.goal)
 		}
@@ -595,10 +595,23 @@ const aboutLines = 8
 
 // clipLines wraps s to w, keeping at most max lines.
 func clipLines(s string, w, most int) []string {
-	lines := strings.Split(ansi.Wordwrap(s, w, ""), "\n")
+	lines := hang(s, w)
 	if len(lines) > most {
 		lines = lines[:most]
 		lines[most-1] = ansi.Truncate(lines[most-1], w-1, "") + "…"
+	}
+	return lines
+}
+
+// hangIndent is how far a paragraph's later lines sit in from its first, so
+// they read as part of it.
+const hangIndent = "  "
+
+// hang wraps a paragraph to w, its later lines indented under its first.
+func hang(s string, w int) []string {
+	lines := strings.Split(ansi.Wordwrap(s, max(w-len(hangIndent), 10), ""), "\n")
+	for i := 1; i < len(lines); i++ {
+		lines[i] = hangIndent + lines[i]
 	}
 	return lines
 }

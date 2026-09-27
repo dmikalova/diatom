@@ -364,3 +364,38 @@ func TestEnsureDetached(t *testing.T) {
 		t.Error("the planning worktree kept what was written in it")
 	}
 }
+
+func TestNewCommitSigns(t *testing.T) {
+	r := Repo{Dir: t.TempDir()}
+	ctx := context.Background()
+	gpg := filepath.Join(t.TempDir(), "gpg")
+	if err := os.WriteFile(gpg, []byte("#!/bin/sh\necho '[GNUPG:] SIG_CREATED ' >&2\n"+
+		"printf -- '-----BEGIN PGP SIGNATURE-----\\nfake\\n-----END PGP SIGNATURE-----\\n'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"init", "--initial-branch=main"}, {"config", "user.name", "T"}, {"config", "user.email", "t@example.com"},
+		{"config", "gpg.format", "openpgp"}, {"config", "gpg.program", gpg}, {"config", "user.signingkey", "x"},
+	} {
+		if _, err := r.Run(ctx, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tree, err := r.Run(ctx, "write-tree")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sign := range []string{"false", "true"} {
+		if _, err := r.Run(ctx, "config", "commit.gpgSign", sign); err != nil {
+			t.Fatal(err)
+		}
+		sha, err := r.NewCommit(ctx, tree, "chore: x\n")
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := r.Run(ctx, "cat-file", "-p", sha)
+		if got := strings.Contains(body, "gpgsig"); got != (sign == "true") {
+			t.Errorf("with commit.gpgSign %s, signed = %v", sign, got)
+		}
+	}
+}

@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 
 	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
@@ -95,6 +94,22 @@ func (s *Status) detailRow() *goalRow {
 
 // detailActions are what can be done with the goal open: its actions, and
 // reviewing it where the window can.
+// jobLines show, on the page of the goal a job works on, what it is doing
+// and its log as it goes, or once it has ended, until the human moves on.
+func (s *Status) jobLines(goal string, room int) []string {
+	if s.log == nil || s.logGoal != goal {
+		return nil
+	}
+	var lines []string
+	if s.busyGoal == goal {
+		lines = append(lines, "  "+tui.Color("▶ "+s.busy+"…", tui.Green))
+	}
+	for _, l := range s.log.tail(max(room/2, 5)) {
+		lines = append(lines, "    "+tui.Dim(oneLine(l, max(s.width-6, 20))))
+	}
+	return append(lines, "")
+}
+
 // pageRow is the row of the goal or intake open, nil when it is gone.
 func (s *Status) pageRow() *goalRow {
 	for i := range s.rows {
@@ -107,6 +122,10 @@ func (s *Status) pageRow() *goalRow {
 
 func (s *Status) detailActions() []action {
 	row := s.detailRow()
+	if row != nil && s.busyGoal == row.goal.Name {
+		// Nothing else is offered while the goal is being landed.
+		return nil
+	}
 	acts := actions(row)
 	if s.openReview != nil && row != nil && !row.intake && row.toReview > 0 {
 		acts = append([]action{{"r", fmt.Sprintf("Review its %d hunks", row.toReview)}}, acts...)
@@ -193,6 +212,7 @@ func (s *Status) renderMenu(d *detail, room int) string {
 	var lines []string
 	if row := s.pageRow(); row != nil {
 		lines = s.pageHead(*row)
+		lines = append(lines, s.jobLines(row.goal.Name, room)...)
 	}
 	sel := 0
 	acts := s.detailActions()
@@ -241,7 +261,9 @@ func (s *Status) pageHead(row goalRow) []string {
 	if !row.intake {
 		head = []string{"  " + goalState(row) + tui.Dim(" · "+row.goal.Name)}
 		if d := row.description; d != "" {
-			head = append(head, strings.Split(ansi.Wordwrap("  "+d, max(s.width, 20), ""), "\n")...)
+			for _, l := range hang(d, max(s.width-2, 20)) {
+				head = append(head, "  "+l)
+			}
 		}
 	}
 	lines = append(head, lines...)

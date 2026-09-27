@@ -36,8 +36,8 @@ func MarkDone(ctx context.Context, s *queue.Store, g *queue.Goal, force bool) er
 	counts := review.Counts(items)
 	if left := counts[""] + counts[review.Defer]; (left > 0 || open > 0) && !force {
 		return fmt.Errorf(
-			"goal %s has %d unreviewed and %d deferred hunks and %d tasks not done: review the hunks, "+
-				"or mark it done anyway with D",
+			"goal %s has %d unreviewed and %d deferred hunks and %d tasks not done: it lands once "+
+				"they are reviewed and done",
 			g.Name,
 			counts[""],
 			counts[review.Defer],

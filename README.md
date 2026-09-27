@@ -105,9 +105,11 @@ conflicts, an agent resolves it and the resolution comes back for review before
 the goal can land. The goal's commits are then replayed onto the base branch's
 tip on `diatom/<goal>/final`, without the merges and with fixups squashed into
 the commits they revise. When the base changed the goal's own code, so the
-commits no longer apply on its tip, they're replayed where the goal started
-instead, and a last merge commit joins them to the base with the agent's
-resolution. A landing that fails leaves the goal active. One whose commits fail the gate
+commits no longer apply on its tip, the goal lands as one commit on it instead,
+holding the agent's resolution, its message written from the change, so the
+base's history stays linear. Every commit diatom makes is signed when
+`commit.gpgSign` is set. While a goal lands, its page shows each step and the
+gate's output as they come, with nothing else offered, and Next moves on. A landing that fails leaves the goal active. One whose commits fail the gate
 never lands: an agent makes the gate pass, with its output shown under the
 notice, and the goal comes back to Next. It stays in the nav until it is
 finished: diatom watches the base branch on the remote and finishes the goal

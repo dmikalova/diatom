@@ -264,7 +264,7 @@ func (r Repo) MergeInto(ctx context.Context, target, source string) (conflicted 
 			return conflicted, err
 		}
 		msg := fmt.Sprintf("Merge branch '%s' into %s", source, target)
-		next, err = r.Run(ctx, "commit-tree", tree, "-p", targetSHA, "-p", sourceSHA, "-m", msg)
+		next, err = r.NewCommit(ctx, tree, msg, targetSHA, sourceSHA)
 		if err != nil {
 			return false, err
 		}
@@ -445,6 +445,24 @@ func (r Repo) Subject(ctx context.Context, rev string) (string, error) {
 	return r.Run(ctx, "show", "-s", "--format=%s", rev)
 }
 
+// NewCommit makes a commit of tree on the parents, signed as the repo's
+// commit.gpgSign asks. git commit and cherry-pick sign by that setting, but
+// commit-tree, which makes commits without a worktree, only when told to.
+func (r Repo) NewCommit(
+	ctx context.Context,
+	tree, message string,
+	parents ...string,
+) (string, error) {
+	args := []string{"commit-tree", tree}
+	for _, p := range parents {
+		args = append(args, "-p", p)
+	}
+	if sign, _ := r.Run(ctx, "config", "--type=bool", "commit.gpgSign"); sign == "true" {
+		args = append(args, "-S")
+	}
+	return r.run(ctx, nil, strings.NewReader(message), append(args, "-F", "-")...)
+}
+
 // CommitTree makes a commit of tree on top of HEAD, without the index or the
 // hooks, and moves the checked-out branch to it. The old value makes the move
 // fail rather than lose a commit made in the meantime.
@@ -453,17 +471,7 @@ func (r Repo) CommitTree(ctx context.Context, tree, message string) (string, err
 	if err != nil {
 		return "", err
 	}
-	sha, err := r.run(
-		ctx,
-		nil,
-		strings.NewReader(message),
-		"commit-tree",
-		tree,
-		"-p",
-		head,
-		"-F",
-		"-",
-	)
+	sha, err := r.NewCommit(ctx, tree, message, head)
 	if err != nil {
 		return "", err
 	}
@@ -521,17 +529,7 @@ func (r Repo) CommitFiles(
 	if err != nil {
 		return "", err
 	}
-	sha, err := r.run(
-		ctx,
-		nil,
-		strings.NewReader(message),
-		"commit-tree",
-		tree,
-		"-p",
-		parent,
-		"-F",
-		"-",
-	)
+	sha, err := r.NewCommit(ctx, tree, message, parent)
 	if err != nil {
 		return "", err
 	}

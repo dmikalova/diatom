@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
 	"syscall"
@@ -32,6 +33,18 @@ const stopWait = 5 * time.Second
 // Run runs command with `sh -c` in dir. A failing command is a Result that
 // did not pass; the error is only for a gate that could not run at all.
 func Run(ctx context.Context, dir, command string) (Result, error) {
+	return run(ctx, dir, command, io.Discard)
+}
+
+// Echo is Run that also writes the gate's output to w as it comes, for
+// watching a gate run.
+func Echo(w io.Writer) Runner {
+	return func(ctx context.Context, dir, command string) (Result, error) {
+		return run(ctx, dir, command, w)
+	}
+}
+
+func run(ctx context.Context, dir, command string, echo io.Writer) (Result, error) {
 	if strings.TrimSpace(command) == "" {
 		return Result{}, errors.New("no gate is configured: set gate in .diatom/config.toml")
 	}
@@ -43,7 +56,8 @@ func Run(ctx context.Context, dir, command string) (Result, error) {
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = stopWait
 	var out bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &out
+	both := io.MultiWriter(&out, echo)
+	cmd.Stdout, cmd.Stderr = both, both
 	err := cmd.Run()
 	if cmd.Process != nil {
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)

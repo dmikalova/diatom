@@ -8,13 +8,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/dmikalova/diatom/internal/commitmsg"
 	"github.com/dmikalova/diatom/internal/config"
 	"github.com/dmikalova/diatom/internal/finish"
 	"github.com/dmikalova/diatom/internal/gate"
@@ -24,6 +27,7 @@ import (
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/review"
 	"github.com/dmikalova/diatom/internal/roster"
+	"github.com/dmikalova/diatom/internal/runner"
 	"github.com/dmikalova/diatom/internal/schedule"
 	"github.com/dmikalova/diatom/internal/session"
 	"github.com/dmikalova/diatom/internal/tui"
@@ -38,6 +42,9 @@ type Env struct {
 	Store *queue.Store
 	Paths config.Paths
 	Now   func() time.Time
+	// Runner writes the message of a goal landing as one commit; nil makes
+	// a plain one.
+	Runner runner.Runner
 }
 
 type tickMsg struct{}
@@ -98,6 +105,11 @@ type Status struct {
 	// confirm names the key and goal a first press asked to confirm, such
 	// as a sign-off.
 	confirm string
+	// busyGoal is the goal a background job works on, and log what it has
+	// said so far about logGoal, kept after it ends until the human does
+	// something else.
+	busyGoal, logGoal string
+	log               *jobLog
 	// busy says what a background job, such as preparing a goal to land, is
 	// doing; it takes no other job until that one ends.
 	busy string
@@ -330,17 +342,18 @@ func (s *Status) toReview(store *queue.Store, goal string, commits []string) (in
 const gateLines = 20
 
 // prepare returns the goal's commits ready to land, building them again
-// when the goal's branches have moved since.
+// when the goal's branches have moved since, or they failed the gate. A goal
+// squashed into one commit gets its message from the commit-message profile,
+// as the agents' commits do.
 func prepare(
 	ctx context.Context,
 	s *queue.Store,
 	paths config.Paths,
+	run runner.Runner,
 	g *queue.Goal,
-) (*finish.Result,
-	error,
-) {
+	log io.Writer,
+) (*finish.Result, error) {
 	res, err := finish.Ready(ctx, s, g)
-	// A result that failed the gate is never landed, so it is built again.
 	if err != nil || res != nil && res.Failing() == nil {
 		return res, err
 	}
@@ -348,13 +361,26 @@ func prepare(
 	if err != nil {
 		return nil, err
 	}
-	return finish.Build(ctx, s, g, finish.Options{Gate: cfg.Gate, Timeout: cfg.GateTimeout})
+	opts := finish.Options{Gate: cfg.Gate, Timeout: cfg.GateTimeout, Progress: log}
+	if run != nil {
+		profile, err := cfg.Profile("commit-message")
+		if err != nil {
+			return nil, err
+		}
+		gen := commitmsg.Generator{Runner: run, Profile: profile, Check: cfg.CommitCheck}
+		opts.Message = func(ctx context.Context, stat, diff string, subjects []string) (string, error) {
+			msg, _, err := gen.Generate(ctx, commitmsg.Input{Dir: s.Repo(), Stat: stat, Diff: diff,
+				Titles: subjects})
+			return msg, err
+		}
+	}
+	return finish.Build(ctx, s, g, opts)
 }
 
 // jobDone ends a background job, such as preparing a goal to land.
 func (s *Status) jobDone(msg jobMsg) {
 	s.reload()
-	s.busy, s.flash, s.err = "", msg.flash, msg.err
+	s.busy, s.busyGoal, s.flash, s.err = "", "", msg.flash, msg.err
 }
 
 // act does what one of a goal's keys does, and reports whether key is one.
@@ -371,7 +397,7 @@ func (s *Status) act(row *goalRow, key string) (tea.Cmd, bool) {
 	case "s":
 		s.signOff(row)
 		return nil, true
-	case "d", "D", "F", "P":
+	case "d", "F", "P":
 		return s.finishKey(row, key), true
 	default:
 		return nil, false
@@ -404,10 +430,6 @@ func actions(r *goalRow) []action {
 				action{"P", "Merge it into " + g.Base},
 				action{"F", "Open its stacked pull requests"},
 				action{"d", "Mark it done, to land later"})
-		} else {
-			a = append(a, action{"D", fmt.Sprintf(
-				"Mark it done with work left: %d tasks not done, %d hunks to review",
-				left, r.toReview)})
 		}
 		a = append(a, action{"p", "Park it: start nothing new"})
 	case queue.GoalParked:
@@ -472,9 +494,9 @@ type jobMsg struct {
 
 // finishKey handles the keys that end and land a goal (ADR 0003), each
 // confirmed with a second press: P merges it into its base branch, F opens
-// its pull requests, d marks it done ready to land, and D does so with
-// hunks unreviewed or tasks not done. Landing an active goal marks it done
-// first. Preparing it runs the gate, so the job runs in the background.
+// its pull requests, and d marks it done, to land later. Landing an active
+// goal marks it done first. Preparing it runs the gate, so the job runs in
+// the background, telling its log each step.
 func (s *Status) finishKey(row *goalRow, key string) tea.Cmd {
 	if s.busy != "" {
 		s.flash = "still " + s.busy
@@ -483,72 +505,105 @@ func (s *Status) finishKey(row *goalRow, key string) tea.Cmd {
 	// The job gets its own copy: the rows are rendered while it runs.
 	goal := *row.goal
 	g, name := &goal, row.repo+"/"+row.goal.Name
-	var prompt string
+	var prompt, what string
 	switch key {
-	case "d", "D":
+	case "d":
 		if g.State == queue.GoalDone {
 			s.flash = g.Name + " is done already: P merges it, F opens its pull requests"
 			return nil
 		}
-		prompt = fmt.Sprintf(
-			"press %s again to mark %s done, ready to land",
-			key,
-			g.Name,
-		)
-		if key == "D" {
-			prompt += ", unreviewed hunks and all"
-		}
+		prompt = fmt.Sprintf("press d again to mark %s done, ready to land", g.Name)
+		what = "marking it done"
 	default:
 		if g.State != queue.GoalDone && g.State != queue.GoalActive {
 			s.flash = fmt.Sprintf("%s is %s: only an active or done goal lands", g.Name, g.State)
 			return nil
 		}
 		prompt = fmt.Sprintf("press F again to push %s and open its pull requests", g.Name)
+		what = "opening its pull requests"
 		if key == "P" {
 			prompt = fmt.Sprintf("press P again to merge %s into %s", g.Name, g.Base)
+			what = "merging it into " + g.Base
 		}
 	}
 	if !s.confirmed(key, name, prompt) {
 		return nil
 	}
-	s.busy = "preparing " + g.Name + " to land and running the gate"
-	store, paths, ctx := queue.Open(row.repo), s.env.Paths, s.ctx
-	return func() tea.Msg {
-		flash, err := runFinish(ctx, store, paths, g, key)
+	s.busy, s.busyGoal, s.logGoal, s.log = what, g.Name, g.Name, &jobLog{}
+	store, paths, run, ctx, log := queue.Open(row.repo), s.env.Paths, s.env.Runner, s.ctx, s.log
+	return tea.Batch(func() tea.Msg {
+		flash, err := runFinish(ctx, store, paths, run, g, key, log)
 		return jobMsg{flash: flash, err: err}
-	}
+	}, jobTick())
 }
 
-// runFinish does what finishKey confirmed. The goal first catches up with
-// its base branch: when that conflicts, an agent merges it in, and the goal
-// is active again until the resolution is reviewed.
+// jobTickEvery is how often the window draws a running job's log again.
+const jobTickEvery = 250 * time.Millisecond
+
+// jobTickMsg draws a running job's log again.
+type jobTickMsg struct{}
+
+func jobTick() tea.Cmd {
+	return tea.Tick(jobTickEvery, func(time.Time) tea.Msg { return jobTickMsg{} })
+}
+
+// jobLog is what a background job has said so far: written from its
+// goroutine, read as the window draws.
+type jobLog struct {
+	mu   sync.Mutex
+	text strings.Builder
+}
+
+func (l *jobLog) Write(b []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.text.Write(b)
+}
+
+// tail is the log's last n lines.
+func (l *jobLog) tail(n int) []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	lines := strings.Split(strings.TrimRight(l.text.String(), "\n"), "\n")
+	return lines[max(len(lines)-n, 0):]
+}
+
+// runFinish does what finishKey confirmed, telling log each step. The goal
+// first catches up with its base branch: when that conflicts, an agent merges
+// it in, and the goal is active again until the resolution is reviewed.
 func runFinish(
 	ctx context.Context,
 	s *queue.Store,
 	paths config.Paths,
+	run runner.Runner,
 	g *queue.Goal,
 	key string,
+	log io.Writer,
 ) (string, error) {
+	say := func(format string, args ...any) { _, _ = fmt.Fprintf(log, format+"\n", args...) }
 	remote := "origin"
 	if old, err := finish.Load(s.GoalDir(g.Name)); err == nil && old != nil && old.Landing != nil &&
 		old.Landing.Remote != "" {
 		remote = old.Landing.Remote
 	}
+	say("Fetching %s/%s, and merging what it gained into the goal", remote, g.Base)
 	up, err := finish.CatchUp(ctx, s, g, remote, time.Now())
 	if err != nil {
 		return "", err
 	}
 	if !up {
+		say("%s changed the goal's own code: an agent is merging it in", g.Base)
 		return fmt.Sprintf("%s has moved on and conflicts with %s: an agent is merging it in, and "+
 			"its resolution comes back for review before the goal lands", g.Base, g.Name), nil
 	}
 	wasActive := g.State == queue.GoalActive
 	if wasActive {
-		if err := finish.MarkDone(ctx, s, g, key == "D"); err != nil {
+		say("Marking it done")
+		if err := finish.MarkDone(ctx, s, g, false); err != nil {
 			return "", err
 		}
 	}
-	res, err := prepare(ctx, s, paths, g)
+	res, err := prepare(ctx, s, paths, run, g, log)
 	if err != nil {
 		if wasActive {
 			// Nothing is ready to land, so the goal isn't done after all.
@@ -559,6 +614,7 @@ func runFinish(
 	}
 	if failed := res.Failing(); failed != nil {
 		// Landing never forces past the gate: an agent makes it pass.
+		say("The gate fails, so it doesn't land: an agent is making it pass")
 		if err := finish.RepairGate(s, g, failed, time.Now()); err != nil {
 			return "", err
 		}
@@ -568,9 +624,11 @@ func runFinish(
 	}
 	switch key {
 	case "F":
+		say("Pushing its branches and opening its pull requests")
 		urls, err := finish.Land(ctx, s, g, res, finish.PRs, remote, finish.RunGH)
 		return fmt.Sprintf("opened %s", strings.Join(urls, " ")), err
 	case "P":
+		say("Merging it into %s/%s", remote, g.Base)
 		_, err := finish.Land(ctx, s, g, res, finish.Push, remote, nil)
 		return fmt.Sprintf("merged %s into %s on %s", g.Name, g.Base, remote), err
 	}
@@ -632,7 +690,7 @@ func (s *Status) foot() []string {
 		foot = append(foot, tui.Color(s.flash, tui.Cyan))
 	}
 	if s.busy != "" {
-		foot = append(foot, tui.Color(s.busy+"…", tui.Yellow))
+		foot = append(foot, tui.Color(s.busyGoal+": "+s.busy+"…", tui.Yellow))
 	}
 	return foot
 }

@@ -164,7 +164,6 @@ func TestGoalPage(t *testing.T) {
 	out := ansi.Strip(a.render())
 	for _, want := range []string{"‹ set", "queued · set", "tasks 1 pending", "1 questions", "1 to review",
 		"› r  Review its 1 hunks",
-		"D  Mark it done with work left: 1 tasks not done, 1 hunks to review",
 		"p  Park it", "0001 [engine] Add ward"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the goal's page lacks %q:\n%s", want, out)
@@ -491,11 +490,46 @@ func press(t *testing.T, m tea.Model, k string) {
 	if cmd == nil {
 		return
 	}
+	cmds := []tea.Cmd{cmd}
 	msg := cmd()
-	if _, ok := msg.(jobMsg); !ok {
-		t.Fatalf("%s started %T, not a job", k, msg)
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		cmds = batch
+	} else if job, ok := msg.(jobMsg); ok {
+		m.Update(job)
+		return
 	}
-	m.Update(msg)
+	// A job runs beside the tick that draws its log.
+	msgs := make(chan tea.Msg, len(cmds))
+	for _, c := range cmds {
+		go func() { msgs <- c() }()
+	}
+	for range cmds {
+		if job, ok := (<-msgs).(jobMsg); ok {
+			m.Update(job)
+			return
+		}
+	}
+	t.Fatalf("%s started no job", k)
+}
+
+// makeReady finishes the fixture goal's task and approves its hunk, so it can
+// land.
+func makeReady(t *testing.T, f *fixture) {
+	t.Helper()
+	task, _ := f.store.Task("set", "0001")
+	if err := f.store.Move("set", task, queue.Done); err != nil {
+		t.Fatal(err)
+	}
+	items, err := review.Load(context.Background(), f.store, "set")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rev := review.Store{Dir: f.store.GoalDir("set")}
+	for _, it := range items {
+		if _, err := rev.Decide(it.Hunk, review.Approve, nil, time.Unix(1, 0)); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func TestGoalPageEndsAndLandsAGoal(t *testing.T) {
@@ -534,18 +568,20 @@ func TestGoalPageEndsAndLandsAGoal(t *testing.T) {
 	if s.err == nil || !strings.Contains(s.err.Error(), "1 unreviewed") {
 		t.Fatalf("d with a hunk unreviewed = %v", s.err)
 	}
-	press(t, a, "D")
+	makeReady(t, f)
+	a.Update(tickMsg{})
+	press(t, a, "d")
 	if g, _ := f.store.Goal("set"); g.State != queue.GoalActive {
-		t.Fatal("one D marked the goal done")
+		t.Fatal("one d marked the goal done")
 	}
-	press(t, a, "D")
+	press(t, a, "d")
 	out := ansi.Strip(a.render())
 	if g, _ := f.store.Goal("set"); g.State != queue.GoalDone ||
 		!strings.Contains(
 			out,
 			"ready to land as 1 pull request · P merge into main · F open PRs",
 		) {
-		t.Fatalf("after two D, goal is %s: %v\n%s", g.State, s.err, out)
+		t.Fatalf("after two d, goal is %s: %v\n%s", g.State, s.err, out)
 	}
 	press(t, a, "P")
 	press(t, a, "P")
@@ -790,10 +826,11 @@ func TestAFailedLandingLeavesTheGoalActive(t *testing.T) {
 		"diatom/set/integration"); err != nil {
 		t.Fatal(err)
 	}
+	makeReady(t, f)
 	a, _ := newApp(t, f)
 	openGoal(t, a, "set")
-	press(t, a, "D")
-	press(t, a, "D")
+	press(t, a, "P")
+	press(t, a, "P")
 	if g, _ := f.store.Goal("set"); a.status.err == nil ||
 		!strings.Contains(a.status.err.Error(), "no commits") || g.State != queue.GoalActive {
 		t.Errorf("after a failed landing the goal is %s: %v", g.State, a.status.err)
@@ -813,10 +850,11 @@ func TestLandingOnAFailingGateGoesToAnAgent(t *testing.T) {
 	}
 	write(t, filepath.Join(f.repo, ".diatom", "config.toml"),
 		"gate = \"echo 'lint: poison is unused' >&2; exit 1\"\n")
+	makeReady(t, f)
 	a, _ := newApp(t, f)
 	openGoal(t, a, "set")
-	press(t, a, "D")
-	press(t, a, "D")
+	press(t, a, "P")
+	press(t, a, "P")
 	out := ansi.Strip(a.render())
 	if !strings.Contains(a.status.flash, "fails the gate on main's tip, so it didn't land") ||
 		!strings.Contains(out, "lint: poison is unused") || strings.Contains(out, "force") {
@@ -834,5 +872,58 @@ func TestLandingOnAFailingGateGoesToAnAgent(t *testing.T) {
 	}
 	if repairs != 1 {
 		t.Errorf("%d gate repairs queued", repairs)
+	}
+}
+
+func TestALandingInProgress(t *testing.T) {
+	f := newFixture(t)
+	makeReady(t, f)
+	a, _ := newApp(t, f)
+	if it := a.next.shown(); it == nil || it.kind != itemQuestion {
+		t.Fatalf("Next shows %+v", it)
+	}
+	// As if P had started: the goal is being merged, and its log grows.
+	a.status.busy, a.status.busyGoal, a.status.logGoal = "merging it into main", "set", "set"
+	a.status.log = &jobLog{}
+	_, _ = fmt.Fprintln(a.status.log, "Running the gate on diatom/set/final")
+	_, _ = fmt.Fprintln(a.status.log, "ok  vex/engine  0.4s")
+	a.next.reload()
+	for _, it := range a.next.items {
+		if it.kind == itemFinish {
+			t.Error("Next still offers to finish the goal being landed")
+		}
+	}
+	openGoal(t, a, "set")
+	out := ansi.Strip(a.render())
+	for _, want := range []string{"▶ merging it into main…", "ok  vex/engine  0.4s"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the page lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Merge it into main") || len(a.status.detailActions()) != 0 {
+		t.Errorf("the page still offers actions:\n%s", out)
+	}
+	// Once it ends, the log stays until the human moves on.
+	a.Update(jobMsg{flash: "merged set into main on origin"})
+	if out := ansi.Strip(a.render()); !strings.Contains(out, "ok  vex/engine  0.4s") ||
+		!strings.Contains(out, "merged set into main") {
+		t.Errorf("after the job:\n%s", out)
+	}
+	key(a, "j")
+	if strings.Contains(ansi.Strip(a.render()), "ok  vex/engine") {
+		t.Error("the log stayed after a key")
+	}
+}
+
+func TestParagraphsHang(t *testing.T) {
+	lines := hang(strings.Repeat("word ", 20), 30)
+	if len(lines) < 3 || strings.HasPrefix(lines[0], " ") ||
+		!strings.HasPrefix(lines[1], "  word") {
+		t.Errorf("hang = %q", lines)
+	}
+	for _, l := range lines {
+		if ansi.StringWidth(l) > 30 {
+			t.Errorf("%q is wider than 30", l)
+		}
 	}
 }

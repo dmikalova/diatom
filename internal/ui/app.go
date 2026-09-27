@@ -177,6 +177,9 @@ func (a *App) openReview(goal string) {
 func (a *App) clearNotices() {
 	a.flash = ""
 	a.status.flash, a.status.err = "", nil
+	if a.status.busy == "" {
+		a.status.log = nil
+	}
 	a.next.flash, a.next.err = "", nil
 }
 
@@ -280,6 +283,10 @@ func (a *App) handle(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case jobMsg:
 		a.status.jobDone(msg)
 		a.next.reload()
+	case jobTickMsg:
+		if a.status.busy != "" {
+			return a, jobTick()
+		}
 	case QuitMsg:
 		return a.quit(false)
 	case stoppedMsg:
@@ -906,6 +913,9 @@ func (a *App) navEntry(i int, e entry) []string {
 		glyph, name, under = navGlyph(*e.row), e.row.goal.Title, relevant(*e.row)
 		if name == "" {
 			name = e.row.goal.Name
+		}
+		if a.status.busyGoal == e.row.goal.Name {
+			under = tui.Color("▶ "+a.status.busy+"…", tui.Green)
 		}
 	case entryFinished:
 		glyph, name = tui.Dim("▸"), fmt.Sprintf("Finished (%d)", len(a.finished))

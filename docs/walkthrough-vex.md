@@ -199,11 +199,11 @@ twice or its key twice:
   diatom, so this is the simple path for a solo repo, and vex's CI/CD runs on
   the push.
 - **`F`, Open its stacked pull requests**, one per workstream, each based on
-  the one before. Use this when you want CI per PR. Merge them bottom-up using
-  **"Create a merge commit"**. Squash or rebase merges rewrite the lower PR's
-  commits, so the next PR up would show them all again.
-- **`d`, Mark it done**, to land later with `P` or `F`. `D` on its page marks
-  it done even with work left.
+  the one before. Use this when you want CI per PR. Merge them bottom-up. A
+  repo that requires linear history, as vex does, can only squash or rebase
+  them, which rewrites the lower PR's commits, so the next PR up shows them
+  all again: `P` suits such a repo better.
+- **`d`, Mark it done**, to land later with `P` or `F`.
 
 First the goal catches up with `main`, fetched from origin. What `main` gained
 since the goal started is merged in. When that conflicts, landing stops there:
@@ -213,9 +213,11 @@ to review. Once they're reviewed, the goal is ready to finish again.
 
 Then diatom replays the goal's commits onto `main` without the merge commits,
 with each fixup squashed into its target, runs the gate on each PR's tip, and
-lands it. When `main` changed the goal's own code, the commits are replayed
-where the goal started instead, and a last merge commit joins them to `main`
-with the agent's resolution. A landing that fails leaves the goal active, with
+lands it. When `main` changed the goal's own code, the goal lands as one
+commit on `main`'s tip instead, holding the agent's resolution, so `main`'s
+history stays linear. While it lands, the goal's page shows each step and the
+gate's output as they come, with nothing else offered, and Next moves on to
+the next thing. A landing that fails leaves the goal active, with
 the reason on screen. If the workstreams can't be put in stack order, you get one PR, and
 the goal's page says why. What landing came to stays on screen until you press
 a key or move on.

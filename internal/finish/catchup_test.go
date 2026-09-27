@@ -75,7 +75,7 @@ func TestBaseTipFollowsUpstreamWhenAhead(t *testing.T) {
 	}
 }
 
-func TestBuildMergesAConflictingBase(t *testing.T) {
+func TestBuildSquashesOntoAConflictingBase(t *testing.T) {
 	f := newFixture(t)
 	f.task("engine", f.work("engine", "engine.txt", "ward\n", "feat: add ward"))
 	f.task("cards", f.work("cards", "cards.txt", "warden\n", "feat: add warden"))
@@ -93,24 +93,35 @@ func TestBuildMergesAConflictingBase(t *testing.T) {
 	f.git("commit", "--quiet", "--no-edit")
 	f.git("checkout", "--quiet", "main")
 
-	res := f.build(Options{})
-	if !res.MergesBase || res.Unstacked != "" || len(res.Stack) != 2 {
+	var progress strings.Builder
+	var gotSubjects []string
+	res := f.build(Options{Progress: &progress, Message: func(_ context.Context, stat, _ string,
+		subjects []string,
+	) (string, error) {
+		gotSubjects = subjects
+		if !strings.Contains(stat, "engine.txt") {
+			t.Errorf("stat = %q", stat)
+		}
+		return "feat: add ward and warden\n", nil
+	}})
+	if !res.Squashed || len(res.Stack) != 1 || res.Stack[0].Branch != res.Final {
 		t.Fatalf("laid out as %+v", res)
 	}
 	tip := res.Tip()
-	if parents := strings.Fields(f.git("rev-list", "--parents", "-n1", tip)); len(parents) != 3 ||
+	// One commit on main's tip, so landing keeps the history linear.
+	if parents := strings.Fields(f.git("rev-list", "--parents", "-n1", tip)); len(parents) != 2 ||
 		parents[1] != f.git("rev-parse", "main") {
-		t.Errorf("the tip's parents = %v, want main first", parents)
+		t.Errorf("the tip's parents = %v, want main alone", parents)
 	}
 	if !f.sameTree(tip, f.goal.IntegrationBranch()) {
 		t.Error("the tip doesn't hold the resolution")
 	}
-	if ok, _ := f.repo.IsAncestor(f.ctx, "main", tip); !ok {
-		t.Error("merging into main wouldn't be a fast-forward")
+	if got := f.git("log", "-1", "--format=%s", tip); got != "feat: add ward and warden" ||
+		strings.Join(gotSubjects, ",") != "feat: add ward,feat: add warden" {
+		t.Errorf("subject %q from %v", got, gotSubjects)
 	}
-	// The goal's own commits are kept, one pull request per workstream.
-	if subjects := f.subjects(res.Stack[0].Tip); subjects[0] != "feat: add ward" {
-		t.Errorf("the first pull request = %v", subjects)
+	if !strings.Contains(progress.String(), "squashing them into one commit") {
+		t.Errorf("progress:\n%s", progress.String())
 	}
 }
 

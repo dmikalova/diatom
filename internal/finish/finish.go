@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,12 +70,11 @@ type Result struct {
 	// leaving the goal as one pull request in the order its commits were made.
 	Unstacked string `yaml:"unstacked,omitempty"`
 	// Carried is set when the last commit carries what the goal's merges
-	// changed, and MergesBase when the base moved on in the goal's own code:
-	// the commits then sit where the goal started, and the last is a merge
-	// into the base.
-	Carried    bool      `yaml:"carried,omitempty"`
-	MergesBase bool      `yaml:"mergesBase,omitempty"`
-	Built      time.Time `yaml:"built"`
+	// changed, and Squashed when the base moved on in the goal's own code, so
+	// the goal is one commit on the base's tip.
+	Carried  bool      `yaml:"carried,omitempty"`
+	Squashed bool      `yaml:"squashed,omitempty"`
+	Built    time.Time `yaml:"built"`
 	// Landing is how far the goal is on its way upstream.
 	Landing *Landing `yaml:"landing,omitempty"`
 }
@@ -92,6 +92,19 @@ type Options struct {
 	// never gives up.
 	Timeout time.Duration
 	Now     func() time.Time
+	// Progress, when set, is told each step as it happens, and the gate's
+	// output as it comes.
+	Progress io.Writer
+	// Message writes the message of a goal landing as one commit, from the
+	// change and the goal's commits' subjects; nil makes a plain one.
+	Message func(ctx context.Context, stat, diff string, subjects []string) (string, error)
+}
+
+// step tells opts' progress what is happening.
+func (o Options) step(format string, args ...any) {
+	if o.Progress != nil {
+		_, _ = fmt.Fprintf(o.Progress, format+"\n", args...)
+	}
 }
 
 // FinalBranch is the branch a goal is laid out on.
@@ -155,20 +168,18 @@ func Build(ctx context.Context, s *queue.Store, g *queue.Goal, opts Options) (*R
 	}()
 
 	res := &Result{Base: base, Integration: integration, Final: FinalBranch(g)}
+	opts.step("Putting the goal's %d commits onto %s's tip", len(commits), g.Base)
 	stack, err := replayOnto(ctx, wt, base, commits, owner, g, res)
 	if conflict := (*ConflictError)(nil); errors.As(err, &conflict) {
 		// The base moved on in the goal's own code, so its commits don't
-		// apply on its tip. They go where the goal started instead, and a
-		// merge joins them to the base with the resolution the goal's
-		// catch-up reached.
-		start, ferr := forkPoint(ctx, repo, base, integration)
-		if ferr != nil {
-			return nil, ferr
-		}
-		res.Unstacked = ""
-		if stack, err = replayOnto(ctx, wt, start, commits, owner, g, res); err == nil {
-			res.MergesBase = true
-		}
+		// apply on its tip. The goal lands as one commit on it instead,
+		// holding what the goal's catch-up reached: a merge would keep the
+		// commits, but a repo requiring linear history refuses merges.
+		opts.step("They don't apply on %s's tip, since %s changed the same code: squashing them "+
+			"into one commit", g.Base, g.Base)
+		res.Unstacked = conflict.Error()
+		stack, err = squash(ctx, repo, g, base, want, commits, opts)
+		res.Squashed = err == nil
 	}
 	if err != nil {
 		return nil, err
@@ -177,16 +188,7 @@ func Build(ctx context.Context, s *queue.Store, g *queue.Goal, opts Options) (*R
 		return nil, fmt.Errorf("every commit of goal %s is already on %s", g.Name, g.Base)
 	}
 	last := &stack[len(stack)-1]
-	if res.MergesBase {
-		msg := fmt.Sprintf("Merge %s into %s\n\n%s moved on in the goal's own code while it ran; "+
-			"this merge holds how the two were reconciled.", g.Title, g.Base, g.Base)
-		sha, err := repo.Run(ctx, "commit-tree", want, "-p", base, "-p", last.Tip, "-m", msg)
-		if err != nil {
-			return nil, err
-		}
-		last.Tip = sha
-		last.Commits = append(last.Commits, firstLine(msg))
-	} else if tree, err := repo.Run(ctx, "rev-parse", last.Tip+"^{tree}"); err != nil {
+	if tree, err := repo.Run(ctx, "rev-parse", last.Tip+"^{tree}"); err != nil {
 		return nil, err
 	} else if tree != want {
 		sha, err := wt.CommitTree(ctx, want, carryMessage)
@@ -273,19 +275,39 @@ func replayOnto(
 	return stack, err
 }
 
-// forkPoint is where the goal's integration branch started from its base:
-// the first parent of the oldest commit on its first-parent line that the
-// base lacks. Merging the base in later keeps it there.
-func forkPoint(ctx context.Context, repo git.Repo, base, integration string) (string, error) {
-	out, err := repo.Run(ctx, "rev-list", "--first-parent", integration, "--not", base)
+// squash makes the goal one commit on base with the files want, its message
+// written from the change and the goal's commits.
+func squash(
+	ctx context.Context,
+	repo git.Repo,
+	g *queue.Goal,
+	base, want string,
+	commits []commit,
+	opts Options,
+) ([]PR, error) {
+	subjects := make([]string, 0, len(commits))
+	for _, c := range commits {
+		subjects = append(subjects, c.subject)
+	}
+	msg := fmt.Sprintf("feat: land %s\n\n- %s\n", g.Name, strings.Join(subjects, "\n- "))
+	if opts.Message != nil {
+		stat, err := repo.Run(ctx, "diff", "--stat", base, want)
+		if err != nil {
+			return nil, err
+		}
+		diff, err := repo.Output(ctx, "diff", base, want)
+		if err != nil {
+			return nil, err
+		}
+		if msg, err = opts.Message(ctx, stat, diff, subjects); err != nil {
+			return nil, err
+		}
+	}
+	sha, err := repo.NewCommit(ctx, want, msg, base)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	line := strings.Fields(out)
-	if len(line) == 0 {
-		return base, nil
-	}
-	return repo.Run(ctx, "rev-parse", line[len(line)-1]+"^1")
+	return []PR{{Tip: sha, Commits: []string{firstLine(msg)}}}, nil
 }
 
 // commit is one of the goal's commits.
@@ -572,10 +594,15 @@ func conflictOr(ctx context.Context, wt git.Repo, c commit, err error, undo ...s
 func runGates(ctx context.Context, wt git.Repo, res *Result, opts Options) error {
 	run := gate.Within(opts.Timeout, opts.RunGate)
 	if opts.RunGate == nil {
-		run = gate.Serial(gate.Within(opts.Timeout, gate.Run))
+		gateRun := gate.Run
+		if opts.Progress != nil {
+			gateRun = gate.Echo(opts.Progress)
+		}
+		run = gate.Serial(gate.Within(opts.Timeout, gateRun))
 	}
 	for i := range res.Stack {
 		pr := &res.Stack[i]
+		opts.step("Running the gate on %s", pr.Branch)
 		if _, err := wt.Run(ctx, "checkout", "--detach", "--force", pr.Tip); err != nil {
 			return err
 		}
