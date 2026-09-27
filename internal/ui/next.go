@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/dmikalova/diatom/internal/config"
+	"github.com/dmikalova/diatom/internal/finish"
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/intake"
 	"github.com/dmikalova/diatom/internal/plan"
@@ -21,10 +22,10 @@ import (
 	"github.com/dmikalova/diatom/internal/tui"
 )
 
-// itemKind is what an item of Next asks of the human, in the order Next
-// offers them: a plan holds a whole goal up and a question a task, while a
-// goal ready to finish holds up the goals waiting for it, and a review holds
-// up nothing.
+// itemKind is what an item of Next asks of the human. Next offers a goal
+// ready to finish first, as the work is done and the goals waiting for it
+// can start once it lands; then a plan, which holds a whole goal up, and a
+// question, which holds a task; and a review, which holds up nothing, last.
 type itemKind int
 
 const (
@@ -88,6 +89,9 @@ type Next struct {
 	earlier map[string]int
 	// later are the items the human put off: they wait behind the rest.
 	later map[string]bool
+	// more is set while the human says what more a goal ready to finish
+	// needs, in the answer box.
+	more bool
 	// stats is each finishing goal's diff stat, from the last reload, and
 	// statCache each stat by the commit it is of.
 	stats, statCache map[string]string
@@ -108,6 +112,8 @@ const (
 	answerHint = "Your answer. enter sends it, shift+enter adds a line, esc goes back."
 	planHint   = "enter with nothing typed signs the plan off. Or write what to change, and enter " +
 		"sends it back to grilling. esc goes back."
+	moreHint = "What more the goal needs before it lands. enter adds it as a task, shift+enter " +
+		"adds a line, esc goes back."
 )
 
 // NewNext loads what waits on the human, from the status's rows.
@@ -155,7 +161,8 @@ func (n *Next) reload() {
 			tiers[itemReview] = append(tiers[itemReview], item{kind: itemReview, row: r})
 		}
 	}
-	n.items = slices.Concat(tiers[:]...)
+	n.items = slices.Concat(tiers[itemFinish], tiers[itemPlan], tiers[itemQuestion],
+		tiers[itemReview])
 	// What the human put off waits behind everything else.
 	slices.SortStableFunc(n.items, func(a, b item) int {
 		return cmp.Compare(boolInt(n.later[a.id()]), boolInt(n.later[b.id()]))
@@ -165,7 +172,7 @@ func (n *Next) reload() {
 		// opens on itself, as moving on does, whichever area had the
 		// keyboard.
 		n.cur = n.items[0].id()
-		n.scroll, n.confirm, n.act = 0, "", 0
+		n.scroll, n.confirm, n.act, n.more = 0, "", 0, false
 		n.area = areaBody
 		n.answer.Blur()
 	}
@@ -275,7 +282,8 @@ func (n *Next) typing() bool {
 		rv := n.reviews[it.row.goal.Name]
 		return n.area == areaBody && rv != nil && rv.Editing()
 	}
-	return n.area == areaAnswer && (it.kind == itemQuestion || it.kind == itemPlan)
+	return n.area == areaAnswer &&
+		(it.kind == itemQuestion || it.kind == itemPlan || it.kind == itemFinish && n.more)
 }
 
 // setArea moves the keyboard to an area, and the cursor with it.
@@ -293,7 +301,7 @@ func (n *Next) moveOn() tea.Cmd {
 	n.status.reload()
 	n.cur = ""
 	n.reload()
-	n.scroll, n.confirm, n.act = 0, "", 0
+	n.scroll, n.confirm, n.act, n.more = 0, "", 0, false
 	n.answer.Reset()
 	if len(n.items) == 0 {
 		n.flash += "; nothing else waits on you"
@@ -347,6 +355,9 @@ func (n *Next) key(msg tea.KeyPressMsg) nextKey {
 			n.scrollBy(-max(n.room-1, 1))
 		}
 	case areaAnswer:
+		if it.kind == itemFinish && n.more {
+			return n.moreKey(*it, msg)
+		}
 		if it.kind == itemFinish {
 			return nextKey{cmd: n.finishKey(*it, k)}
 		}
@@ -441,9 +452,17 @@ func (n *Next) decide(it item, text string) tea.Cmd {
 // second enter, or on its own key pressed twice.
 func (n *Next) finishKey(it item, k string) tea.Cmd {
 	acts := finishActions(it)
-	if k == "l" || (k == "enter" || k == "space" || k == " ") && n.act < len(acts) &&
-		acts[n.act].key == "l" {
+	chose := func(key string) bool {
+		return k == key || (k == "enter" || k == "space" || k == " ") && n.act < len(acts) &&
+			acts[n.act].key == key
+	}
+	switch {
+	case chose(laterKey):
 		return n.putOff(it)
+	case chose(moreKey):
+		n.more = true
+		n.answer.Reset()
+		return n.answer.Focus()
 	}
 	switch k {
 	case "esc":
@@ -476,13 +495,57 @@ func (n *Next) finishKey(it item, k string) tea.Cmd {
 	return cmd
 }
 
-// laterKey puts a goal ready to finish off, to land once the rest is seen to.
-const laterKey = "l"
+// laterKey puts a goal ready to finish off, to land once the rest is seen to,
+// and moreKey says what more it needs first.
+const (
+	laterKey = "l"
+	moreKey  = "m"
+)
 
 // finishActions are what can be done with a goal ready to finish: its
-// actions, and putting it off.
+// actions, asking for more work, and putting it off.
 func finishActions(it item) []action {
-	return append(actions(it.row), action{laterKey, "Later: ask again once the rest are done"})
+	return append(actions(it.row),
+		action{moreKey, "More work: say what it still needs, as a task of its own"},
+		action{laterKey, "Later: ask again once the rest are done"})
+}
+
+// moreKey types what more a goal needs, and adds it as a task of the goal's
+// once enter sends it.
+func (n *Next) moreKey(it item, msg tea.KeyPressMsg) nextKey {
+	if cmd, ok := tui.Cut(&n.answer, msg); ok {
+		return nextKey{cmd: cmd}
+	}
+	switch msg.String() {
+	case "esc":
+		n.more = false
+		n.answer.Reset()
+		n.answer.Blur()
+		return nextKey{}
+	case "enter":
+		text := strings.TrimSpace(n.answer.Value())
+		if text == "" {
+			n.flash = "say what more it needs, or esc goes back"
+			return nextKey{}
+		}
+		if err := finish.MoreWork(n.env.Store, it.row.goal, text, n.env.now()); err != nil {
+			n.err = err
+			return nextKey{}
+		}
+		n.flash = it.row.goal.Name + " has more work: it comes back once that is done and reviewed"
+		return nextKey{cmd: n.moveOn()}
+	}
+	var cmd tea.Cmd
+	n.answer, cmd = n.answer.Update(msg)
+	return nextKey{cmd: cmd}
+}
+
+// answerBox is the answer box sized to w, hinting what to write.
+func (n *Next) answerBox(hint string, w int) []string {
+	n.answer.Placeholder = hint
+	n.answer.SetWidth(w)
+	n.answer.SetHeight(max(min(n.answer.LineCount()+1, n.height/3), 3))
+	return strings.Split(n.answer.View(), "\n")
 }
 
 // putOff moves the item behind everything else that waits, and moves on.
@@ -536,11 +599,12 @@ func (n *Next) render(focused bool, foot []string) string {
 		if it.kind == itemPlan {
 			hint = planHint
 		}
-		n.answer.Placeholder = hint
-		n.answer.SetWidth(w)
-		n.answer.SetHeight(max(min(n.answer.LineCount()+1, n.height/3), 3))
-		lower = strings.Split(n.answer.View(), "\n")
+		lower = n.answerBox(hint, w)
 	case itemFinish:
+		if n.more {
+			lower = n.answerBox(moreHint, w)
+			break
+		}
 		for i, a := range finishActions(*it) {
 			mark := "  "
 			if i == n.act {

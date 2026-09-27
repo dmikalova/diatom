@@ -888,7 +888,8 @@ func TestALandingInProgress(t *testing.T) {
 	f := newFixture(t)
 	makeReady(t, f)
 	a, _ := newApp(t, f)
-	if it := a.next.shown(); it == nil || it.kind != itemQuestion {
+	// A goal ready to finish comes first.
+	if it := a.next.shown(); it == nil || it.kind != itemFinish {
 		t.Fatalf("Next shows %+v", it)
 	}
 	// As if P had started: the goal is being merged, and its log grows.

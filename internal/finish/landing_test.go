@@ -198,3 +198,34 @@ func TestWatchOffGitHubHasNoChecks(t *testing.T) {
 		t.Error("a goal merged off GitHub never finished")
 	}
 }
+
+func TestMoreWork(t *testing.T) {
+	s := queue.Open(t.TempDir())
+	g := &queue.Goal{Name: "set", State: queue.GoalDone, Base: "main",
+		Workstreams: []queue.Workstream{{Name: "a"}, {Name: "b", DependsOn: []string{"a"}}}}
+	if err := s.CreateGoal(g); err != nil {
+		t.Fatal(err)
+	}
+	if err := MoreWork(s, g, "  ", time.Now()); err == nil {
+		t.Error("no text was added")
+	}
+	long := strings.Repeat("word ", 30) + "\nand a second line"
+	if err := MoreWork(s, g, long, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	tasks, _ := s.Tasks("set")
+	if len(tasks) != 1 || tasks[0].Workstream != "b" || !strings.HasSuffix(tasks[0].Title, "…") ||
+		!strings.Contains(tasks[0].Body, "and a second line") {
+		t.Fatalf("tasks = %+v", tasks)
+	}
+	if got, _ := s.Goal("set"); got.State != queue.GoalActive {
+		t.Errorf("the goal is %s", got.State)
+	}
+	none := &queue.Goal{Name: "bare", State: queue.GoalActive, Base: "main"}
+	if err := s.CreateGoal(none); err != nil {
+		t.Fatal(err)
+	}
+	if err := MoreWork(s, none, "more", time.Now()); err == nil {
+		t.Error("a goal without workstreams took more work")
+	}
+}

@@ -449,3 +449,51 @@ func TestAnswerQuestionsFromTheGoal(t *testing.T) {
 		t.Errorf("shown %v", it)
 	}
 }
+
+func TestNextAsksForMoreWork(t *testing.T) {
+	f := newFixture(t)
+	if err := f.store.CreateGoal(&queue.Goal{Name: "late", State: queue.GoalActive, Base: "main",
+		Created: time.Unix(2000, 0), Workstreams: []queue.Workstream{{Name: "x"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.AddDone("late", &queue.Task{Title: "B", Kind: queue.Planned,
+		Workstream: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := newApp(t, f)
+	if it := a.next.shown(); it == nil || it.id() != "late 2" {
+		t.Fatalf("a goal ready to finish isn't first: %v", it)
+	}
+	key(a, "enter")
+	a.next.setArea(areaAnswer)
+	a.focus = partMain
+	key(a, "m")
+	if !a.next.more || !a.typing() ||
+		!strings.Contains(plain(a.render()), "What more the goal needs") {
+		t.Fatalf("m didn't open the box:\n%s", plain(a.render()))
+	}
+	key(a, "esc")
+	if a.next.more {
+		t.Error("esc kept the box")
+	}
+	key(a, "m", "enter")
+	if !strings.Contains(a.next.flash, "say what more") {
+		t.Errorf("empty = %q", a.next.flash)
+	}
+	typeText(a, "Also cover the tactic cards")
+	key(a, "enter")
+	tasks, _ := f.store.Tasks("late")
+	var more *queue.Task
+	for _, task := range tasks {
+		if task.Origin.Type == "finish" {
+			more = task
+		}
+	}
+	if more == nil || more.Title != "Also cover the tactic cards" || more.Workstream != "x" ||
+		more.State != queue.Pending {
+		t.Fatalf("task = %+v", more)
+	}
+	if it := a.next.shown(); it == nil || it.row.goal.Name == "late" || a.next.more {
+		t.Errorf("Next still on the goal: %v", it)
+	}
+}

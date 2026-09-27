@@ -118,7 +118,7 @@ func TestLandingReviewRanksWithFinishing(t *testing.T) {
 	for _, it := range a.next.items {
 		got = append(got, it.id())
 	}
-	want := []string{"set question 0001", "late 3", "later 3", "set 3"}
+	want := []string{"late 3", "later 3", "set question 0001", "set 3"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("items = %v, want %v", got, want)
 	}

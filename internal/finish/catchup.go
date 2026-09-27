@@ -276,3 +276,38 @@ func Discard(goalDir string) error {
 	}
 	return err
 }
+
+// MoreWork adds what the human says a goal ready to finish still needs as a
+// task of its own, on the workstream that lands last, and makes the goal
+// active again: it finishes once that work is done and reviewed.
+func MoreWork(s *queue.Store, g *queue.Goal, text string, now time.Time) error {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return errors.New("say what more the goal needs")
+	}
+	order := workstreamOrder(g)
+	ws := order[len(order)-1]
+	if ws == "" {
+		return fmt.Errorf("goal %s has no workstream to do more work in", g.Name)
+	}
+	title, _, _ := strings.Cut(text, "\n")
+	if len([]rune(title)) > 72 {
+		title = string([]rune(title)[:71]) + "…"
+	}
+	if err := s.AddTask(g.Name, &queue.Task{
+		Title:      title,
+		Kind:       queue.Planned,
+		Workstream: ws,
+		Origin:     queue.Origin{Type: "finish"},
+		Created:    now,
+		Body: "Before the goal lands, the human asked for more work on it:\n\n" + text + "\n\n" +
+			"Do this on top of what the goal has done so far.",
+	}); err != nil {
+		return err
+	}
+	if g.State == queue.GoalDone {
+		g.State = queue.GoalActive
+		return s.SaveGoal(g)
+	}
+	return nil
+}

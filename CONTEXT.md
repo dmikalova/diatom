@@ -85,7 +85,7 @@ The human's reply to a question. It makes the parked task ready again.
 _Avoid_: response, reply
 
 **Next**:
-Everything waiting on the human, across every goal, taken one item at a time: plans to sign off, questions, goals ready to finish and the hunks finishing them brought, then the other hunks to review.
+Everything waiting on the human, across every goal, taken one item at a time: goals ready to finish and the hunks finishing them brought, plans to sign off, questions, then the other hunks to review.
 _Avoid_: inbox, notifications, to-do
 
 ### Branches

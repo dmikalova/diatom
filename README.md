@@ -66,10 +66,11 @@ shows what sessions cost today, over the last 7 days and over the last 30, as
 the spending: what each of the last 30 days cost, each day opening to what
 each goal and session spent on it.
 
-- **Next** is what waits on you, across every goal, one item at a time: plans
-  to sign off, then questions, then goals ready to finish with the hunks
-  finishing them brought, then the other hunks to review, each in the nav's
-  order of goals. Above each item is what its goal is
+- **Next** is what waits on you, across every goal, one item at a time: goals
+  ready to finish with the hunks finishing them brought, then plans to sign
+  off, then questions, then the other hunks to review, each in the nav's order
+  of goals. A goal ready to finish can instead get more work, or wait until
+  later. Above each item is what its goal is
   for; enter there opens the goal. Answering moves on to the first item left.
 - **The intake box** takes anything you want done, such as "Turn
   docs/todo.md into goals, one per section". Triage, an agent, sorts it into

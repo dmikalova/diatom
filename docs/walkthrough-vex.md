@@ -127,8 +127,8 @@ so it never overlaps them.
 
 Each planning goal gets grilling rounds: read-only planning sessions on Opus
 that ask questions and then hand in a plan. Everything they ask comes to Next,
-with plans to sign off first, then questions, each level in the nav's order of
-goals.
+with plans to sign off before questions, each level in the nav's order of
+goals. A goal ready to finish comes before both (step 6).
 
 An item of Next has three parts, and tab moves through them:
 
@@ -224,8 +224,10 @@ twice or its key twice:
   them, which rewrites the lower PR's commits, so the next PR up shows them
   all again: `P` suits such a repo better.
 - **`d`, Mark it done**, to land later with `P` or `F`.
-- **`l`, Later**, puts it behind everything else waiting on you, such as
-  questions that came in while it was on screen.
+- **`m`, More work**: write what it still needs, and `enter` adds it as a task
+  on the goal's last workstream. The goal is active again, and comes back to
+  finish once that work is done and reviewed.
+- **`l`, Later**, puts it behind everything else waiting on you.
 
 Next doesn't change the item on screen while you look at it. A goal's own
 questions can also be answered from its page, with `a`.
