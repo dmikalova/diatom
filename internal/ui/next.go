@@ -167,6 +167,16 @@ func (n *Next) reload() {
 	}
 }
 
+// shownReviewer is the reviewer of the item shown, nil when it isn't a
+// review.
+func (n *Next) shownReviewer() *reviewui.Model {
+	it := n.shown()
+	if it == nil || it.kind != itemReview {
+		return nil
+	}
+	return n.reviews[it.row.goal.Name]
+}
+
 // reviewer is the goal's reviewer, opened the first time it is needed.
 func (n *Next) reviewer(goal string) *reviewui.Model {
 	if rv, ok := n.reviews[goal]; ok {

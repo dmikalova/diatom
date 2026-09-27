@@ -1,8 +1,11 @@
 package reviewui
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"image"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
@@ -432,5 +435,66 @@ func TestHunkHeadWraps(t *testing.T) {
 	m.items, m.cur = []review.Item{it}, 0
 	if got := m.bodyHeight(); got != 30-headerLines-len(head)-footerLines {
 		t.Errorf("body = %d with a head of %d", got, len(head))
+	}
+}
+
+func TestImagesBeforeAndAfter(t *testing.T) {
+	t.Setenv("TERM_PROGRAM", "ghostty")
+	f := newFixture(t)
+	gem := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8" fill="%s"/></svg>`
+	f.write("gem.svg", fmt.Sprintf(gem, "#f00"))
+	f.commit("feat: a gem")
+	f.write("gem.svg", fmt.Sprintf(gem, "#00f"))
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 3, 2))); err != nil {
+		t.Fatal(err)
+	}
+	f.write("dot.png", buf.String())
+	sha := f.commit("feat: a blue gem and a dot")
+	f.task(
+		&queue.Task{Title: "Draw", Kind: queue.Planned, Workstream: "art", Commits: []string{sha}},
+	)
+	m := f.model()
+	at := func(path string) {
+		t.Helper()
+		for i, it := range m.items {
+			if it.Path == path {
+				m.show(i)
+				return
+			}
+		}
+		t.Fatalf("no hunk of %s in %d", path, len(m.items))
+	}
+	at("dot.png")
+	out := ansi.Strip(m.render())
+	if !strings.Contains(out, "none: the file is new") || !strings.Contains(out, "after · 3×2") ||
+		!strings.Contains(
+			out,
+			"A binary file: approve or reject",
+		) || !strings.ContainsRune(out, '\U0010EEEE') {
+		t.Errorf("the png:\n%s", out)
+	}
+	if seq := m.Images(); !strings.Contains(seq, "\x1b_Ga=T,U=1") {
+		t.Errorf("the png wasn't sent: %q", seq)
+	}
+	if seq := m.Images(); seq != "" {
+		t.Error("the png was sent twice")
+	}
+	at("gem.svg")
+	if out := ansi.Strip(m.render()); !strings.Contains(out, "before · 512×512") ||
+		!strings.Contains(out, "after · 512×512") || !strings.Contains(out, "+ <svg") {
+		t.Errorf("the svg:\n%s", out)
+	}
+	if seq := m.Images(); strings.Count(seq, "a=T") != 2 {
+		t.Errorf("the svg sent %d images", strings.Count(seq, "a=T"))
+	}
+	// A file git no longer has shows why.
+	if d := m.decode("nope", "gone.png"); d.err == nil {
+		t.Error("a missing file decoded")
+	}
+	// A terminal without images shows none.
+	m.pics.on = false
+	if m.preview(m.items[m.cur]) != nil {
+		t.Error("a preview without images")
 	}
 }

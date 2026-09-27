@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/dmikalova/diatom/internal/review"
+	"github.com/dmikalova/diatom/internal/termimg"
 	"github.com/dmikalova/diatom/internal/tui"
 )
 
@@ -23,7 +24,8 @@ const (
 func (m *Model) bodyHeight() int {
 	head := 3
 	if m.cur >= 0 {
-		head = len(m.hunkHead(m.items[m.cur]))
+		it := m.items[m.cur]
+		head = len(m.hunkHead(it)) + len(m.preview(it))
 	}
 	return max(m.height-headerLines-head-footerLines-len(m.causes()), 3)
 }
@@ -51,7 +53,8 @@ func (m *Model) render() string {
 		b.WriteString("\n" + m.footer())
 		return b.String()
 	}
-	for _, l := range m.hunkHead(m.items[m.cur]) {
+	it := m.items[m.cur]
+	for _, l := range append(m.hunkHead(it), m.preview(it)...) {
 		b.WriteString(l + "\n")
 	}
 	for _, c := range m.causes() {
@@ -165,6 +168,13 @@ func (m *Model) body() string {
 		}
 	}
 	var rows []string
+	if m.cur >= 0 && m.items[m.cur].Binary() {
+		note := "A binary file: approve or reject the change as a whole."
+		if !termimg.Supported(m.items[m.cur].Path) || !m.pics.on {
+			note = "A binary file, which the reviewer can't show: approve or reject the change as a whole."
+		}
+		rows = append(rows, dim(note))
+	}
 	cursorRow, cursorEnd := 0, 0
 	for i, l := range ls {
 		if i == m.cursor {

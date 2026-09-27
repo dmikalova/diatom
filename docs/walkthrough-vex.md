@@ -192,6 +192,9 @@ What needs you:
     step 6.
   - Hunks in files matching `autoApprove` are approved for you and never reach
     the reviewer. Its header counts them.
+  - An image's hunks show it as it was and as it is, side by side above the
+    diff: SVG, PNG, JPEG, GIF, WebP and BMP, in Ghostty or kitty. A binary
+    file is one hunk, approved or rejected as a whole.
 - **Controls:** `p` on a goal's page parks or resumes it. Nothing new starts
   while parked, and nothing is lost.
 

@@ -106,6 +106,9 @@ type line struct {
 // Each side of the hunk is highlighted as one text, so a string or comment
 // that spans lines keeps its color.
 func lines(h review.Hunk) []line {
+	if h.Binary() {
+		return nil
+	}
 	frag := h.Fragment
 	var oldText, newText []string
 	oldIdx := make([]int, len(frag.Lines))

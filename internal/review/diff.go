@@ -28,8 +28,13 @@ type Hunk struct {
 	Index, Of int
 	// New and Deleted mark a file the commit added or removed.
 	New, Deleted bool
-	Fragment     *gitdiff.TextFragment
+	// Fragment is the hunk's lines; nil for a binary file, which is one hunk
+	// of its own.
+	Fragment *gitdiff.TextFragment
 }
+
+// Binary reports whether the hunk is a binary file's, with no lines.
+func (h Hunk) Binary() bool { return h.Fragment == nil }
 
 // diffArgs pin every option that shapes a diff, so a hunk's ID means the same
 // thing however the human's git is configured.
@@ -89,6 +94,15 @@ func parse(sha, diff string) ([]Hunk, error) {
 		if f.IsDelete {
 			path = f.OldName
 		}
+		if f.IsBinary {
+			// A binary file has no lines, but its change is reviewed all the
+			// same: an image's is shown as it was and as it is.
+			hunks = append(hunks, Hunk{
+				Commit: sha, ID: path + "#1", Path: path, OldPath: f.OldName, Index: 1, Of: 1,
+				New: f.IsNew, Deleted: f.IsDelete,
+			})
+			continue
+		}
 		for i, frag := range f.TextFragments {
 			hunks = append(hunks, Hunk{
 				Commit: sha, ID: fmt.Sprintf("%s#%d", path, i+1),
@@ -102,6 +116,9 @@ func parse(sha, diff string) ([]Hunk, error) {
 
 // Text renders the hunk as a unified diff, for a revision task.
 func (h Hunk) Text() string {
+	if h.Binary() {
+		return "Binary file " + h.Path + " changed"
+	}
 	var b strings.Builder
 	b.WriteString(h.Fragment.Header() + "\n")
 	for _, l := range h.Fragment.Lines {
@@ -113,6 +130,9 @@ func (h Hunk) Text() string {
 // NewLine returns the line number in the new file of the hunk's line at
 // index i, or in the old file for a deleted line.
 func (h Hunk) NewLine(i int) int {
+	if h.Binary() {
+		return 0
+	}
 	oldN, newN := int(h.Fragment.OldPosition), int(h.Fragment.NewPosition)
 	for j, l := range h.Fragment.Lines {
 		if j == i {

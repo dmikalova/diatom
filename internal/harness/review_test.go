@@ -278,3 +278,12 @@ func TestAutoApprovedFilesSkipReview(t *testing.T) {
 		}
 	}
 }
+
+func TestHunkSectionOfABinaryFile(t *testing.T) {
+	h := review.Hunk{ID: "dot.png#1", Path: "dot.png", Index: 1, Of: 1}
+	got := hunkSection(h, &review.Record{Comments: []review.Comment{{Line: 0, Text: "too dark"}}})
+	if !strings.Contains(got, "Binary file dot.png changed") ||
+		!strings.Contains(got, "- Line 0: too dark") {
+		t.Errorf("section:\n%s", got)
+	}
+}

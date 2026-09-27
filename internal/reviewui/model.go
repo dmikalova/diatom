@@ -7,6 +7,7 @@ package reviewui
 import (
 	"context"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/review"
+	"github.com/dmikalova/diatom/internal/termimg"
 )
 
 // Model is the reviewer's state.
@@ -49,6 +51,9 @@ type Model struct {
 	history []review.Event
 	back    int
 
+	// pics are the images an image file's hunks show.
+	pics images
+
 	width, height int
 	flash         string
 	err           error
@@ -61,6 +66,13 @@ func New(ctx context.Context, s *queue.Store, goal string) (*Model, error) {
 	m := &Model{
 		ctx: ctx, store: s, goal: goal, rev: review.Store{Dir: s.GoalDir(goal)},
 		repo: git.Repo{Dir: s.Repo()}, now: time.Now, input: in, cur: -1, width: 100, height: 30,
+		pics: images{
+			on: termimg.Enabled(
+				os.Getenv,
+			),
+			sent:    map[string]picture{},
+			decoded: map[string]decoded{},
+		},
 	}
 	if err := m.reload(); err != nil {
 		return nil, err

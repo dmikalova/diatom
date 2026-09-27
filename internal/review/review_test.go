@@ -358,3 +358,19 @@ func TestAutoApprove(t *testing.T) {
 		t.Errorf("history = %+v, want only the human's decision", events)
 	}
 }
+
+func TestHunksOfABinaryFile(t *testing.T) {
+	f := newFixture(t)
+	f.write("dot.png", "\x89PNG\r\n\x1a\n\x00\x00\x00binary")
+	sha := f.commit("feat: a dot")
+	hunks, err := Hunks(context.Background(), f.repo, sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hunks) != 1 || hunks[0].ID != "dot.png#1" || !hunks[0].Binary() || !hunks[0].New {
+		t.Fatalf("hunks = %+v", hunks)
+	}
+	if hunks[0].Text() != "Binary file dot.png changed" || hunks[0].NewLine(0) != 0 {
+		t.Errorf("text %q, line %d", hunks[0].Text(), hunks[0].NewLine(0))
+	}
+}

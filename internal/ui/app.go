@@ -15,6 +15,7 @@ import (
 
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/reviewui"
+	"github.com/dmikalova/diatom/internal/termimg"
 	"github.com/dmikalova/diatom/internal/tui"
 )
 
@@ -246,7 +247,26 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.gather(m.Mouse())
 	}
 	a.dirty = true
-	return a.handle(msg)
+	m, cmd := a.handle(msg)
+	if seq := a.images(); seq != "" {
+		cmd = tea.Batch(cmd, tea.Raw(seq))
+	}
+	return m, cmd
+}
+
+// images is what the reviewer on screen has to send the terminal: the images
+// of an image file's hunk. The frame is drawn first, as the reviewer sizes
+// the images to it, and View then shows that frame.
+func (a *App) images() string {
+	rv := a.review
+	if rv == nil && a.selected().kind == entryNext {
+		rv = a.next.shownReviewer()
+	}
+	if rv == nil || a.quitting {
+		return ""
+	}
+	a.frame, a.dirty = a.render(), false
+	return rv.Images()
 }
 
 func (a *App) handle(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -283,7 +303,7 @@ func (a *App) handle(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case QuitMsg:
 		return a.quit(false)
 	case stoppedMsg:
-		return a, tea.Quit
+		return a, exit()
 	case tea.KeyPressMsg:
 		return a.key(msg)
 	case tea.MouseClickMsg:
@@ -618,7 +638,7 @@ func (a *App) setFocus(p part) tea.Cmd {
 func (a *App) quit(now bool) (tea.Model, tea.Cmd) {
 	if now || a.sched.Stop == nil {
 		a.atOnce = now && a.sched.Stop != nil
-		return a, tea.Quit
+		return a, exit()
 	}
 	if !a.quitting {
 		a.quitting = true
@@ -629,6 +649,14 @@ func (a *App) quit(now bool) (tea.Model, tea.Cmd) {
 		<-done
 		return stoppedMsg{}
 	}
+}
+
+// exit quits, freeing first any images the window sent the terminal.
+func exit() tea.Cmd {
+	if !termimg.Sent() {
+		return tea.Quit
+	}
+	return tea.Sequence(tea.Raw(termimg.DeleteAll), tea.Quit)
 }
 
 // StoppedAtOnce reports whether the human quit without waiting for the

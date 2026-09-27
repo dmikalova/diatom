@@ -28,6 +28,7 @@ The first version includes:
 - a unified (stacked) diff view with syntax highlighting and **word-level diff**
 - a line cursor with a comment editor
 - keys to approve, reject, defer and step back
+- an image file's before and after, drawn side by side above its diff with kitty's graphics protocol, whose Unicode placeholders keep the image in the cell grid Bubble Tea renders; a binary file is one hunk of its own
 - atomic writes to `.diatom/`
 
 A side-by-side view is not planned. Rendering code can be borrowed from MIT-licensed projects (revdiff, opencode's `internal/diff`). hunk is still useful for ad-hoc browsing. If its extension API becomes stable, this decision can be reconsidered.

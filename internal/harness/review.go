@@ -250,7 +250,7 @@ func hunkSection(h review.Hunk, rec *review.Record) string {
 	}
 	for _, c := range rec.Comments {
 		line := ""
-		if c.Line >= 0 && c.Line < len(h.Fragment.Lines) {
+		if !h.Binary() && c.Line >= 0 && c.Line < len(h.Fragment.Lines) {
 			line = " (`" + strings.TrimRight(h.Fragment.Lines[c.Line].String(), "\n") + "`)"
 		}
 		fmt.Fprintf(&b, "- Line %d%s: %s\n", h.NewLine(c.Line), line, c.Text)
