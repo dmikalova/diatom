@@ -2,7 +2,6 @@ package reviewui
 
 import (
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -274,13 +273,10 @@ func (m *Model) row(l line, cursor bool, gutter, width int) []string {
 
 func (m *Model) footer() string {
 	if m.editing {
-		return m.input.View() + "\n" + dim("enter saves · shift+enter adds a line · esc cancels")
+		return m.input.View() + "\n" +
+			dim("enter rejects the hunk with this comment · shift+enter adds a line · esc cancels")
 	}
-	keys := "a approve · r reject · d defer · c comment"
-	if m.hasDraft() {
-		keys += " · x drop comment"
-	}
-	keys += " · s skip · b back"
+	keys := "a approve · r reject · c comment and reject · d defer · b back"
 	if m.cur >= 0 && m.items[m.cur].Revision != nil && m.items[m.cur].Revision.Revises != "" {
 		keys += " · v combined"
 	}
@@ -298,11 +294,6 @@ func (m *Model) footerHeight() int {
 		return m.input.Height() + 1
 	}
 	return footerLines
-}
-
-// hasDraft reports whether the line under the cursor has a comment.
-func (m *Model) hasDraft() bool {
-	return slices.ContainsFunc(m.drafts, func(c review.Comment) bool { return c.Line == m.cursor })
 }
 
 func dim(s string) string { return tui.Dim(s) }

@@ -517,6 +517,21 @@ func (a *App) openFromNext(goal string) tea.Cmd {
 	return nil
 }
 
+// answerFrom opens Next on the goal's first question, its answer box in
+// hand; answering moves on as Next does.
+func (a *App) answerFrom(goal string) tea.Cmd {
+	a.next.reload()
+	for _, it := range a.next.items {
+		if it.kind == itemQuestion && it.row.goal.Name == goal {
+			a.next.cur, a.next.scroll = it.id(), 0
+			break
+		}
+	}
+	a.sel, a.fromNext = 0, false
+	a.show()
+	return a.focusMain(int(areaAnswer))
+}
+
 // backToNext returns from a goal opened from Next.
 func (a *App) backToNext() tea.Cmd {
 	a.sel, a.fromNext = 0, false
@@ -577,6 +592,10 @@ func (a *App) mainKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return a, a.setFocus(partNav)
 		}
 		cmd := a.status.updateDetail(msg)
+		if goal := a.status.answering; goal != "" {
+			a.status.answering = ""
+			return a, tea.Batch(cmd, a.answerFrom(goal))
+		}
 		if a.status.detail == nil {
 			// Its own way back, such as h, reached the top.
 			a.shown = ""

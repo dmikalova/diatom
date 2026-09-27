@@ -144,12 +144,12 @@ func TestAppRestartsOnAnUpdate(t *testing.T) {
 func TestAppReviews(t *testing.T) {
 	f := newFixture(t)
 	a, _ := newApp(t, f)
-	// The goal's page offers its review first.
+	// The goal's page offers its questions, then its review.
 	key(a, "j", "j", "enter")
-	if acts := a.status.detailActions(); len(acts) == 0 || acts[0].key != "r" {
+	if acts := a.status.detailActions(); len(acts) < 2 || acts[0].key != "a" || acts[1].key != "r" {
 		t.Fatalf("actions = %+v", acts)
 	}
-	key(a, "enter")
+	key(a, "r")
 	if out := plain(a.render()); a.review == nil || !strings.Contains(out, "ward.go") ||
 		!strings.Contains(out, "‹ set · set") {
 		t.Fatalf("the review isn't open:\n%s", plain(a.render()))

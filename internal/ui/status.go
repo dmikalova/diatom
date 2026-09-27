@@ -150,8 +150,11 @@ type Status struct {
 
 	// detail is the row opened with enter: its tasks, or one of them.
 	detail *detail
-	// openReview opens a goal's review, where the window has one.
+	// openReview opens a goal's review, where the window has one, and
+	// answering is the goal whose questions the human asked to answer, for
+	// the window to open in Next.
 	openReview func(goal string)
+	answering  string
 
 	width, height int
 	// flash and err are what the human's last action came to, kept until
@@ -616,6 +619,12 @@ func (s *Status) act(row *goalRow, key string) (tea.Cmd, bool) {
 			return nil, false
 		}
 		s.openReview(row.goal.Name)
+		return nil, true
+	case "a":
+		if row.questions == 0 {
+			return nil, false
+		}
+		s.answering = row.goal.Name
 		return nil, true
 	case "p":
 		s.toggleParked(row)

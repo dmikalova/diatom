@@ -64,7 +64,7 @@ type Model struct {
 // New loads a goal's review and puts the first hunk to review on screen.
 func New(ctx context.Context, s *queue.Store, goal string) (*Model, error) {
 	in := tui.TextBox()
-	in.Placeholder = "A comment on this line"
+	in.Placeholder = "What to change about this line"
 	m := &Model{
 		ctx: ctx, store: s, goal: goal, rev: review.Store{Dir: s.GoalDir(goal)},
 		repo: git.Repo{Dir: s.Repo()}, now: time.Now, input: in, cur: -1, width: 100, height: 30,
@@ -181,19 +181,24 @@ func (m *Model) updateEditing(msg tea.KeyPressMsg) (*Model, tea.Cmd) {
 		m.input.Reset()
 		return m, nil
 	case "enter":
-		if text := strings.TrimSpace(m.input.Value()); text != "" {
-			m.drafts = slices.DeleteFunc(
-				m.drafts,
-				func(c review.Comment) bool { return c.Line == m.cursor },
-			)
-			m.drafts = append(m.drafts, review.Comment{Line: m.cursor, Text: text})
-			slices.SortStableFunc(
-				m.drafts,
-				func(a, b review.Comment) int { return a.Line - b.Line },
-			)
-		}
+		// A comment says what to change, so it rejects the hunk with it: the
+		// goal's agent revises it, and the next hunk comes up.
+		text := strings.TrimSpace(m.input.Value())
 		m.editing = false
 		m.input.Reset()
+		if text == "" {
+			return m, nil
+		}
+		m.drafts = slices.DeleteFunc(
+			m.drafts,
+			func(c review.Comment) bool { return c.Line == m.cursor },
+		)
+		m.drafts = append(m.drafts, review.Comment{Line: m.cursor, Text: text})
+		slices.SortStableFunc(
+			m.drafts,
+			func(a, b review.Comment) int { return a.Line - b.Line },
+		)
+		m.decide(review.Reject)
 		return m, nil
 	}
 	if cmd, ok := tui.Cut(&m.input, msg); ok {
@@ -242,21 +247,12 @@ func (m *Model) updateKey(msg tea.KeyPressMsg) (*Model, tea.Cmd) {
 			m.fitInput()
 			return m, m.input.Focus()
 		}
-	case "x":
-		m.drafts = slices.DeleteFunc(
-			m.drafts,
-			func(c review.Comment) bool { return c.Line == m.cursor },
-		)
 	case "a":
 		m.decide(review.Approve)
 	case "r":
 		m.decide(review.Reject)
 	case "d":
 		m.decide(review.Defer)
-	case "s":
-		m.skip(1)
-	case "S", "shift+s":
-		m.skip(-1)
 	case "b", "backspace":
 		m.stepBack()
 	case "v":
@@ -274,7 +270,13 @@ func (m *Model) decide(d review.Decision) {
 		return
 	}
 	it := m.items[m.cur]
-	rec, err := m.rev.Decide(it.Hunk, d, m.drafts, m.now())
+	comments := m.drafts
+	if d == review.Approve {
+		// Approving says the hunk is fine as it is: comments ask for a
+		// change, which only a rejection makes.
+		comments = nil
+	}
+	rec, err := m.rev.Decide(it.Hunk, d, comments, m.now())
 	if err != nil {
 		m.err = err
 		return
@@ -286,8 +288,8 @@ func (m *Model) decide(d review.Decision) {
 	)
 	m.back = len(m.history)
 	m.flash = fmt.Sprintf("%s %s", pastTense(d), it.ID)
-	if d == review.Approve && len(m.drafts) > 0 {
-		m.flash += "; its comments went to intake"
+	if d == review.Reject && len(comments) > 0 {
+		m.flash += "; the goal's agent revises it with your comment"
 	}
 	m.show(m.firstPending(key(it)))
 	if m.cur >= 0 && key(m.items[m.cur]) == key(it) && d != review.Defer {
@@ -303,17 +305,6 @@ func pastTense(d review.Decision) string {
 		return "rejected"
 	}
 	return "deferred"
-}
-
-// skip moves through the hunks left to review without deciding.
-func (m *Model) skip(step int) {
-	pending := review.Pending(m.items)
-	if len(pending) == 0 {
-		return
-	}
-	i := slices.IndexFunc(pending, func(it review.Item) bool { return key(it) == m.key() })
-	i = ((i+step)%len(pending) + len(pending)) % len(pending)
-	m.show(m.find(key(pending[i])))
 }
 
 // stepBack moves to the hunk of the decision before the last one shown, so a

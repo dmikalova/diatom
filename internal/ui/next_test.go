@@ -396,3 +396,56 @@ func TestReviewNotesHoldTheLanding(t *testing.T) {
 		t.Error("a done goal with notes is ready to land")
 	}
 }
+
+// TestNextPutsAFinishOff pins that a goal ready to finish can wait behind
+// the rest, such as questions that came after it was shown.
+func TestNextPutsAFinishOff(t *testing.T) {
+	f := newFixture(t)
+	if err := f.store.CreateGoal(&queue.Goal{Name: "late", State: queue.GoalActive, Base: "main",
+		Created: time.Unix(2000, 0)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.AddDone("late", &queue.Task{Title: "B", Kind: queue.Planned,
+		Workstream: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := newApp(t, f)
+	// The finish was on screen before the question came.
+	a.next.cur = "late 2"
+	key(a, "enter")
+	a.next.setArea(areaAnswer)
+	if out := plain(
+		a.render(),
+	); !strings.Contains(
+		out,
+		"l  Later: ask again once the rest are done",
+	) {
+		t.Fatalf("no later:\n%s", out)
+	}
+	key(a, "l")
+	if it := a.next.shown(); it == nil || it.id() != "set question 0001" ||
+		a.next.items[len(a.next.items)-1].id() != "late 2" || !strings.Contains(a.next.flash, "late waits") {
+		t.Fatalf("after later: %v, %q", a.next.shown(), a.next.flash)
+	}
+	// Chosen with enter, it does the same.
+	a.next.cur = "late 2"
+	a.next.setArea(areaAnswer)
+	a.next.act = len(finishActions(*a.next.shown())) - 1
+	key(a, "enter")
+	if it := a.next.shown(); it == nil || it.id() != "set question 0001" {
+		t.Errorf("enter on later showed %v", it)
+	}
+}
+
+func TestAnswerQuestionsFromTheGoal(t *testing.T) {
+	f := newFixture(t)
+	a, _ := newApp(t, f)
+	openGoal(t, a, "set")
+	key(a, "a")
+	if a.selected().kind != entryNext || a.focus != partMain || a.next.area != areaAnswer {
+		t.Fatalf("a opened %+v, focus %d, area %d", a.selected(), a.focus, a.next.area)
+	}
+	if it := a.next.shown(); it == nil || it.id() != "set question 0001" {
+		t.Errorf("shown %v", it)
+	}
+}

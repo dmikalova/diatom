@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"slices"
@@ -85,6 +86,8 @@ type Next struct {
 	act     int
 	// earlier counts each goal's answered questions, from the last reload.
 	earlier map[string]int
+	// later are the items the human put off: they wait behind the rest.
+	later map[string]bool
 	// stats is each finishing goal's diff stat, from the last reload, and
 	// statCache each stat by the commit it is of.
 	stats, statCache map[string]string
@@ -153,6 +156,10 @@ func (n *Next) reload() {
 		}
 	}
 	n.items = slices.Concat(tiers[:]...)
+	// What the human put off waits behind everything else.
+	slices.SortStableFunc(n.items, func(a, b item) int {
+		return cmp.Compare(boolInt(n.later[a.id()]), boolInt(n.later[b.id()]))
+	})
 	if n.shown() == nil && len(n.items) > 0 {
 		// The item shown is gone, such as a goal just landed: the next one
 		// opens on itself, as moving on does, whichever area had the
@@ -433,7 +440,11 @@ func (n *Next) decide(it item, text string) tea.Cmd {
 // finishKey moves through a finishing goal's actions, and does one on a
 // second enter, or on its own key pressed twice.
 func (n *Next) finishKey(it item, k string) tea.Cmd {
-	acts := actions(it.row)
+	acts := finishActions(it)
+	if k == "l" || (k == "enter" || k == "space" || k == " ") && n.act < len(acts) &&
+		acts[n.act].key == "l" {
+		return n.putOff(it)
+	}
 	switch k {
 	case "esc":
 		return n.setArea(areaBody)
@@ -463,6 +474,32 @@ func (n *Next) finishKey(it item, k string) tea.Cmd {
 		n.acted()
 	}
 	return cmd
+}
+
+// laterKey puts a goal ready to finish off, to land once the rest is seen to.
+const laterKey = "l"
+
+// finishActions are what can be done with a goal ready to finish: its
+// actions, and putting it off.
+func finishActions(it item) []action {
+	return append(actions(it.row), action{laterKey, "Later: ask again once the rest are done"})
+}
+
+// putOff moves the item behind everything else that waits, and moves on.
+func (n *Next) putOff(it item) tea.Cmd {
+	if n.later == nil {
+		n.later = map[string]bool{}
+	}
+	n.later[it.id()] = true
+	n.flash = it.row.goal.Name + " waits until the rest are done"
+	return n.moveOn()
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // acted reloads what waits once an action has changed a goal.
@@ -504,7 +541,7 @@ func (n *Next) render(focused bool, foot []string) string {
 		n.answer.SetHeight(max(min(n.answer.LineCount()+1, n.height/3), 3))
 		lower = strings.Split(n.answer.View(), "\n")
 	case itemFinish:
-		for i, a := range actions(it.row) {
+		for i, a := range finishActions(*it) {
 			mark := "  "
 			if i == n.act {
 				mark = tui.Color("› ", tui.Accent)

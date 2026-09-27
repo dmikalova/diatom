@@ -167,7 +167,7 @@ func TestGoalPage(t *testing.T) {
 	openGoal(t, a, "set")
 	out := plain(a.render())
 	for _, want := range []string{"‹ set", "queued · set", "tasks 1 pending", "1 questions", "1 to review",
-		"› r  Review its 1 hunks",
+		"› a  Answer its 1 question", "r  Review its 1 hunks",
 		"p  Park it", "0001 [engine] Add ward"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the goal's page lacks %q:\n%s", want, out)

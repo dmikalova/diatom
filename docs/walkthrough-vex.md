@@ -182,13 +182,12 @@ What needs you:
   unblocks its task.
 - **Review, whenever you like**, in Next once the questions are answered, or
   with `r` on a goal's page:
-  - `a` approves the hunk on screen. `r` rejects it, which sends it back to an
-    agent to fix. `d` defers it, which asks you again once the rest are done.
-    `s` skips it for now, and `shift+s` goes to the one before.
-  - `c` comments on the line under the cursor, in a box that grows to ten
-    lines: `enter` saves and `shift+enter` adds a line. The comments go with
-    your decision: a rejection's tell the agent what to change, and an
-    approval's go to intake as notes. `b` goes back through earlier
+  - `a` approves the hunk on screen. `r` rejects it, which sends it back to the
+    goal's agent to fix. `d` defers it, which asks you again once the rest are
+    done.
+  - `c` writes what to change about the line under the cursor, in a box that
+    grows to ten lines: `shift+enter` adds a line, and `enter` rejects the
+    hunk with the comment and moves on. `b` goes back through earlier
     decisions.
   - Rejecting with a comment becomes a revision task within seconds. The fix
     comes back as a `fixup!` commit, and `v` shows it folded into the original.
@@ -212,8 +211,7 @@ cd ../vex-check && mage web
 
 ## 6. Land a goal
 
-Once every task is done, every hunk reviewed, and triage has sorted any
-comments you left on hunks you approved, the goal comes up in Next,
+Once every task is done and every hunk reviewed, the goal comes up in Next,
 with what it changes and the goals waiting for it. Choose one, with `enter`
 twice or its key twice:
 
@@ -226,6 +224,11 @@ twice or its key twice:
   them, which rewrites the lower PR's commits, so the next PR up shows them
   all again: `P` suits such a repo better.
 - **`d`, Mark it done**, to land later with `P` or `F`.
+- **`l`, Later**, puts it behind everything else waiting on you, such as
+  questions that came in while it was on screen.
+
+Next doesn't change the item on screen while you look at it. A goal's own
+questions can also be answered from its page, with `a`.
 
 First the goal catches up with `main`, fetched from origin. What `main` gained
 since the goal started is merged in. When that conflicts, landing stops there:

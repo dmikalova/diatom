@@ -135,6 +135,9 @@ func (s *Status) detailActions() []action {
 	if s.openReview != nil && row != nil && !row.intake && row.toReview > 0 {
 		acts = append([]action{{"r", fmt.Sprintf("Review its %d hunks", row.toReview)}}, acts...)
 	}
+	if row != nil && row.questions > 0 {
+		acts = append([]action{{"a", "Answer its " + count(row.questions, "question")}}, acts...)
+	}
 	return acts
 }
 
