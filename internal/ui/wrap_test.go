@@ -16,7 +16,8 @@ func TestHangAll(t *testing.T) {
 		t.Fatalf("wrapped = %q", got)
 	}
 	for _, l := range got[1 : len(got)-1] {
-		if !strings.HasPrefix(l, "    ") || strings.HasPrefix(l, "     ") ||
+		// Under the text after the ✓, a hang in.
+		if !strings.HasPrefix(l, "      ") || strings.HasPrefix(l, "       ") ||
 			ansi.StringWidth(l) > 40 {
 			t.Errorf("a later line = %q", l)
 		}

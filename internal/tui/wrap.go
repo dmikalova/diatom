@@ -2,6 +2,7 @@ package tui
 
 import (
 	"strings"
+	"unicode"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -20,15 +21,26 @@ func Hang(l string, w int) []string {
 		return []string{l}
 	}
 	plain := ansi.Strip(l)
-	lead := ansi.StringWidth(plain[:len(plain)-len(strings.TrimLeft(plain, " ▌│›"))])
-	room := w - lead - len(HangIndent)
+	text := strings.TrimLeft(plain, " ▌│›")
+	lead := ansi.StringWidth(plain[:len(plain)-len(text)])
+	// A line that starts with an icon, such as a task's ✓, hangs under the
+	// text after it.
+	icon := 0
+	if tok, _, ok := strings.Cut(text, " "); ok && tok != "" && ansi.StringWidth(tok) <= 2 &&
+		!strings.ContainsFunc(
+			tok,
+			func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) },
+		) {
+		icon = ansi.StringWidth(tok) + 1
+	}
+	room := w - lead - icon - len(HangIndent)
 	if room < 10 {
 		return []string{l}
 	}
 	head, rest := ansi.Cut(l, 0, lead), ansi.Cut(l, lead, ansi.StringWidth(l))
 	wrapped := strings.Split(lipgloss.Wrap(rest, room, ""), "\n")
-	// The later lines keep a bar, but not a cursor.
-	under := strings.ReplaceAll(head, "›", " ")
+	// The later lines keep a bar, but not a cursor, and step past the icon.
+	under := strings.ReplaceAll(head, "›", " ") + strings.Repeat(" ", icon)
 	out := make([]string, 0, len(wrapped))
 	for i, part := range wrapped {
 		if i == 0 {

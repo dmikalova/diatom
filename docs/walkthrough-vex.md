@@ -23,6 +23,9 @@ gh auth status        # diatom opens PRs and reads CI checks with gh
   it starts.
 - In Ghostty, `keybind = performable:super+c=copy_to_clipboard` lets cmd+c
   copy from diatom's window when nothing is selected in the terminal.
+- A Nerd Font draws its own 🤖 and ☑, which Ghostty can pick over the color
+  emoji once diatom redraws them.
+  `font-codepoint-map = U+1F916,U+2611=Apple Color Emoji` keeps them emoji.
 
 ## 1. Prepare vex
 
