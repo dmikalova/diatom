@@ -17,6 +17,7 @@ import (
 
 	"github.com/dmikalova/diatom/internal/config"
 	"github.com/dmikalova/diatom/internal/finish"
+	"github.com/dmikalova/diatom/internal/gate"
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/intake"
 	"github.com/dmikalova/diatom/internal/plan"
@@ -325,6 +326,9 @@ func (s *Status) toReview(store *queue.Store, goal string, commits []string) (in
 	return total, nil
 }
 
+// gateLines is how much of a failing gate's output shows under the notice.
+const gateLines = 20
+
 // prepare returns the goal's commits ready to land, building them again
 // when the goal's branches have moved since.
 func prepare(
@@ -336,7 +340,8 @@ func prepare(
 	error,
 ) {
 	res, err := finish.Ready(ctx, s, g)
-	if err != nil || res != nil {
+	// A result that failed the gate is never landed, so it is built again.
+	if err != nil || res != nil && res.Failing() == nil {
 		return res, err
 	}
 	cfg, err := config.Load(s.Repo(), paths)
@@ -552,12 +557,21 @@ func runFinish(
 		}
 		return "", err
 	}
+	if failed := res.Failing(); failed != nil {
+		// Landing never forces past the gate: an agent makes it pass.
+		if err := finish.RepairGate(s, g, failed, time.Now()); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("%s fails the gate on %s's tip, so it didn't land: an agent is making "+
+				"it pass, and it comes back to Next once it does", g.Name, g.Base),
+			fmt.Errorf("the gate on %s:\n%s", failed.Branch, gate.Tail(failed.Output, gateLines))
+	}
 	switch key {
 	case "F":
-		urls, err := finish.Land(ctx, s, g, res, finish.PRs, remote, false, finish.RunGH)
+		urls, err := finish.Land(ctx, s, g, res, finish.PRs, remote, finish.RunGH)
 		return fmt.Sprintf("opened %s", strings.Join(urls, " ")), err
 	case "P":
-		_, err := finish.Land(ctx, s, g, res, finish.Push, remote, false, nil)
+		_, err := finish.Land(ctx, s, g, res, finish.Push, remote, nil)
 		return fmt.Sprintf("merged %s into %s on %s", g.Name, g.Base, remote), err
 	}
 	return fmt.Sprintf("%s is done, ready to land as %s", g.Name,
@@ -609,7 +623,9 @@ func (s *Status) foot() []string {
 	var foot []string
 	for _, err := range []error{s.loadErr, s.err} {
 		if err != nil {
-			foot = append(foot, tui.Color(err.Error(), tui.Red))
+			for l := range strings.SplitSeq(err.Error(), "\n") {
+				foot = append(foot, tui.Color(l, tui.Red))
+			}
 		}
 	}
 	if s.flash != "" {

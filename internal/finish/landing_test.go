@@ -53,7 +53,7 @@ func TestWatchFinishesOnceMergedAndPassing(t *testing.T) {
 	f.withRemote()
 	res := f.build(Options{})
 	gh := &fakeGH{prState: "OPEN"}
-	if _, err := Land(f.ctx, f.store, f.goal, res, PRs, "origin", false, gh.run); err != nil {
+	if _, err := Land(f.ctx, f.store, f.goal, res, PRs, "origin", gh.run); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Unix(1000, 0)
@@ -134,7 +134,7 @@ func TestWatchWithoutChecks(t *testing.T) {
 	f.withRemote()
 	res := f.build(Options{})
 	gh := &fakeGH{}
-	if _, err := Land(f.ctx, f.store, f.goal, res, Push, "origin", false, gh.run); err != nil {
+	if _, err := Land(f.ctx, f.store, f.goal, res, Push, "origin", gh.run); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Unix(1000, 0)
@@ -187,7 +187,7 @@ func TestWatchOffGitHubHasNoChecks(t *testing.T) {
 	f.git("remote", "add", "origin", bare.Dir)
 	res := f.build(Options{})
 	gh := &fakeGH{runs: "ci\tin_progress\t"}
-	if _, err := Land(f.ctx, f.store, f.goal, res, Push, "origin", false, gh.run); err != nil {
+	if _, err := Land(f.ctx, f.store, f.goal, res, Push, "origin", gh.run); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Unix(1000, 0)

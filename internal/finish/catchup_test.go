@@ -1,10 +1,13 @@
 package finish
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/dmikalova/diatom/internal/gate"
 	"github.com/dmikalova/diatom/internal/queue"
 )
 
@@ -108,5 +111,54 @@ func TestBuildMergesAConflictingBase(t *testing.T) {
 	// The goal's own commits are kept, one pull request per workstream.
 	if subjects := f.subjects(res.Stack[0].Tip); subjects[0] != "feat: add ward" {
 		t.Errorf("the first pull request = %v", subjects)
+	}
+}
+
+func TestAFailingGateGoesToAnAgent(t *testing.T) {
+	f := newFixture(t)
+	f.task("engine", f.work("engine", "engine.txt", "ward\n", "feat: add ward"))
+	f.git("checkout", "--quiet", "main")
+	res := f.build(
+		Options{Gate: "x", RunGate: func(context.Context, string, string) (gate.Result, error) {
+			return gate.Result{Output: "lint: ward is unused"}, nil
+		}},
+	)
+	failed := res.Failing()
+	if failed == nil || failed.Output != "lint: ward is unused" {
+		t.Fatalf("failing = %+v", failed)
+	}
+	// It never lands, forced or not.
+	if _, err := Land(
+		f.ctx,
+		f.store,
+		f.goal,
+		res,
+		Push,
+		"origin",
+		nil,
+	); !errors.As(
+		err,
+		new(*GateError),
+	) {
+		t.Errorf("landing a failing goal = %v", err)
+	}
+	for range 2 {
+		if err := RepairGate(f.store, f.goal, failed, time.Unix(1, 0)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tasks, _ := f.store.Tasks("set")
+	var repairs []*queue.Task
+	for _, task := range tasks {
+		if task.Kind == queue.GateRepair {
+			repairs = append(repairs, task)
+		}
+	}
+	if len(repairs) != 1 || repairs[0].Workstream != "cards" ||
+		strings.Count(repairs[0].Body, "lint: ward is unused") != 2 {
+		t.Errorf("repairs = %+v", repairs)
+	}
+	if g, _ := f.store.Goal("set"); g.State != queue.GoalActive {
+		t.Errorf("the goal is %s", g.State)
 	}
 }

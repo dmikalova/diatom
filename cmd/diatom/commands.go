@@ -183,7 +183,13 @@ func cmdHook(ctx context.Context, args []string, stdin io.Reader, stdout io.Writ
 		if spec.Kind == queue.Triage || spec.Kind == queue.Grilling {
 			return hook.StopPlanning(dir, spec, stdout)
 		}
-		return hook.Stop(ctx, dir, spec, gate.Within(spec.GateTimeout, gate.Run), stdout)
+		return hook.Stop(
+			ctx,
+			dir,
+			spec,
+			gate.Serial(gate.Within(spec.GateTimeout, gate.Run)),
+			stdout,
+		)
 	}
 	return errors.Join(errUsage, fmt.Errorf("unknown hook %q", args[0]))
 }

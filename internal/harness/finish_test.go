@@ -56,7 +56,6 @@ func TestSchedulerFinishesALandedGoal(t *testing.T) {
 		res,
 		finish.Push,
 		"origin",
-		false,
 		f.h.GH,
 	); err != nil {
 		t.Fatal(err)

@@ -422,9 +422,8 @@ func (h *Harness) runGate(
 	dir string,
 	cfg *config.Config,
 ) (gate.Result, error) {
-	run := h.Gate
-	if run == nil {
-		run = gate.Run
+	if h.Gate != nil {
+		return gate.Within(cfg.GateTimeout, h.Gate)(ctx, dir, cfg.Gate)
 	}
-	return gate.Within(cfg.GateTimeout, run)(ctx, dir, cfg.Gate)
+	return gate.Serial(gate.Within(cfg.GateTimeout, gate.Run))(ctx, dir, cfg.Gate)
 }

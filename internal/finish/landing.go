@@ -90,10 +90,11 @@ func Ready(ctx context.Context, s *queue.Store, g *queue.Goal) (*Result, error) 
 	return res, nil
 }
 
-// Land pushes the laid-out goal straight to its base branch, or opens its
-// stack of pull requests, on remote, and records how on the layout so the
-// scheduler watches it land. Pushing refuses a goal whose layout fails the
-// gate unless force is set. It returns the pull requests' URLs.
+// Land merges the prepared goal into its base branch, or opens its stack of
+// pull requests, on remote, and records how on the layout so the scheduler
+// watches it land. It never lands a goal whose last commit fails the gate:
+// that is a GateError, for an agent to fix. It returns the pull requests'
+// URLs.
 func Land(
 	ctx context.Context,
 	s *queue.Store,
@@ -101,19 +102,14 @@ func Land(
 	res *Result,
 	how How,
 	remote string,
-	force bool,
 	gh GH,
 ) ([]string, error) {
+	if last := res.Stack[len(res.Stack)-1]; last.Gate != nil && !last.Gate.Passed {
+		return nil, &GateError{Goal: g.Name, Branch: last.Branch, Output: last.Gate.Output}
+	}
 	var urls []string
 	switch how {
 	case Push:
-		if last := res.Stack[len(res.Stack)-1]; last.Gate != nil && !last.Gate.Passed && !force {
-			return nil, fmt.Errorf(
-				"goal %s fails the gate on %s: fix it, or push anyway with -force",
-				g.Name,
-				res.Final,
-			)
-		}
 		if err := push(ctx, s, g, res, remote); err != nil {
 			return nil, err
 		}

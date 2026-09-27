@@ -454,7 +454,11 @@ func (n *Next) acted() {
 func (n *Next) render(focused bool, foot []string) string {
 	for _, err := range []error{n.err, n.loadErr} {
 		if err != nil {
-			foot = append([]string{tui.Color(err.Error(), tui.Red)}, foot...)
+			var lines []string
+			for l := range strings.SplitSeq(err.Error(), "\n") {
+				lines = append(lines, tui.Color(l, tui.Red))
+			}
+			foot = append(lines, foot...)
 		}
 	}
 	if n.flash != "" {

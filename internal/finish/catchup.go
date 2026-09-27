@@ -3,6 +3,7 @@ package finish
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/dmikalova/diatom/internal/git"
@@ -90,4 +91,66 @@ func CatchUp(
 		return false, s.SaveGoal(g)
 	}
 	return false, nil
+}
+
+// GateError is a goal whose prepared commits fail the gate, so it doesn't
+// land.
+type GateError struct {
+	Goal, Branch, Output string
+}
+
+func (e *GateError) Error() string {
+	return fmt.Sprintf("goal %s fails the gate on %s", e.Goal, e.Branch)
+}
+
+// Failing is the prepared goal's failing gate on its last commit, nil when
+// it passes or wasn't run.
+func (r *Result) Failing() *GateError {
+	last := r.Stack[len(r.Stack)-1]
+	if last.Gate == nil || last.Gate.Passed {
+		return nil
+	}
+	return &GateError{Branch: last.Branch, Output: last.Gate.Output}
+}
+
+// RepairGate hands a goal whose prepared commits fail the gate to an agent:
+// a gate-repair task on its last workstream, with the gate's output, and the
+// goal active again until it is done. Landing never forces past the gate.
+func RepairGate(s *queue.Store, g *queue.Goal, failed *GateError, now time.Time) error {
+	order := workstreamOrder(g)
+	ws := order[len(order)-1]
+	tasks, err := s.Tasks(g.Name)
+	if err != nil {
+		return err
+	}
+	body := fmt.Sprintf("The goal's commits, put on %s's tip as %s to land, fail the gate. Make "+
+		"it pass in this workstream, which holds everything the goal has done.\n\n```text\n%s\n```",
+		g.Base, failed.Branch, strings.TrimSpace(failed.Output))
+	queued := false
+	for _, t := range tasks {
+		if t.Kind == queue.GateRepair && t.Workstream == ws && t.State != queue.Done {
+			t.Body += "\n\n## Landing again\n\n" + body
+			if err := s.SaveTask(g.Name, t); err != nil {
+				return err
+			}
+			queued = true
+		}
+	}
+	if !queued {
+		if err := s.AddTask(g.Name, &queue.Task{
+			Title:      "Make the goal pass the gate on " + g.Base,
+			Kind:       queue.GateRepair,
+			Workstream: ws,
+			Origin:     queue.Origin{Type: "harness"},
+			Created:    now,
+			Body:       body,
+		}); err != nil {
+			return err
+		}
+	}
+	if g.State == queue.GoalDone {
+		g.State = queue.GoalActive
+		return s.SaveGoal(g)
+	}
+	return nil
 }

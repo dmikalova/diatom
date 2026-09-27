@@ -570,11 +570,10 @@ func conflictOr(ctx context.Context, wt git.Repo, c commit, err error, undo ...s
 // runGates runs the gate on each pull request's tip, so a pull request that
 // only passes with the ones after it shows before it is opened.
 func runGates(ctx context.Context, wt git.Repo, res *Result, opts Options) error {
-	run := opts.RunGate
-	if run == nil {
-		run = gate.Run
+	run := gate.Within(opts.Timeout, opts.RunGate)
+	if opts.RunGate == nil {
+		run = gate.Serial(gate.Within(opts.Timeout, gate.Run))
 	}
-	run = gate.Within(opts.Timeout, run)
 	for i := range res.Stack {
 		pr := &res.Stack[i]
 		if _, err := wt.Run(ctx, "checkout", "--detach", "--force", pr.Tip); err != nil {

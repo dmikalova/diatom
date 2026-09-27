@@ -107,7 +107,9 @@ tip on `diatom/<goal>/final`, without the merges and with fixups squashed into
 the commits they revise. When the base changed the goal's own code, so the
 commits no longer apply on its tip, they're replayed where the goal started
 instead, and a last merge commit joins them to the base with the agent's
-resolution. A landing that fails leaves the goal active. It stays in the nav until it is
+resolution. A landing that fails leaves the goal active. One whose commits fail the gate
+never lands: an agent makes the gate pass, with its output shown under the
+notice, and the goal comes back to Next. It stays in the nav until it is
 finished: diatom watches the base branch on the remote and finishes the goal
 once it holds all of the goal's changes and its checks pass.
 

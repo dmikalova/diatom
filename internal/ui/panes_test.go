@@ -799,3 +799,40 @@ func TestAFailedLandingLeavesTheGoalActive(t *testing.T) {
 		t.Errorf("after a failed landing the goal is %s: %v", g.State, a.status.err)
 	}
 }
+
+func TestLandingOnAFailingGateGoesToAnAgent(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	r := git.Repo{Dir: f.repo}
+	if _, err := r.Run(ctx, "branch", "diatom/set/integration"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.CommitFiles(ctx, "diatom/set/integration",
+		map[string][]byte{"poison.go": []byte("package poison\n")}, "feat: poison"); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(f.repo, ".diatom", "config.toml"),
+		"gate = \"echo 'lint: poison is unused' >&2; exit 1\"\n")
+	a, _ := newApp(t, f)
+	openGoal(t, a, "set")
+	press(t, a, "D")
+	press(t, a, "D")
+	out := ansi.Strip(a.render())
+	if !strings.Contains(a.status.flash, "fails the gate on main's tip, so it didn't land") ||
+		!strings.Contains(out, "lint: poison is unused") || strings.Contains(out, "force") {
+		t.Errorf("flash %q, err %v:\n%s", a.status.flash, a.status.err, out)
+	}
+	if g, _ := f.store.Goal("set"); g.State != queue.GoalActive {
+		t.Errorf("the goal is %s", g.State)
+	}
+	tasks, _ := f.store.Tasks("set")
+	repairs := 0
+	for _, task := range tasks {
+		if task.Kind == queue.GateRepair {
+			repairs++
+		}
+	}
+	if repairs != 1 {
+		t.Errorf("%d gate repairs queued", repairs)
+	}
+}

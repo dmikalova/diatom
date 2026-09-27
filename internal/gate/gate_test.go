@@ -3,6 +3,7 @@ package gate
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -69,5 +70,45 @@ func TestWithinStopsAStuckGate(t *testing.T) {
 	cancel()
 	if _, err := Within(time.Minute, Run)(ctx, t.TempDir(), "sleep 30"); err == nil {
 		t.Error("a stopped gate reported no error")
+	}
+}
+
+func TestSerialRunsOneGateAtATime(t *testing.T) {
+	lockPath = t.TempDir() + "/gate.lock"
+	running, most := 0, 0
+	var mu sync.Mutex
+	slow := func(context.Context, string, string) (Result, error) {
+		mu.Lock()
+		running++
+		most = max(most, running)
+		mu.Unlock()
+		time.Sleep(50 * time.Millisecond)
+		mu.Lock()
+		running--
+		mu.Unlock()
+		return Result{Passed: true}, nil
+	}
+	var wg sync.WaitGroup
+	for range 3 {
+		wg.Go(func() {
+			if _, err := Serial(slow)(context.Background(), "", "x"); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	wg.Wait()
+	if most != 1 {
+		t.Errorf("%d gates ran at once", most)
+	}
+	// A gate waiting its turn gives up when its caller does.
+	unlock, err := lock(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	if _, err := Serial(slow)(ctx, "", "x"); err == nil {
+		t.Error("a gate waiting for its turn ignored its caller stopping")
 	}
 }
