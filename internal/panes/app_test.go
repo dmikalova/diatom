@@ -74,10 +74,14 @@ func TestAppNav(t *testing.T) {
 func TestAppTabsThroughItsParts(t *testing.T) {
 	f := newFixture(t)
 	a, _ := newApp(t, f)
-	for _, want := range []part{partMain, partIntake, partNav} {
+	// Next's question has three areas between the nav and the intake box.
+	for _, want := range []struct {
+		part part
+		area nextArea
+	}{{partMain, areaContext}, {partMain, areaBody}, {partMain, areaAnswer}, {partIntake, 0}, {partNav, 0}} {
 		key(a, "tab")
-		if a.focus != want {
-			t.Errorf("tab went to %d, want %d", a.focus, want)
+		if a.focus != want.part || want.part == partMain && a.next.area != want.area {
+			t.Errorf("tab went to %d/%d, want %d/%d", a.focus, a.next.area, want.part, want.area)
 		}
 	}
 	key(a, "shift+tab")
@@ -105,11 +109,11 @@ func TestAppTabsThroughItsParts(t *testing.T) {
 func TestAppQuitSuspends(t *testing.T) {
 	f := newFixture(t)
 	a, stopped := newApp(t, f)
-	key(a, "tab", "enter")
+	key(a, "enter", "tab")
 	// Answering, q is a letter of the answer.
 	typeText(a, "q")
-	if *stopped || a.questions.area.Value() != "q" {
-		t.Fatalf("q while answering: stopped %v, answer %q", *stopped, a.questions.area.Value())
+	if *stopped || a.next.answer.Value() != "q" {
+		t.Fatalf("q while answering: stopped %v, answer %q", *stopped, a.next.answer.Value())
 	}
 	_, cmd := a.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	if !*stopped || !a.quitting || cmd == nil ||

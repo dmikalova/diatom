@@ -87,14 +87,17 @@ type App struct {
 	env   Env
 	sched Scheduler
 
-	status    *Status
-	questions *Questions
-	intake    *Intake
+	status *Status
+	next   *Next
+	intake *Intake
 
 	// sel is the nav line selected, and shown the entry the main pane shows.
 	sel   int
 	shown string
 	focus part
+	// fromNext is set while a goal opened from Next's context is shown:
+	// going back from it returns to Next.
+	fromNext bool
 	// finished are the goals landed upstream, listed under their fold when
 	// it is open.
 	finished []*queue.Goal
@@ -108,14 +111,16 @@ type App struct {
 
 // NewApp loads the app.
 func NewApp(ctx context.Context, env Env, sched Scheduler) *App {
+	status := NewStatus(ctx, env)
 	a := &App{
 		ctx: ctx, env: env, sched: sched,
-		status:    NewStatus(ctx, env),
-		questions: NewQuestions(ctx, env),
-		intake:    NewIntake(env),
-		width:     120, height: 40,
+		status: status,
+		next:   NewNext(ctx, env, status),
+		intake: NewIntake(env),
+		width:  120, height: 40,
 	}
 	a.intake.compact = true
+	a.intake.about = a.onScreen
 	a.intake.area.Blur()
 	a.reload()
 	a.show()
@@ -124,9 +129,7 @@ func NewApp(ctx context.Context, env Env, sched Scheduler) *App {
 
 func (a *App) reload() {
 	a.status.reload()
-	if !a.questions.answering {
-		a.questions.reload()
-	}
+	a.next.reload()
 	a.intake.reload()
 	a.finished = nil
 	if goals, err := a.env.Store.Goals(); err == nil {
@@ -216,7 +219,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The text boxes' own messages, such as the cursor's blink.
 		var c1, c2 tea.Cmd
 		a.intake.area, c1 = a.intake.area.Update(msg)
-		a.questions.area, c2 = a.questions.area.Update(msg)
+		a.next.answer, c2 = a.next.answer.Update(msg)
 		return a, tea.Batch(c1, c2)
 	}
 	return a, nil
@@ -226,21 +229,25 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (a *App) layout() {
 	mw, h := a.mainWidth(), a.height
 	a.status.width, a.status.height = mw, h
-	a.questions.width, a.questions.height = mw, h
-	a.questions.area.SetWidth(max(mw, 10))
-	a.questions.area.SetHeight(max(h/3, 3))
+	a.next.width, a.next.height = mw, h
 	a.intake.width, a.intake.height = navWidth, a.intakeHeight()
 	a.intake.resize()
 }
 
 func (a *App) mainWidth() int { return max(a.width-navWidth-1, 20) }
 
-// intakeHeight is the intake box's: a line, and more while it is typed in.
+// intakeHeight is the intake box's: a line, and as many as its text takes
+// while it is typed in, up to half the nav.
 func (a *App) intakeHeight() int {
 	if a.focus != partIntake {
 		return 1
 	}
-	return min(max(a.intake.area.LineCount()+1, 3), max(a.height/4, 3))
+	text := strings.TrimSuffix(a.intake.area.Value(), "\n")
+	lines := len(strings.Split(ansi.Wordwrap(text, navWidth-1, ""), "\n"))
+	if strings.HasSuffix(a.intake.area.Value(), "\n") {
+		lines++
+	}
+	return min(max(lines, 1), max(a.height/2, 1))
 }
 
 // typing reports whether a text box has the keyboard, so letters are text.
@@ -249,7 +256,7 @@ func (a *App) typing() bool {
 	case partIntake:
 		return true
 	case partMain:
-		return a.selected().kind == entryNext && a.questions.answering
+		return a.selected().kind == entryNext && a.next.typing()
 	}
 	return false
 }
@@ -264,9 +271,9 @@ func (a *App) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	switch key {
 	case "tab":
-		return a, a.setFocus((a.focus + 1) % parts)
+		return a, a.tab(1)
 	case "shift+tab":
-		return a, a.setFocus((a.focus + parts - 1) % parts)
+		return a, a.tab(-1)
 	}
 	if !a.typing() {
 		switch key {
@@ -294,17 +301,96 @@ func (a *App) navKey(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "j", "down":
 		a.sel = min(a.sel+1, len(a.entries())-1)
+		a.fromNext = false
 	case "k", "up":
 		a.sel = max(a.sel-1, 0)
+		a.fromNext = false
 	case "enter", "space", " ", "right", "l":
-		if a.selected().kind == entryFinished {
+		switch a.selected().kind {
+		case entryFinished:
 			a.unfolded = !a.unfolded
 			return a, nil
+		case entryNext:
+			// An item opens on the item itself, to read before answering.
+			return a, a.focusMain(int(areaBody))
 		}
 		return a, a.setFocus(partMain)
 	}
 	a.show()
 	return a, nil
+}
+
+// tab moves the keyboard forward through the nav, the main pane's areas and
+// the intake box, or back with a negative step.
+func (a *App) tab(step int) tea.Cmd {
+	areas := a.mainAreas()
+	switch a.focus {
+	case partNav:
+		if step > 0 {
+			return a.focusMain(0)
+		}
+		return a.setFocus(partIntake)
+	case partIntake:
+		if step > 0 {
+			return a.setFocus(partNav)
+		}
+		return a.focusMain(areas - 1)
+	}
+	if i := a.mainArea() + step; i >= 0 && i < areas {
+		return a.focusMain(i)
+	}
+	if step > 0 {
+		return a.setFocus(partIntake)
+	}
+	return a.setFocus(partNav)
+}
+
+// mainAreas is how many areas of the main pane take the keyboard, and
+// mainArea the one that has it.
+func (a *App) mainAreas() int {
+	if a.selected().kind == entryNext {
+		return a.next.areas()
+	}
+	return 1
+}
+
+func (a *App) mainArea() int {
+	if a.selected().kind == entryNext {
+		return int(a.next.area)
+	}
+	return 0
+}
+
+// focusMain gives the keyboard to one of the main pane's areas.
+func (a *App) focusMain(i int) tea.Cmd {
+	a.focus = partMain
+	a.intake.area.Blur()
+	var cmd tea.Cmd
+	if a.selected().kind == entryNext {
+		cmd = a.next.setArea(nextArea(i))
+	}
+	a.layout()
+	return cmd
+}
+
+// openFromNext shows the goal of Next's item, and going back from it returns
+// to Next.
+func (a *App) openFromNext(goal string) tea.Cmd {
+	for i, e := range a.entries() {
+		if e.row != nil && e.row.goal.Name == goal {
+			a.sel, a.fromNext = i, true
+			a.show()
+			return a.setFocus(partMain)
+		}
+	}
+	return nil
+}
+
+// backToNext returns from a goal opened from Next.
+func (a *App) backToNext() tea.Cmd {
+	a.sel, a.fromNext = 0, false
+	a.show()
+	return a.focusMain(int(areaBody))
 }
 
 // mainKey hands a key to what the main pane shows. Going back from its top
@@ -315,13 +401,20 @@ func (a *App) mainKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	e := a.selected()
 	switch e.kind {
 	case entryNext:
-		if back && !a.questions.answering {
+		res := a.next.key(msg)
+		switch {
+		case res.back:
 			return a, a.setFocus(partNav)
+		case res.open != "":
+			return a, a.openFromNext(res.open)
 		}
-		_, cmd := a.questions.Update(msg)
-		return a, cmd
+		a.next.reload()
+		return a, res.cmd
 	case entryIntake, entryGoal:
 		if a.status.detail == nil || back && a.status.detail.task == nil {
+			if a.fromNext {
+				return a, a.backToNext()
+			}
 			return a, a.setFocus(partNav)
 		}
 		_, cmd := a.status.updateDetail(msg)
@@ -329,6 +422,9 @@ func (a *App) mainKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			// Its own way back, such as h, reached the top.
 			a.shown = ""
 			a.show()
+			if a.fromNext {
+				return a, tea.Batch(cmd, a.backToNext())
+			}
 			return a, tea.Batch(cmd, a.setFocus(partNav))
 		}
 		return a, cmd
@@ -347,22 +443,22 @@ func (a *App) toFocused(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.intake.area, cmd = a.intake.area.Update(msg)
 		a.layout()
 	case a.typing():
-		a.questions.area, cmd = a.questions.area.Update(msg)
+		a.next.answer, cmd = a.next.answer.Update(msg)
 	}
 	return a, cmd
 }
 
 // setFocus gives part the keyboard, and the cursor to its text box.
 func (a *App) setFocus(p part) tea.Cmd {
+	if p == partMain {
+		return a.focusMain(a.mainArea())
+	}
 	a.focus = p
 	a.intake.area.Blur()
-	a.questions.area.Blur()
+	a.next.answer.Blur()
 	var cmd tea.Cmd
-	switch {
-	case p == partIntake:
+	if p == partIntake {
 		cmd = a.intake.area.Focus()
-	case a.typing():
-		cmd = a.questions.area.Focus()
 	}
 	a.layout()
 	return cmd
@@ -397,6 +493,9 @@ func (a *App) click(m tea.Mouse) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 	if m.X >= navWidth {
+		if a.selected().kind == entryNext {
+			return a, a.focusMain(int(a.next.areaAt(m.Y)))
+		}
 		return a, a.setFocus(partMain)
 	}
 	lines, _ := a.navLines()
@@ -428,7 +527,12 @@ func (a *App) wheel(m tea.Mouse) (tea.Model, tea.Cmd) {
 	if m.X < navWidth {
 		return a.navKey(key.String())
 	}
-	if a.selected().kind == entryNext && !a.questions.answering {
+	if a.selected().kind == entryNext {
+		if code == tea.KeyDown {
+			a.next.scrollBy(3)
+		} else {
+			a.next.scrollBy(-3)
+		}
 		return a, nil
 	}
 	return a.mainKey(key)
@@ -517,7 +621,7 @@ func (a *App) navEntry(i int, e entry) string {
 	switch e.kind {
 	case entryNext:
 		glyph, name = tui.Color("»", tui.Cyan), "Next"
-		if n := len(a.questions.rows); n > 0 {
+		if n := len(a.next.items); n > 0 {
 			badges = tui.Color(strconv.Itoa(n), tui.Magenta)
 		}
 	case entryIntake:
@@ -610,7 +714,7 @@ func (a *App) renderMain() string {
 	e := a.selected()
 	switch e.kind {
 	case entryNext:
-		return a.questions.render()
+		return a.next.render(a.focus == partMain, a.status.foot())
 	case entryIntake:
 		if e.row == nil {
 			return tui.Dim("Nothing sent yet. Write in the intake box below the nav, and triage " +
@@ -632,4 +736,26 @@ func (a *App) renderMain() string {
 		out += "\n\n" + g.Description
 	}
 	return out
+}
+
+// onScreen is what the main pane shows, for an intake sent now: the goal it
+// is about, and a clue for triage.
+func (a *App) onScreen() (goal, context string) {
+	e := a.selected()
+	switch e.kind {
+	case entryNext:
+		return a.next.onScreen()
+	case entryIntake:
+		return "", "the intake, with what triage is still sorting"
+	case entryFinishedGoal:
+		return "", fmt.Sprintf("the finished goal %s (%q)", e.goal.Name, e.goal.Title)
+	case entryGoal:
+		g := e.row.goal
+		context = fmt.Sprintf("goal %s (%q)", g.Name, g.Title)
+		if d := a.status.detail; d != nil && d.task != nil && d.task.task != nil {
+			context += fmt.Sprintf(", its task %s: %s", d.task.id, d.task.task.Title)
+		}
+		return g.Name, context
+	}
+	return "", ""
 }

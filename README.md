@@ -56,8 +56,13 @@ diatom workspace    # the older zellij session, until the window covers review
 
 The window has a nav down the left: Next, with what waits on you; the intake;
 the repo's goals; and the intake box at its foot. The main pane shows what the
-nav has selected. Tab moves between the nav, the main pane and the intake box,
-and `i` jumps to the intake box. Quitting with `q` or ctrl+c, or closing the
+nav has selected. Next is one item at a time, across every goal: plans to sign
+off, then questions, then goals ready to finish, then hunks to review, each in
+the nav's order of goals. An item shows what its goal is for above it, and
+enter there opens the goal; answering moves on to the first item left. Tab
+moves between the nav, the parts of the main pane and the intake box, and `i`
+jumps to the intake box. What you send goes with what the main pane showed, as
+a clue for triage. Quitting with `q` or ctrl+c, or closing the
 terminal, suspends the running sessions, which carry on the next time diatom
 opens: nothing runs while it is closed. A second diatom on the same repo only
 views.

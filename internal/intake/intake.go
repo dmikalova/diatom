@@ -28,6 +28,9 @@ type Intake struct {
 	// Goal is the goal the human was looking at, a hint to where the
 	// intake belongs; empty is the repo.
 	Goal string `yaml:"goal,omitempty"`
+	// Context is what the human had open when they sent it, such as a
+	// question and its first lines: a clue for triage, not a rule.
+	Context string `yaml:"context,omitempty"`
 	// Commit and Hunk name the approved hunk a review comment was on.
 	Commit string `yaml:"commit,omitempty"`
 	Hunk   string `yaml:"hunk,omitempty"`

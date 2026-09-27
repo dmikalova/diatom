@@ -55,6 +55,22 @@ func Briefs(s *queue.Store) ([]Brief, error) {
 	return out, nil
 }
 
+// Describe is what the goal is for, in a line.
+func Describe(s *queue.Store, g *queue.Goal) (string, error) {
+	if g.Description != "" {
+		return g.Description, nil
+	}
+	tasks, err := s.Tasks(g.Name)
+	if err != nil {
+		return "", err
+	}
+	return description(s, g, tasks)
+}
+
+// Clip is the first paragraph of text that isn't a heading, on one line and
+// cut to a line's worth.
+func Clip(text string) string { return clip(text) }
+
 // description is the goal's own, or for a goal triage started before goals
 // had one, the start of its plan's summary or of what it was started from.
 func description(s *queue.Store, g *queue.Goal, tasks []*queue.Task) (string, error) {

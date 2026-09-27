@@ -26,6 +26,9 @@ type Intake struct {
 	// compact is the box at the foot of the app's nav, with room for a line
 	// of hint.
 	compact bool
+	// about is what the human has open in the app, sent with the intake as a
+	// clue; without it, the intake goes with the focused goal.
+	about func() (goal, context string)
 
 	width, height int
 	flash         string
@@ -195,9 +198,11 @@ func (m *Intake) submit() {
 		return
 	}
 	m.reload()
-	if _, err := intake.Write(intake.Dir(m.env.Store.Repo()), intake.Intake{
-		Source: "pane", Created: m.env.Now(), Goal: m.focus.Goal, Text: text,
-	}); err != nil {
+	in := intake.Intake{Source: "pane", Created: m.env.Now(), Goal: m.focus.Goal, Text: text}
+	if m.about != nil {
+		in.Goal, in.Context = m.about()
+	}
+	if _, err := intake.Write(intake.Dir(m.env.Store.Repo()), in); err != nil {
 		m.err = err
 		m.resize()
 		return

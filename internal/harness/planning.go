@@ -104,6 +104,9 @@ func triageBody(s *queue.Store, in intake.Intake) string {
 		body += fmt.Sprintf(" It is a comment the human left while approving hunk %s of commit %s.",
 			in.Hunk, in.Commit)
 	}
+	if c := strings.TrimSpace(in.Context); c != "" {
+		body += "\n\nOn their screen when they sent it, which it may or may not be about: " + c
+	}
 	return body + "\n"
 }
 
