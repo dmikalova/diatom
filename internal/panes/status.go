@@ -24,6 +24,7 @@ import (
 	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/review"
+	"github.com/dmikalova/diatom/internal/roster"
 	"github.com/dmikalova/diatom/internal/schedule"
 	"github.com/dmikalova/diatom/internal/session"
 	"github.com/dmikalova/diatom/internal/tui"
@@ -76,6 +77,8 @@ type goalRow struct {
 	// task's even share of the sessions that worked on it.
 	cost     float64
 	taskCost map[string]float64
+	// description says what the goal is for.
+	description string
 }
 
 // Status shows every goal in the repo, the intake triage is sorting, and the
@@ -105,6 +108,8 @@ type Status struct {
 
 	// detail is the row opened with enter: its tasks, or one of them.
 	detail *detail
+	// openReview opens a goal's review, where the window has one.
+	openReview func(goal string)
 	// top is the first line of the list on screen.
 	top int
 
@@ -180,21 +185,14 @@ func (s *Status) row(store *queue.Store, g *queue.Goal) (goalRow, error) {
 	if err != nil {
 		return row, err
 	}
+	if g.Name != queue.IntakeGoal {
+		if row.description, err = roster.Describe(store, g); err != nil {
+			return row, err
+		}
+	}
 	var commits []string
-	switch g.State {
-	case queue.GoalPlanning:
-		if row.plan, err = plan.Load(store.GoalDir(g.Name)); err != nil {
-			return row, err
-		}
-		sent, err := intake.Pending(plan.FeedbackDir(store.GoalDir(g.Name)))
-		if err != nil {
-			return row, err
-		}
-		row.sentBack = len(sent) > 0
-	case queue.GoalDone:
-		if row.landing, err = finish.Load(store.GoalDir(g.Name)); err != nil {
-			return row, err
-		}
+	if err := stage(store, &row); err != nil {
+		return row, err
 	}
 	for _, t := range tasks {
 		if t.Kind == queue.Grilling {
@@ -233,6 +231,27 @@ func (s *Status) row(store *queue.Store, g *queue.Goal) (goalRow, error) {
 		}
 	}
 	return row, nil
+}
+
+// stage loads what a goal's state waits on: a plan in planning, whether the
+// human sent it back, and a done goal's layout.
+func stage(store *queue.Store, row *goalRow) error {
+	dir := store.GoalDir(row.goal.Name)
+	var err error
+	switch row.goal.State {
+	case queue.GoalPlanning:
+		if row.plan, err = plan.Load(dir); err != nil {
+			return err
+		}
+		sent, err := intake.Pending(plan.FeedbackDir(dir))
+		if err != nil {
+			return err
+		}
+		row.sentBack = len(sent) > 0
+	case queue.GoalDone:
+		row.landing, err = finish.Load(dir)
+	}
+	return err
 }
 
 // sessionCost is what one session cost and the tasks it worked on.
@@ -338,7 +357,7 @@ func (s *Status) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // goalKeys act on a goal, so not on the intake row.
-var goalKeys = []string{"p", "s", "d", "D", "F", "U", "f"}
+var goalKeys = []string{"p", "s", "d", "D", "F", "P", "f"}
 
 func (s *Status) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	s.flash = ""
@@ -386,12 +405,18 @@ func (s *Status) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // act does what one of a goal's keys does, and reports whether key is one.
 func (s *Status) act(row *goalRow, key string) (tea.Cmd, bool) {
 	switch key {
+	case "r":
+		if s.openReview == nil || row.intake {
+			return nil, false
+		}
+		s.openReview(row.goal.Name)
+		return nil, true
 	case "p":
 		s.toggleParked(row)
 	case "s":
 		s.signOff(row)
 		return nil, true
-	case "d", "D", "F", "U":
+	case "d", "D", "F", "P":
 		return s.finishKey(row, key), true
 	default:
 		return nil, false
@@ -433,7 +458,7 @@ func actions(r *goalRow) []action {
 		if l := r.landing; l == nil || l.Landing == nil || l.Landing.How == "" {
 			a = append(a,
 				action{"F", "Open its stacked pull requests"},
-				action{"U", "Push it straight to " + g.Base})
+				action{"P", "Push it straight to " + g.Base})
 		}
 	}
 	return a
@@ -489,7 +514,7 @@ type jobMsg struct {
 
 // finishKey handles the keys that end and land a goal (ADR 0003), each
 // confirmed with a second press: d marks it done and lays it out, D does so
-// with hunks unreviewed or tasks not done, F opens its pull requests, and U
+// with hunks unreviewed or tasks not done, F opens its pull requests, and P
 // pushes it straight to its base branch. Laying out runs the gate, so the
 // job runs in the background.
 func (s *Status) finishKey(row *goalRow, key string) tea.Cmd {
@@ -504,7 +529,7 @@ func (s *Status) finishKey(row *goalRow, key string) tea.Cmd {
 	switch key {
 	case "d", "D":
 		if g.State == queue.GoalDone {
-			s.flash = g.Name + " is done already: F opens its pull requests, U pushes it"
+			s.flash = g.Name + " is done already: F opens its pull requests, P pushes it"
 			return nil
 		}
 		prompt = fmt.Sprintf(
@@ -521,8 +546,8 @@ func (s *Status) finishKey(row *goalRow, key string) tea.Cmd {
 			return nil
 		}
 		prompt = fmt.Sprintf("press F again to push %s and open its pull requests", g.Name)
-		if key == "U" {
-			prompt = fmt.Sprintf("press U again to push %s straight to %s", g.Name, g.Base)
+		if key == "P" {
+			prompt = fmt.Sprintf("press P again to push %s straight to %s", g.Name, g.Base)
 		}
 	}
 	if !s.confirmed(key, name, prompt) {
@@ -572,7 +597,7 @@ func runFinish(
 	case "F":
 		urls, err := finish.Land(ctx, s, g, res, finish.PRs, remote, false, finish.RunGH)
 		return fmt.Sprintf("opened %s", strings.Join(urls, " ")), err
-	case "U":
+	case "P":
 		_, err := finish.Land(ctx, s, g, res, finish.Push, remote, false, nil)
 		return fmt.Sprintf("pushed %s to %s on %s", g.Name, g.Base, remote), err
 	}
@@ -789,7 +814,7 @@ func landingLine(r goalRow) string {
 	case l == nil:
 		return tui.Color(line, tui.Yellow)
 	case l.Landing == nil || l.Landing.How == "":
-		return tui.Color(line+" · F open PRs · U push", tui.Green)
+		return tui.Color(line+" · F open PRs · P push", tui.Green)
 	case l.Landing.Checks == finish.ChecksFailed || l.Landing.Error != "":
 		return tui.Color(line, tui.Red)
 	}

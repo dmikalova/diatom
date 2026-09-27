@@ -13,11 +13,9 @@ import (
 
 	"github.com/dmikalova/diatom/internal/focus"
 	"github.com/dmikalova/diatom/internal/queue"
+	"github.com/dmikalova/diatom/internal/reviewui"
 	"github.com/dmikalova/diatom/internal/tui"
 )
-
-// navWidth is how wide the nav is.
-const navWidth = 32
 
 // Scheduler is the scheduler an App runs in its own process.
 type Scheduler struct {
@@ -32,6 +30,10 @@ type Scheduler struct {
 
 // QuitMsg asks the app to suspend its sessions and quit, as a signal does.
 type QuitMsg struct{}
+
+// UpdateMsg says a newer diatom is installed at Bin, and Why: a release, or
+// a build installed over this one. U restarts on it.
+type UpdateMsg struct{ Bin, Why string }
 
 // stoppedMsg says the scheduler has stopped.
 type stoppedMsg struct{}
@@ -105,6 +107,25 @@ type App struct {
 	// quitting is set once the sessions are suspending, and atOnce when the
 	// human quit without waiting for them.
 	quitting, atOnce bool
+	// review is the review of a goal opened from its page.
+	review *reviewui.Model
+	// navW is the nav's width, which dragging its edge changes, and
+	// navHidden hides it; dragging is set while the edge is held.
+	navW                int
+	navHidden, dragging bool
+	// blurred is set while the terminal doesn't have the keyboard, and
+	// waiting is how many items Next had at the last reload: when some
+	// arrive while the human is elsewhere, the terminal tells them.
+	blurred bool
+	waiting int
+	// logOpen shows the scheduler's log in the main pane, scrolled back
+	// logBack lines.
+	logOpen bool
+	logBack int
+	// update is a newer diatom, and restart the one to run once quit.
+	update  *UpdateMsg
+	restart string
+	flash   string
 
 	width, height int
 }
@@ -122,10 +143,28 @@ func NewApp(ctx context.Context, env Env, sched Scheduler) *App {
 	a.intake.compact = true
 	a.intake.about = a.onScreen
 	a.intake.area.Blur()
+	status.openReview = a.openReview
+	a.loadUI()
 	a.reload()
+	a.waiting = len(a.next.items)
 	a.show()
 	return a
 }
+
+// openReview shows a goal's review in place of its page.
+func (a *App) openReview(goal string) {
+	rv, err := reviewui.New(a.ctx, a.env.Store, goal)
+	if err != nil {
+		a.status.err = err
+		return
+	}
+	rv.Embed()
+	a.review = rv
+	a.layout()
+}
+
+// Restart is the diatom to run once the app has quit, "" for none.
+func (a *App) Restart() string { return a.restart }
 
 func (a *App) reload() {
 	a.status.reload()
@@ -177,7 +216,7 @@ func (a *App) show() {
 		return
 	}
 	a.shown = e.key()
-	a.status.detail = nil
+	a.status.detail, a.review, a.logOpen = nil, nil, false
 	if e.row != nil {
 		a.status.openDetail(e.row)
 		if !e.row.intake {
@@ -199,7 +238,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		a.reload()
 		a.show()
-		return a, tick()
+		if a.review != nil {
+			a.review.Refresh()
+		}
+		return a, tea.Batch(tick(), a.notify())
+	case tea.FocusMsg:
+		a.blurred = false
+	case tea.BlurMsg:
+		a.blurred = true
+	case UpdateMsg:
+		a.update = &msg
 	case jobMsg:
 		_, cmd := a.status.Update(msg)
 		return a, cmd
@@ -211,6 +259,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a.key(msg)
 	case tea.MouseClickMsg:
 		return a.click(msg.Mouse())
+	case tea.MouseMotionMsg:
+		if a.dragging {
+			a.drag(msg.Mouse().X)
+		}
+	case tea.MouseReleaseMsg:
+		if a.dragging {
+			a.dragging = false
+			a.saveUI()
+		}
 	case tea.MouseWheelMsg:
 		return a.wheel(msg.Mouse())
 	case tea.PasteMsg:
@@ -228,13 +285,21 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // layout sizes the parts to the window.
 func (a *App) layout() {
 	mw, h := a.mainWidth(), a.height
+	if a.review != nil {
+		a.review.SetSize(mw, h)
+	}
 	a.status.width, a.status.height = mw, h
 	a.next.width, a.next.height = mw, h
-	a.intake.width, a.intake.height = navWidth, a.intakeHeight()
+	a.intake.width, a.intake.height = a.nw(), a.intakeHeight()
 	a.intake.resize()
 }
 
-func (a *App) mainWidth() int { return max(a.width-navWidth-1, 20) }
+func (a *App) mainWidth() int {
+	if a.nw() == 0 {
+		return max(a.width, 20)
+	}
+	return max(a.width-a.nw()-1, 20)
+}
 
 // intakeHeight is the intake box's: a line, and as many as its text takes
 // while it is typed in, up to half the nav.
@@ -243,7 +308,7 @@ func (a *App) intakeHeight() int {
 		return 1
 	}
 	text := strings.TrimSuffix(a.intake.area.Value(), "\n")
-	lines := len(strings.Split(ansi.Wordwrap(text, navWidth-1, ""), "\n"))
+	lines := len(strings.Split(ansi.Wordwrap(text, max(a.nw()-1, 1), ""), "\n"))
 	if strings.HasSuffix(a.intake.area.Value(), "\n") {
 		lines++
 	}
@@ -256,6 +321,9 @@ func (a *App) typing() bool {
 	case partIntake:
 		return true
 	case partMain:
+		if a.review != nil {
+			return a.review.Editing()
+		}
 		return a.selected().kind == entryNext && a.next.typing()
 	}
 	return false
@@ -263,8 +331,12 @@ func (a *App) typing() bool {
 
 func (a *App) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
-	if key == "ctrl+c" {
+	a.flash = ""
+	switch key {
+	case "ctrl+c":
 		return a.quit(a.quitting)
+	case "super+c":
+		return a, a.copyFocused()
 	}
 	if a.quitting {
 		return a, nil
@@ -281,6 +353,22 @@ func (a *App) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return a.quit(false)
 		case "i":
 			return a, a.setFocus(partIntake)
+		case "h":
+			a.toggleNav()
+			return a, nil
+		case "y":
+			return a, a.copyFocused()
+		case "L":
+			a.logOpen, a.logBack = !a.logOpen, 0
+			if a.logOpen {
+				return a, a.setFocus(partMain)
+			}
+			return a, nil
+		case "U":
+			if a.update != nil {
+				a.restart = a.update.Bin
+				return a.quit(false)
+			}
 		}
 	}
 	switch a.focus {
@@ -348,14 +436,14 @@ func (a *App) tab(step int) tea.Cmd {
 // mainAreas is how many areas of the main pane take the keyboard, and
 // mainArea the one that has it.
 func (a *App) mainAreas() int {
-	if a.selected().kind == entryNext {
+	if a.selected().kind == entryNext && !a.logOpen {
 		return a.next.areas()
 	}
 	return 1
 }
 
 func (a *App) mainArea() int {
-	if a.selected().kind == entryNext {
+	if a.selected().kind == entryNext && !a.logOpen {
 		return int(a.next.area)
 	}
 	return 0
@@ -398,6 +486,23 @@ func (a *App) backToNext() tea.Cmd {
 func (a *App) mainKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	back := key == "esc" || key == "left"
+	if a.logOpen {
+		a.logKey(key)
+		if !a.logOpen {
+			return a, a.setFocus(partNav)
+		}
+		return a, nil
+	}
+	if rv := a.review; rv != nil {
+		if back && !rv.Editing() {
+			// Back to the goal's page, its hunks counted again.
+			a.review = nil
+			a.status.reload()
+			a.next.reload()
+			return a, nil
+		}
+		return a, rv.Key(msg)
+	}
 	e := a.selected()
 	switch e.kind {
 	case entryNext:
@@ -442,7 +547,7 @@ func (a *App) toFocused(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case a.focus == partIntake:
 		a.intake.area, cmd = a.intake.area.Update(msg)
 		a.layout()
-	case a.typing():
+	case a.typing() && a.review == nil:
 		a.next.answer, cmd = a.next.answer.Update(msg)
 	}
 	return a, cmd
@@ -452,6 +557,11 @@ func (a *App) toFocused(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (a *App) setFocus(p part) tea.Cmd {
 	if p == partMain {
 		return a.focusMain(a.mainArea())
+	}
+	if a.navHidden {
+		// Going to the nav, or the intake box at its foot, shows it again.
+		a.navHidden = false
+		a.saveUI()
 	}
 	a.focus = p
 	a.intake.area.Blur()
@@ -492,15 +602,26 @@ func (a *App) click(m tea.Mouse) (tea.Model, tea.Cmd) {
 	if m.Button != tea.MouseLeft || a.quitting {
 		return a, nil
 	}
-	if m.X >= navWidth {
-		if a.selected().kind == entryNext {
+	nw := a.nw()
+	if nw > 0 && m.X == nw {
+		// The nav's edge, held to drag it.
+		a.dragging = true
+		return a, nil
+	}
+	if m.X > nw || nw == 0 {
+		if a.selected().kind == entryNext && !a.logOpen {
 			return a, a.focusMain(int(a.next.areaAt(m.Y)))
 		}
 		return a, a.setFocus(partMain)
 	}
-	lines, _ := a.navLines()
+	lines, foot := a.navLines()
 	if m.Y >= a.height-a.intakeHeight() {
 		return a, a.setFocus(partIntake)
+	}
+	if m.Y >= a.height-a.intakeHeight()-len(foot) {
+		// The footer opens the log.
+		a.logOpen, a.logBack = true, 0
+		return a, a.setFocus(partMain)
 	}
 	if m.Y < len(lines) && lines[m.Y].entry >= 0 {
 		a.sel = lines[m.Y].entry
@@ -524,10 +645,11 @@ func (a *App) wheel(m tea.Mouse) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 	key := tea.KeyPressMsg{Code: code}
-	if m.X < navWidth {
+	if m.X < a.nw() {
 		return a.navKey(key.String())
 	}
-	if a.selected().kind == entryNext {
+	if it := a.next.shown(); a.selected().kind == entryNext && !a.logOpen && it != nil &&
+		it.kind != itemReview {
 		if code == tea.KeyDown {
 			a.next.scrollBy(3)
 		} else {
@@ -553,16 +675,20 @@ func (a *App) View() tea.View {
 }
 
 func (a *App) render() string {
-	nav := lipgloss.NewStyle().Width(navWidth).MaxWidth(navWidth).Height(a.height).
-		MaxHeight(a.height).Render(a.renderNav())
-	sep := tui.Dim("│")
-	if a.focus == partMain {
-		sep = tui.Color("│", tui.Cyan)
-	}
-	border := strings.TrimSuffix(strings.Repeat(sep+"\n", a.height), "\n")
 	mw := a.mainWidth()
 	main := lipgloss.NewStyle().Width(mw).MaxWidth(mw).Height(a.height).MaxHeight(a.height).
 		Render(a.renderMain())
+	nw := a.nw()
+	if nw == 0 {
+		return main
+	}
+	nav := lipgloss.NewStyle().Width(nw).MaxWidth(nw).Height(a.height).
+		MaxHeight(a.height).Render(a.renderNav())
+	sep := tui.Dim("│")
+	if a.focus == partMain || a.dragging {
+		sep = tui.Color("│", tui.Cyan)
+	}
+	border := strings.TrimSuffix(strings.Repeat(sep+"\n", a.height), "\n")
 	return lipgloss.JoinHorizontal(lipgloss.Top, nav, border, main)
 }
 
@@ -583,11 +709,11 @@ func (a *App) navLines() ([]navLine, []string) {
 		lines = append(lines, navLine{text: a.navEntry(i, e), entry: i})
 	}
 	var foot []string
-	for l := range strings.SplitSeq(ansi.Wordwrap(a.footer(), navWidth-1, ""), "\n") {
+	for l := range strings.SplitSeq(ansi.Wordwrap(a.footer(), a.nw()-1, ""), "\n") {
 		foot = append(foot, " "+l)
 	}
 	label := "─ intake "
-	label += strings.Repeat("─", navWidth-ansi.StringWidth(label))
+	label += strings.Repeat("─", max(a.nw()-ansi.StringWidth(label), 0))
 	if a.focus == partIntake {
 		label = tui.Color(label, tui.Cyan)
 	} else {
@@ -642,7 +768,7 @@ func (a *App) navEntry(i int, e entry) string {
 	case entryFinishedGoal:
 		glyph, name = tui.Dim(" ✓"), e.goal.Title
 	}
-	room := navWidth - 4 - ansi.StringWidth(badges)
+	room := a.nw() - 4 - ansi.StringWidth(badges)
 	if badges != "" {
 		room--
 	}
@@ -703,6 +829,12 @@ func (a *App) footer() string {
 	case a.status.health != "":
 		parts = append(parts, tui.Color("⚠ "+a.status.health, tui.Red))
 	}
+	if u := a.update; u != nil {
+		parts = append(parts, tui.Color(u.Why+" · U restarts on it", tui.Green))
+	}
+	if a.flash != "" {
+		parts = append(parts, tui.Color(a.flash, tui.Cyan))
+	}
 	return strings.Join(parts, tui.Dim(" · "))
 }
 
@@ -710,6 +842,12 @@ func (a *App) renderMain() string {
 	if a.quitting {
 		return "Suspending the running sessions; they carry on where they stopped the next time " +
 			"diatom opens.\n\n" + tui.Dim("ctrl+c again stops at once, leaving any git work half done.")
+	}
+	if a.logOpen {
+		return a.renderLog(a.mainWidth(), a.height)
+	}
+	if a.review != nil {
+		return a.review.Render()
 	}
 	e := a.selected()
 	switch e.kind {
@@ -758,4 +896,23 @@ func (a *App) onScreen() (goal, context string) {
 		return g.Name, context
 	}
 	return "", ""
+}
+
+// notify tells the terminal, while it doesn't have the keyboard, that Next
+// has something again after having nothing: once something waits, the
+// human knows, and is seeing to other things first.
+func (a *App) notify() tea.Cmd {
+	was := a.waiting
+	a.waiting = len(a.next.items)
+	if was > 0 || a.waiting == 0 || !a.blurred {
+		return nil
+	}
+	body := fmt.Sprintf("%d things wait on you", a.waiting)
+	if a.waiting == 1 {
+		body = "something waits on you"
+	}
+	if it := a.next.shown(); it != nil {
+		body += ": " + it.row.goal.Name
+	}
+	return tea.Raw("\x1b]777;notify;diatom;" + body + "\x07")
 }

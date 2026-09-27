@@ -15,6 +15,7 @@ import (
 	"github.com/dmikalova/diatom/internal/intake"
 	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
+	"github.com/dmikalova/diatom/internal/reviewui"
 	"github.com/dmikalova/diatom/internal/roster"
 	"github.com/dmikalova/diatom/internal/tui"
 )
@@ -87,6 +88,8 @@ type Next struct {
 	described map[string]string
 	// stats caches a diff stat by the commit it is of.
 	stats map[string]string
+	// reviews are the reviewers of the goals whose hunks Next has shown.
+	reviews map[string]*reviewui.Model
 	// bounds are the lines each area started on at the last render.
 	bounds [nextAreas]int
 
@@ -104,7 +107,7 @@ func NewNext(ctx context.Context, env Env, status *Status) *Next {
 	area.SetStyles(plainStyles())
 	n := &Next{
 		ctx: ctx, env: env, status: status, answer: area, area: areaBody,
-		stats: map[string]string{}, width: 80, height: 24,
+		stats: map[string]string{}, reviews: map[string]*reviewui.Model{}, width: 80, height: 24,
 	}
 	n.reload()
 	return n
@@ -141,6 +144,26 @@ func (n *Next) reload() {
 	if n.shown() == nil && len(n.items) > 0 {
 		n.cur = n.items[0].id()
 	}
+	if it := n.shown(); it != nil && it.kind == itemReview {
+		if rv := n.reviewer(it.row.goal.Name); rv != nil {
+			rv.Refresh()
+		}
+	}
+}
+
+// reviewer is the goal's reviewer, opened the first time it is needed.
+func (n *Next) reviewer(goal string) *reviewui.Model {
+	if rv, ok := n.reviews[goal]; ok {
+		return rv
+	}
+	rv, err := reviewui.New(n.ctx, n.env.Store, goal)
+	if err != nil {
+		n.err = err
+		return nil
+	}
+	rv.Embed()
+	n.reviews[goal] = rv
+	return rv
 }
 
 // questions are a goal's open questions still unanswered, and they count
@@ -209,7 +232,14 @@ func (n *Next) areas() int {
 // typing reports whether the answer box has the keyboard.
 func (n *Next) typing() bool {
 	it := n.shown()
-	return it != nil && n.area == areaAnswer && (it.kind == itemQuestion || it.kind == itemPlan)
+	switch {
+	case it == nil:
+		return false
+	case it.kind == itemReview:
+		rv := n.reviews[it.row.goal.Name]
+		return n.area == areaBody && rv != nil && rv.Editing()
+	}
+	return n.area == areaAnswer && (it.kind == itemQuestion || it.kind == itemPlan)
 }
 
 // setArea moves the keyboard to an area, and the cursor with it.
@@ -261,6 +291,9 @@ func (n *Next) key(msg tea.KeyPressMsg) nextKey {
 			return nextKey{open: it.row.goal.Name}
 		}
 	case areaBody:
+		if it.kind == itemReview {
+			return n.reviewKey(*it, msg)
+		}
 		switch k {
 		case "esc", "left":
 			return nextKey{back: true}
@@ -285,6 +318,28 @@ func (n *Next) key(msg tea.KeyPressMsg) nextKey {
 }
 
 func (n *Next) scrollBy(d int) { n.scroll = max(n.scroll+d, 0) }
+
+// reviewKey hands a key to the goal's reviewer. Once a decision leaves the
+// goal nothing to review, Next moves on.
+func (n *Next) reviewKey(it item, msg tea.KeyPressMsg) nextKey {
+	rv := n.reviewer(it.row.goal.Name)
+	if rv == nil {
+		return nextKey{back: msg.String() == "esc"}
+	}
+	if k := msg.String(); !rv.Editing() && (k == "esc" || k == "left") {
+		return nextKey{back: true}
+	}
+	before := rv.Pending()
+	cmd := rv.Key(msg)
+	if rv.Pending() != before {
+		n.status.reload()
+		n.reload()
+		if n.shown() == nil || n.shown().id() != it.id() {
+			n.scroll = 0
+		}
+	}
+	return nextKey{cmd: cmd}
+}
 
 func (n *Next) answerKey(it item, msg tea.KeyPressMsg) nextKey {
 	if cmd, ok := cut(&n.answer, msg); ok {
@@ -410,19 +465,25 @@ func (n *Next) render(focused bool, foot []string) string {
 			lower = append(lower, mark+tui.Color(a.key, tui.Yellow)+"  "+a.label)
 		}
 	}
-	body := strings.Split(ansi.Wordwrap(strings.TrimSpace(n.bodyText(*it)), w, ""), "\n")
 	used := len(ctxLines) + 2 + len(foot)
 	if len(lower) > 0 {
 		used += len(lower) + 1
 	}
 	n.room = max(n.height-used, 3)
-	n.scroll = min(n.scroll, max(len(body)-n.room, 0))
-	shown := body[n.scroll:min(n.scroll+n.room, len(body))]
-	if n.scroll > 0 {
-		shown = append([]string{tui.Dim("↑ more above")}, shown[1:]...)
-	}
-	if n.scroll+n.room < len(body) {
-		shown = append(shown[:len(shown)-1], tui.Dim("↓ more below · space scrolls"))
+	var shown []string
+	if rv := n.reviews[it.row.goal.Name]; it.kind == itemReview && rv != nil {
+		rv.SetSize(w, n.room)
+		shown = strings.Split(strings.TrimRight(rv.Render(), "\n"), "\n")
+	} else {
+		body := strings.Split(ansi.Wordwrap(strings.TrimSpace(n.bodyText(*it)), w, ""), "\n")
+		n.scroll = min(n.scroll, max(len(body)-n.room, 0))
+		shown = body[n.scroll:min(n.scroll+n.room, len(body))]
+		if n.scroll > 0 {
+			shown = append([]string{tui.Dim("↑ more above")}, shown[1:]...)
+		}
+		if n.scroll+n.room < len(body) {
+			shown = append(shown[:len(shown)-1], tui.Dim("↓ more below · space scrolls"))
+		}
 	}
 
 	var out []string
@@ -523,9 +584,8 @@ func (n *Next) bodyText(it item) string {
 	case itemFinish:
 		return n.finishText(it)
 	}
-	return fmt.Sprintf("%d hunks of %s's commits wait for your review. Review them in the "+
-		"workspace's review pane, or with `diatom review -goal %s`, until review comes to this window.",
-		it.row.toReview, it.row.goal.Name, it.row.goal.Name)
+	return fmt.Sprintf("%d hunks of %s's commits wait for your review.", it.row.toReview,
+		it.row.goal.Name)
 }
 
 // finishText is what finishing a goal lands, and what it lets start.

@@ -52,6 +52,9 @@ type Model struct {
 	history []review.Event
 	back    int
 
+	// embedded is set while the reviewer is part of diatom's window.
+	embedded bool
+
 	width, height int
 	flash         string
 	err           error
@@ -210,7 +213,11 @@ func (m *Model) updateEditing(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 func (m *Model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	m.flash = ""
-	switch msg.String() {
+	k := msg.String()
+	if m.embedded && (k == "q" || k == "ctrl+c" || k == "tab" || k == "shift+tab") {
+		return m, nil
+	}
+	switch k {
 	case "q", "ctrl+c":
 		return m, tea.Quit
 	case "j", "down":

@@ -708,12 +708,12 @@ func TestStatusEndsAndLandsAGoal(t *testing.T) {
 	press(t, s, "D")
 	out := s.render()
 	if g, _ := f.store.Goal("set"); g.State != queue.GoalDone ||
-		!strings.Contains(out, "laid out as 1 pull request, not landed yet · F open PRs · U push") {
+		!strings.Contains(out, "laid out as 1 pull request, not landed yet · F open PRs · P push") {
 		t.Fatalf("after two D, goal is %s: %v\n%s", g.State, s.err, out)
 	}
 
-	press(t, s, "U")
-	press(t, s, "U")
+	press(t, s, "P")
+	press(t, s, "P")
 	if tip, err := bare.RevParse(ctx, "main"); err != nil || s.err != nil ||
 		!strings.Contains(s.render(), "pushed, waiting to show up on origin/main") {
 		t.Errorf("after two U: main upstream %s, %v, %v\n%s", tip, err, s.err, s.render())

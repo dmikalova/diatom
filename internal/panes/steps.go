@@ -26,7 +26,10 @@ type taskView struct {
 	questions []*queue.Question
 	sessions  []*sessionView
 	sel, top  int
-	open      *sessionView
+	// read is how many lines past the last session have been scrolled into
+	// view, to read the task's text.
+	read int
+	open *sessionView
 }
 
 // sessionView is one session of a task: how it went, and its steps.
@@ -206,7 +209,7 @@ func (sv *sessionView) running() bool { return !sv.ended && !sv.settled }
 
 // keep carries what was selected and opened in old over to the reread tv.
 func (tv *taskView) keep(old *taskView) {
-	tv.sel, tv.top = old.sel, old.top
+	tv.sel, tv.top, tv.read = old.sel, old.top, old.read
 	// New sessions come first, so the one selected moves down.
 	if len(tv.sessions) > len(old.sessions) && len(old.sessions) > 0 {
 		tv.sel += len(tv.sessions) - len(old.sessions)
@@ -239,12 +242,24 @@ func (tv *taskView) update(s *Status, key string) bool {
 		return false
 	}
 	switch key {
-	case "esc", "left", "h":
+	case "esc", "left":
 		return true
 	case "j", "down":
-		tv.sel = min(tv.sel+1, max(len(tv.sessions)-1, 0))
+		if tv.sel < len(tv.sessions)-1 {
+			tv.sel++
+		} else {
+			tv.read++
+		}
 	case "k", "up":
-		tv.sel = max(tv.sel-1, 0)
+		if tv.read > 0 {
+			tv.read--
+		} else {
+			tv.sel = max(tv.sel-1, 0)
+		}
+	case "pgdown":
+		tv.read += 10
+	case "pgup":
+		tv.read = max(tv.read-10, 0)
 	case "enter", "space", " ", "right", "l":
 		if tv.sel < len(tv.sessions) {
 			tv.open = tv.sessions[tv.sel]
@@ -259,7 +274,7 @@ func (tv *taskView) update(s *Status, key string) bool {
 func (sv *sessionView) update(key string) bool {
 	if sv.open >= 0 {
 		switch key {
-		case "esc", "left", "h":
+		case "esc", "left":
 			sv.open = -1
 		case "j", "down":
 			sv.scroll++
@@ -273,7 +288,7 @@ func (sv *sessionView) update(key string) bool {
 		return false
 	}
 	switch key {
-	case "esc", "left", "h":
+	case "esc", "left":
 		return true
 	case "j", "down":
 		sv.sel = min(sv.sel+1, max(len(sv.steps)-1, 0))
@@ -355,7 +370,10 @@ func (tv *taskView) render(s *Status, room int) string {
 		lines = append(lines, "", tui.Dim("─── task"))
 		lines = append(lines, strings.Split(ansi.Wordwrap(body, max(s.width, 20), ""), "\n")...)
 	}
-	return scroll(lines, sel, sel, &tv.top, room)
+	// Past the last session, the keys scroll through the rest to read it.
+	tv.read = min(tv.read, max(len(lines)-1-sel, 0))
+	target := sel + tv.read
+	return scroll(lines, target, target, &tv.top, room)
 }
 
 // line is the session as one of a task's: whether Claude is running or how

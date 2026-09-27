@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
@@ -77,7 +78,16 @@ func (s *Status) detailRow() *goalRow {
 	return nil
 }
 
-func (s *Status) detailActions() []action { return actions(s.detailRow()) }
+// detailActions are what can be done with the goal open: its actions, and
+// reviewing it where the window can.
+func (s *Status) detailActions() []action {
+	row := s.detailRow()
+	acts := actions(row)
+	if s.openReview != nil && row != nil && !row.intake && row.toReview > 0 {
+		acts = append([]action{{"r", fmt.Sprintf("Review its %d hunks", row.toReview)}}, acts...)
+	}
+	return acts
+}
 
 // updateDetail handles keys while a goal or anything in it is open: enter or
 // space does the action or opens what is selected, a goal's keys work as in
@@ -104,7 +114,7 @@ func (s *Status) updateDetail(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		s.confirm = ""
 	}
 	switch key {
-	case "esc", "left", "h":
+	case "esc", "left":
 		s.detail = nil
 	case "j", "down":
 		d.sel = min(d.sel+1, max(len(acts)+len(d.tasks)-1, 0))
@@ -169,6 +179,11 @@ func (s *Status) renderMenu(d *detail, room int) string {
 		for i := range lines {
 			lines[i] = strings.TrimPrefix(lines[i], "    ")
 		}
+		if d := row.description; d != "" {
+			lines = append(
+				strings.Split(ansi.Wordwrap("  "+d, max(s.width, 20), ""), "\n"),
+				lines...)
+		}
 		if len(row.waiting) > 0 {
 			lines = append(
 				lines,
@@ -179,14 +194,15 @@ func (s *Status) renderMenu(d *detail, room int) string {
 		lines = append(lines, "")
 	}
 	sel := 0
-	for i, a := range actions(row) {
+	acts := s.detailActions()
+	for i, a := range acts {
 		mark := "  "
 		if i == d.sel {
 			mark, sel = tui.Color("› ", tui.Cyan), len(lines)
 		}
 		lines = append(lines, mark+tui.Color(a.key, tui.Yellow)+"  "+a.label)
 	}
-	if len(actions(row)) > 0 {
+	if len(acts) > 0 {
 		lines = append(lines, "")
 	}
 	if row != nil && row.plan != nil {
@@ -201,7 +217,7 @@ func (s *Status) renderMenu(d *detail, room int) string {
 	}
 	for i, t := range d.tasks {
 		mark := "  "
-		if len(actions(row))+i == d.sel {
+		if len(acts)+i == d.sel {
 			mark, sel = tui.Color("› ", tui.Cyan), len(lines)
 		}
 		lines = append(lines, s.taskLine(d, t, mark))

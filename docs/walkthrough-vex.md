@@ -213,7 +213,7 @@ pick **Mark it done** with `enter` twice, or press `d` twice (or run
 
 Open the goal in status and choose one from its menu:
 
-- **`U` twice pushes straight to `main`.** You've already reviewed every hunk
+- **`P` twice pushes straight to `main`.** You've already reviewed every hunk
   inside diatom, so this is the simple path for a solo repo, and vex's CI/CD
   runs on the push.
 - **`F` twice opens the stacked PRs**, one per workstream, each based on the one

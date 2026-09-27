@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -23,12 +22,9 @@ import (
 	"github.com/dmikalova/diatom/internal/update"
 )
 
-// logName is the scheduler's log in the repo's .diatom/, and logKeep how
-// big it may grow before the next start sets it aside.
-const (
-	logName = "diatom.log"
-	logKeep = 10 << 20
-)
+// logKeep is how big the scheduler's log may grow before the next start sets
+// it aside.
+const logKeep = 10 << 20
 
 // errStoppedAtOnce is a quit that didn't wait for the sessions to suspend.
 var errStoppedAtOnce = errors.New("stopped at once; git work under way may be left half done")
@@ -81,6 +77,18 @@ func cmdApp(ctx context.Context) error {
 			p.Send(panes.QuitMsg{})
 		}
 	}()
+	// A newer diatom waits for the human to restart on it, rather than
+	// restarting the window under them.
+	watch, stopWatch := context.WithCancel(context.Background())
+	defer stopWatch()
+	if exe, err := self(); err == nil {
+		go up.watch(watch, func(bin string) {
+			p.Send(panes.UpdateMsg{Bin: bin, Why: "a new release is installed"})
+		})
+		go watchBinary(watch, exe, func() {
+			p.Send(panes.UpdateMsg{Bin: exe, Why: "a new build is installed"})
+		})
+	}
 	_, err = p.Run()
 	if app.StoppedAtOnce() {
 		return errStoppedAtOnce
@@ -91,7 +99,11 @@ func cmdApp(ctx context.Context) error {
 		sched.Stop()
 		<-sched.Done
 	}
-	return errors.Join(err, sched.err)
+	if err := errors.Join(err, sched.err); err != nil || app.Restart() == "" {
+		return err
+	}
+	sched.unlock()
+	return update.Exec(app.Restart())
 }
 
 // scheduler is the scheduler cmdApp runs, and err why it stopped, once Done
@@ -147,7 +159,7 @@ func startScheduler(s *queue.Store, paths config.Paths, log *slog.Logger) (*sche
 // openLog opens the scheduler's log for appending, setting a big one aside
 // first.
 func openLog(s *queue.Store) (io.WriteCloser, error) {
-	path := filepath.Join(s.Root, logName)
+	path := panes.LogPath(s)
 	if fi, err := os.Stat(path); err == nil && fi.Size() > logKeep {
 		if err := os.Rename(path, path+".1"); err != nil {
 			return nil, err

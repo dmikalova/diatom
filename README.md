@@ -62,7 +62,14 @@ the nav's order of goals. An item shows what its goal is for above it, and
 enter there opens the goal; answering moves on to the first item left. Tab
 moves between the nav, the parts of the main pane and the intake box, and `i`
 jumps to the intake box. What you send goes with what the main pane showed, as
-a clue for triage. Quitting with `q` or ctrl+c, or closing the
+a clue for triage. Hunks are reviewed in Next, or from a goal's page.
+
+Outside a text box: `h` hides the nav, and dragging its edge resizes it; `L`
+opens the scheduler's log, as clicking the nav's footer does; `y` copies what
+has the keyboard, as cmd+c does in Ghostty with
+`keybind = performable:super+c=copy_to_clipboard`. When a new release or build
+is installed, the footer says so and `U` restarts on it. With the terminal in
+the background, a notification says when something comes to wait on you. Quitting with `q` or ctrl+c, or closing the
 terminal, suspends the running sessions, which carry on the next time diatom
 opens: nothing runs while it is closed. A second diatom on the same repo only
 views.
@@ -108,7 +115,7 @@ base branch without the merges, fixups squashed into the commits they revise,
 and split into one pull request per workstream on `diatom/<goal>/pr/<ws>`, each
 stacked on the one before. `goal finish -prs` pushes those branches and opens
 the stack with `gh`; `-push` pushes the lot straight to the base branch.
-The goal stays in the status pane, which does the same with `d`, `F` and `U`,
+The goal stays in the status pane, which does the same with `d`, `F` and `P`,
 until it is finished: `diatom run` watches the base branch on the remote and
 finishes the goal once it holds all of the goal's changes and its checks pass.
 
