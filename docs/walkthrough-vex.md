@@ -59,8 +59,10 @@ ready. The nav down the left lists:
 
 - **Next**: what waits on you, one item at a time.
 - **Intake**: what triage is sorting, and its questions.
-- **The goals**, each with a glyph for where it stands and counts of its open
-  questions (`?2`) and hunks to review (`±14`). Finished goals fold away at the
+- **The goals**, each on two lines: a glyph for where it stands and its
+  title, then the one thing about it that matters most now, such as
+  `2 questions`, `48 hunks to review` or `waits for effect-catalog`. Finished
+  goals fold away at the
   bottom.
 - **The footer**: what the work has cost, the sessions running, and anything
   wrong with the scheduler. Clicking it, or `L`, opens the scheduler's log.
@@ -101,7 +103,7 @@ comes with its plan, waiting for your sign-off; the rest are grilled first.
 Open Intake to watch triage work. Anything it can't decide comes to Next.
 
 A goal can wait for others: nothing of it runs, grilling included, until they
-are finished (step 7). The nav marks it **blocked** (`⊘`), and its page names
+are finished (step 7). The nav marks it **blocked** (🔗) with the goal it waits for, and its page names
 the goals it waits for. Its branch then starts from `main` with them landed,
 so it never overlaps them.
 

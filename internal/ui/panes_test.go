@@ -205,7 +205,7 @@ func TestNavScrolls(t *testing.T) {
 		key(a, "j")
 	}
 	out := ansi.Strip(a.render())
-	if !strings.Contains(out, "g15") || strings.Contains(out, "» Next") {
+	if !strings.Contains(out, "g15") || strings.Contains(out, "»  Next") {
 		t.Errorf("the nav after moving down 18, in 12 lines:\n%s", out)
 	}
 	lines, _ := a.navLines()
@@ -225,7 +225,8 @@ func TestGoalPageShowsWaitingGoal(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, _ := newApp(t, f)
-	if out := ansi.Strip(a.render()); !strings.Contains(out, "⊘ later") {
+	if out := ansi.Strip(a.render()); !strings.Contains(out, "🔗 later") ||
+		!strings.Contains(out, "    waits for set") {
 		t.Errorf("the nav:\n%s", out)
 	}
 	openGoal(t, a, "later")

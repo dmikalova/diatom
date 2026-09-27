@@ -720,7 +720,9 @@ func (a *App) navLines() ([]navLine, []string) {
 		if e.kind == entryGoal && (i == 0 || a.entries()[i-1].kind != entryGoal) {
 			lines = append(lines, navLine{text: "", entry: -1})
 		}
-		lines = append(lines, navLine{text: a.navEntry(i, e), entry: i})
+		for _, l := range a.navEntry(i, e) {
+			lines = append(lines, navLine{text: l, entry: i})
+		}
 	}
 	var foot []string
 	for l := range strings.SplitSeq(ansi.Wordwrap(a.footer(), a.nw()-1, ""), "\n") {
@@ -741,18 +743,22 @@ func (a *App) renderNav() string {
 	lines, foot := a.navLines()
 	box := strings.Split(strings.TrimRight(a.intake.render(), "\n"), "\n")
 	room := max(a.height-len(foot)-len(box), 1)
-	// Scrolled just enough to show the selected entry.
-	sel := 0
+	// Scrolled just enough to show the selected entry, all its lines.
+	first, last := -1, 0
 	for i, l := range lines {
 		if l.entry == a.sel {
-			sel = i
+			if first < 0 {
+				first = i
+			}
+			last = i
 		}
 	}
+	first = max(first, 0)
 	var out []string
 	for _, l := range lines {
 		out = append(out, l.text)
 	}
-	a.navTop = min(max(a.navTop, sel-room+1), sel)
+	a.navTop = min(max(a.navTop, last-room+1), first)
 	a.navTop = max(min(a.navTop, len(out)-room), 0)
 	out = out[a.navTop:min(a.navTop+room, len(out))]
 	for len(out) < room {
@@ -761,23 +767,24 @@ func (a *App) renderNav() string {
 	return strings.Join(append(append(out, foot...), box...), "\n")
 }
 
-// navEntry renders one entry: a glyph for where it stands, its name cut to
-// fit, and what waits on the human.
-func (a *App) navEntry(i int, e entry) string {
-	var glyph, name, badges string
+// navEntry renders one entry: a glyph for where it stands and its name cut
+// to fit, and for a goal or the intake, the thing about it that matters most
+// now on a line under it.
+func (a *App) navEntry(i int, e entry) []string {
+	var glyph, name, badge, under string
 	switch e.kind {
 	case entryNext:
 		glyph, name = tui.Color("»", tui.Cyan), "Next"
 		if n := len(a.next.items); n > 0 {
-			badges = tui.Color(strconv.Itoa(n), tui.Magenta)
+			badge = tui.Color(strconv.Itoa(n), tui.Magenta)
 		}
 	case entryIntake:
 		glyph, name = tui.Color("+", tui.Blue), "Intake"
 		if e.row != nil {
-			badges = a.badges(*e.row)
+			under = relevant(*e.row)
 		}
 	case entryGoal:
-		glyph, name, badges = navGlyph(*e.row), e.row.goal.Title, a.badges(*e.row)
+		glyph, name, under = navGlyph(*e.row), e.row.goal.Title, relevant(*e.row)
 		if name == "" {
 			name = e.row.goal.Name
 		}
@@ -787,45 +794,105 @@ func (a *App) navEntry(i int, e entry) string {
 			glyph = tui.Dim("▾")
 		}
 	case entryFinishedGoal:
-		glyph, name = tui.Dim(" ✓"), e.goal.Title
+		glyph, name = tui.Dim("✓"), e.goal.Title
 	}
-	room := a.nw() - 4 - ansi.StringWidth(badges)
-	if badges != "" {
+	// Glyphs take two columns, as an emoji does.
+	glyph += strings.Repeat(" ", max(2-ansi.StringWidth(glyph), 0))
+	room := a.nw() - 5 - ansi.StringWidth(badge)
+	if badge != "" {
 		room--
 	}
 	name = ansi.Truncate(name, max(room, 4), "…")
 	pad := strings.Repeat(" ", max(room-ansi.StringWidth(name), 0))
-	if badges != "" {
+	if badge != "" {
 		pad += " "
 	}
-	line := " " + glyph + " " + name + pad + badges
-	if i == a.sel {
-		if a.focus == partNav {
-			return tui.SGR(7) + ansi.Strip(line) + tui.Reset
-		}
-		return tui.Bold(line)
+	lines := []string{" " + glyph + " " + name + pad + badge}
+	if under != "" {
+		lines = append(lines, "    "+ansi.Truncate(under, max(a.nw()-5, 4), "…"))
 	}
-	return line
+	if i != a.sel {
+		return lines
+	}
+	for j, l := range lines {
+		if a.focus == partNav {
+			l = ansi.Strip(l)
+			lines[j] = tui.SGR(
+				7,
+			) + l + strings.Repeat(
+				" ",
+				max(a.nw()-ansi.StringWidth(l), 0),
+			) + tui.Reset
+		} else {
+			lines[j] = tui.Bold(l)
+		}
+	}
+	return lines
 }
 
-// badges counts what waits on the human in a goal: questions, and hunks to
-// review.
-func (a *App) badges(r goalRow) string {
-	var b []string
-	if r.questions > 0 {
-		b = append(b, tui.Color(fmt.Sprintf("?%d", r.questions), tui.Magenta))
+// relevant is the one thing about a goal that matters most now, in its
+// color: what waits on the human first, then what holds it up, then what it
+// is doing.
+func relevant(r goalRow) string {
+	if r.intake {
+		if r.counts[queue.Pending]+r.counts[queue.Active]+r.counts[queue.Blocked] == 0 {
+			return ""
+		}
+		return intakeLine(r)
 	}
-	if r.toReview > 0 {
-		b = append(b, tui.Color(fmt.Sprintf("±%d", r.toReview), tui.Yellow))
+	name, c := goalStatus(r)
+	switch {
+	case r.goal.State == queue.GoalPlanning && r.plan != nil && !r.sentBack:
+		return tui.Color("plan to sign off", tui.Green)
+	case r.questions > 0:
+		return tui.Color(count(r.questions, "question"), tui.Magenta)
+	case name == "ready to finish":
+		return tui.Color("ready to merge into "+r.goal.Base, c)
+	case r.toReview > 0:
+		return tui.Color(count(r.toReview, "hunk")+" to review", tui.Yellow)
+	case name == "blocked":
+		waits := r.waiting[0]
+		if n := len(r.waiting) - 1; n > 0 {
+			waits += fmt.Sprintf(" and %d more", n)
+		}
+		return tui.Color("waits for "+waits, c)
+	case len(r.activeWork) > 0:
+		var ws []string
+		for _, w := range r.activeWork {
+			if w == "" {
+				w = "grilling"
+			}
+			ws = append(ws, w)
+		}
+		return tui.Color("running "+strings.Join(ws, ", "), c)
+	case name == "queued":
+		return tui.Color(fmt.Sprintf("%d ready, waiting for a session", r.ready), c)
+	case r.goal.State == queue.GoalPlanning:
+		return planningLine(r)
+	case r.goal.State == queue.GoalDone:
+		return landingLine(r)
+	case r.goal.State == queue.GoalParked:
+		return tui.Color("parked", c)
 	}
-	return strings.Join(b, " ")
+	if left := r.counts[queue.Pending] + r.counts[queue.Blocked]; left > 0 {
+		return tui.Dim(count(left, "task") + " left")
+	}
+	return ""
+}
+
+// count is n of a thing, in the plural when it isn't one.
+func count(n int, thing string) string {
+	if n == 1 {
+		return "1 " + thing
+	}
+	return fmt.Sprintf("%d %ss", n, thing)
 }
 
 // navGlyph is where a goal stands, as the nav shows it.
 func navGlyph(r goalRow) string {
 	name, c := goalStatus(r)
 	g, ok := map[string]string{
-		"active": "▶", "queued": "◷", "blocked": "⊘", "reviewing": "✎", "ready to finish": "✓",
+		"active": "▶", "queued": "◷", "blocked": "🔗", "reviewing": "✎", "ready to finish": "✓",
 		"planning": "◌", "parked": "‖", "done": "✓",
 	}[name]
 	if !ok {

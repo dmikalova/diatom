@@ -15,7 +15,7 @@ func TestAppHidesAndResizesTheNav(t *testing.T) {
 	a, _ := newApp(t, f)
 	key(a, "h")
 	out := ansi.Strip(a.render())
-	if strings.Contains(out, "» Next") || a.focus != partMain {
+	if strings.Contains(out, "»  Next") || a.focus != partMain {
 		t.Errorf("h left the nav up, focus %d:\n%s", a.focus, out)
 	}
 	for i, line := range strings.Split(out, "\n") {

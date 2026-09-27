@@ -26,7 +26,8 @@ func (a *App) focusedText() (text, what string) {
 	case partIntake:
 		return a.intake.area.Value(), "the intake"
 	case partNav:
-		return ansi.Strip(strings.TrimSpace(a.navEntry(-1, a.selected()))), "the nav's line"
+		return ansi.Strip(strings.TrimSpace(strings.Join(a.navEntry(-1, a.selected()), "\n"))),
+			"the nav's line"
 	}
 	it := a.next.shown()
 	if a.selected().kind != entryNext || a.logOpen || it == nil {
