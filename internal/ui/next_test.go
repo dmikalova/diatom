@@ -1,15 +1,19 @@
 package ui
 
 import (
+	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/intake"
 	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
+	"github.com/dmikalova/diatom/internal/tui"
 )
 
 func TestNextOrdersPlansQuestionsFinishReview(t *testing.T) {
@@ -299,5 +303,56 @@ func TestNextSendsAPlanBack(t *testing.T) {
 	openGoal(t, a, "hex")
 	if out := plain(a.render()); !strings.Contains(out, "plan sent back with your changes") {
 		t.Errorf("the goal's page:\n%s", out)
+	}
+}
+
+// TestNextOpensTheNextItemOnItself pins that when the item shown goes, as a
+// goal landed from its actions does, the next opens with its body in hand,
+// though the actions had the keyboard.
+func TestNextOpensTheNextItemOnItself(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	r := git.Repo{Dir: f.repo}
+	write(t, filepath.Join(f.repo, "b.txt"), "b\n")
+	if _, err := r.StageAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	sha, err := r.Commit(ctx, "feat: b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.CreateGoal(&queue.Goal{Name: "late", State: queue.GoalActive, Base: "main",
+		Created: time.Unix(2000, 0)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.AddTask("late", &queue.Task{Title: "B", Kind: queue.Planned, Workstream: "x",
+		Commits: []string{sha}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.Answer("set", "0001", "yes", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := newApp(t, f)
+	key(a, "enter")
+	// The keyboard on an area the review has none of, as a finish item's
+	// actions leave it.
+	a.next.area = areaAnswer
+	a.next.acted()
+	bar := tui.Color("▌ ", tui.Accent)
+	if a.next.area != areaBody || !strings.Contains(a.render(), bar) {
+		t.Fatalf("area %d, no bar", a.next.area)
+	}
+	a.next.area = areaAnswer
+	a.next.cur = "gone"
+	a.next.reload()
+	if a.next.area != areaBody || a.next.shown().id() != "set 3" {
+		t.Errorf("area %d on %s", a.next.area, a.next.shown().id())
+	}
+	// The review takes the keys, and on its last hunk moves on to the next
+	// goal's, still in hand.
+	key(a, "a")
+	if a.next.shown().id() != "late 3" || a.next.area != areaBody ||
+		!strings.Contains(a.render(), bar) {
+		t.Errorf("moved to %s, area %d", a.next.shown().id(), a.next.area)
 	}
 }

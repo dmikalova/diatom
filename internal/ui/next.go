@@ -158,8 +158,15 @@ func (n *Next) reload() {
 	}
 	n.items = slices.Concat(tiers[:]...)
 	if n.shown() == nil && len(n.items) > 0 {
+		// The item shown is gone, such as a goal just landed: the next one
+		// opens on itself, as moving on does, whichever area had the
+		// keyboard.
 		n.cur = n.items[0].id()
+		n.scroll, n.confirm, n.act = 0, "", 0
+		n.area = areaBody
+		n.answer.Blur()
 	}
+	n.area = min(n.area, nextArea(n.areas()-1))
 	if it := n.shown(); it != nil && it.kind == itemReview {
 		if rv := n.reviewer(it.row.goal.Name); rv != nil {
 			rv.Refresh()
