@@ -231,7 +231,7 @@ func (a *App) show() {
 }
 
 // Init implements tea.Model.
-func (a *App) Init() tea.Cmd { return tick() }
+func (a *App) Init() tea.Cmd { return tea.Batch(tick(), tea.RequestBackgroundColor) }
 
 // Update implements tea.Model.
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -246,6 +246,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.review.Refresh()
 		}
 		return a, tea.Batch(tick(), a.notify())
+	case tea.BackgroundColorMsg:
+		// The reviewer tints the diff to suit the background.
+		reviewui.SetDark(msg.IsDark())
 	case tea.FocusMsg:
 		a.blurred = false
 	case tea.BlurMsg:
@@ -289,9 +292,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // layout sizes the parts to the window.
 func (a *App) layout() {
 	mw, h := a.mainWidth(), a.height
-	if a.review != nil {
-		a.review.SetSize(mw, h)
-	}
 	a.status.width, a.status.height = mw, h
 	a.next.width, a.next.height = mw, h
 	a.intake.width, a.intake.height = a.nw(), a.intakeHeight()
@@ -935,7 +935,9 @@ func (a *App) renderMain() string {
 		return a.renderLog(a.mainWidth(), a.height)
 	}
 	if a.review != nil {
-		return a.review.Render()
+		head := a.reviewHead()
+		a.review.SetSize(a.mainWidth(), max(a.height-len(head), 5))
+		return strings.Join(append(head, a.review.Render()), "\n")
 	}
 	e := a.selected()
 	switch e.kind {
@@ -1003,4 +1005,25 @@ func (a *App) notify() tea.Cmd {
 		body += ": " + it.row.goal.Name
 	}
 	return tea.Raw("\x1b]777;notify;diatom;" + body + "\x07")
+}
+
+// reviewHead says, above a goal's review opened from its page, what the goal
+// is and what it is for.
+func (a *App) reviewHead() []string {
+	row := a.status.pageRow()
+	if row == nil {
+		return nil
+	}
+	w := max(a.mainWidth()-2, 20)
+	title := row.goal.Title
+	if title == "" {
+		title = row.goal.Name
+	}
+	lines := []string{"‹ " + tui.Bold(title) + tui.Dim(" · "+row.goal.Name)}
+	if d := row.description; d != "" {
+		for _, l := range clipLines(d, w, 4) {
+			lines = append(lines, tui.Dim(l))
+		}
+	}
+	return append(lines, tui.Dim(strings.Repeat("─", w+2)))
 }

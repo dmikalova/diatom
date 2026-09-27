@@ -74,7 +74,7 @@ type goalRow struct {
 	// task's even share of the sessions that worked on it.
 	cost     float64
 	taskCost map[string]float64
-	// description says what the goal is for.
+	// description says what the goal is for, in a paragraph.
 	description string
 }
 
@@ -170,7 +170,7 @@ func (s *Status) row(store *queue.Store, g *queue.Goal) (goalRow, error) {
 		return row, err
 	}
 	if g.Name != queue.IntakeGoal {
-		if row.description, err = roster.Describe(store, g); err != nil {
+		if row.description, err = roster.About(store, g); err != nil {
 			return row, err
 		}
 	}

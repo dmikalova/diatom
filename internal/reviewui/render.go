@@ -29,8 +29,42 @@ const (
 var (
 	sgr    = tui.SGR
 	fgCode = tui.FG
-	bgCode = tui.BG
 )
+
+// rgb is a 24-bit color.
+type rgb [3]int
+
+// bg is the SGR codes of c as the background.
+func (c rgb) bg() []int { return []int{48, 2, c[0], c[1], c[2]} }
+
+// shades are the backgrounds of added and deleted lines, and of the words
+// changed on them, after delta's: tinted enough to tell apart, and never so
+// strong that the syntax colors drawn over them stop reading. These are the
+// only colors the reviewer doesn't take from the terminal's palette, since
+// the 16 colors have no pale greens and reds; each has a light and a dark
+// set, for the terminal's background.
+type shades struct{ add, addWord, del, delWord rgb }
+
+var (
+	lightShades = shades{
+		add: rgb{0xd0, 0xff, 0xd0}, addWord: rgb{0xa0, 0xef, 0xa0},
+		del: rgb{0xff, 0xe0, 0xe0}, delWord: rgb{0xff, 0xc0, 0xc0},
+	}
+	darkShades = shades{
+		add: rgb{0x00, 0x28, 0x00}, addWord: rgb{0x00, 0x60, 0x00},
+		del: rgb{0x3f, 0x00, 0x01}, delWord: rgb{0x90, 0x10, 0x11},
+	}
+	// shade is the set in use: light until the terminal says it is dark.
+	shade = lightShades
+)
+
+// SetDark picks the shades for a dark background, or a light one.
+func SetDark(dark bool) {
+	shade = lightShades
+	if dark {
+		shade = darkShades
+	}
+}
 
 // tokenColor maps a syntax token to a color, after Monokai: red keywords,
 // amber strings, green functions, purple constants, cyan types, gray
@@ -274,9 +308,9 @@ func markAll(cells []cell) {
 const tabWidth = 4
 
 // renderCells renders a line's content in rows of at most width columns,
-// wrapping a long line at a space where it can. Deleted lines are red
-// throughout, so they read as gone; the changed words of a changed line
-// stand out on their side's color.
+// wrapping a long line at a space where it can. An added or deleted line is
+// tinted green or red across the whole width, its changed words a shade
+// stronger, and its syntax colors kept.
 func renderCells(cells []cell, op gitdiff.LineOp, width int) []string {
 	cells = expandTabs(cells)
 	width = max(width, 1)
@@ -289,10 +323,10 @@ func renderCells(cells []cell, op gitdiff.LineOp, width int) []string {
 				break
 			}
 		}
-		rows = append(rows, paint(cells[:cut], op))
+		rows = append(rows, paint(cells[:cut], op, width))
 		cells = cells[cut:]
 	}
-	return append(rows, paint(cells, op))
+	return append(rows, paint(cells, op, width))
 }
 
 // expandTabs turns each tab into the spaces it takes, keeping its colors.
@@ -311,24 +345,32 @@ func expandTabs(cells []cell) []cell {
 	return out
 }
 
-// paint renders cells with their colors.
-func paint(cells []cell, op gitdiff.LineOp) string {
+// paint renders cells with their syntax colors, on the tint of an added or
+// deleted line, filled out to width.
+func paint(cells []cell, op gitdiff.LineOp, width int) string {
+	var line, word []int
+	switch op {
+	case gitdiff.OpAdd:
+		line, word = shade.add.bg(), shade.addWord.bg()
+	case gitdiff.OpDelete:
+		line, word = shade.del.bg(), shade.delWord.bg()
+	}
+	if len(line) > 0 {
+		// Clipped, so filling it out never writes over the row after it.
+		cells = slices.Clip(cells)
+		for range width - len(cells) {
+			cells = append(cells, cell{r: ' ', fg: noColor})
+		}
+	}
 	var b strings.Builder
 	state := ""
 	for _, c := range cells {
-		fg := c.fg
-		if op == gitdiff.OpDelete {
-			fg = red
+		codes := line
+		if c.changed && len(word) > 0 {
+			codes = word
 		}
-		var codes []int
-		if c.changed {
-			bg := green
-			if op == gitdiff.OpDelete {
-				bg = red
-			}
-			codes = append(codes, bgCode(bg), fgCode(0))
-		} else if fg != noColor {
-			codes = append(codes, fgCode(fg))
+		if c.fg != noColor {
+			codes = append(slices.Clone(codes), fgCode(c.fg))
 		}
 		want := reset
 		if len(codes) > 0 {

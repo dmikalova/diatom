@@ -60,11 +60,29 @@ func TestHighlight(t *testing.T) {
 func TestRenderCells(t *testing.T) {
 	cells := plain("a\tb")
 	cells[2].changed = true
-	out := renderCells(cells, gitdiff.OpAdd, 80)
-	if len(out) != 1 || !strings.Contains(out[0], "a   ") ||
-		!strings.Contains(out[0], sgr(bgCode(green), fgCode(0))+"b") {
+	out := renderCells(cells, gitdiff.OpAdd, 10)
+	if len(out) != 1 || !strings.Contains(out[0], sgr(shade.add.bg()...)+"a   ") ||
+		!strings.Contains(out[0], sgr(shade.addWord.bg()...)+"b") ||
+		ansi.StringWidth(out[0]) != 10 {
 		t.Errorf("renderCells = %q", out)
 	}
+	// Syntax colors stay on a deleted line's tint, and a context line isn't
+	// tinted or filled out.
+	del := highlight("x.go", []string{"func x()"})[0]
+	del[5].changed = true
+	out = renderCells(del, gitdiff.OpDelete, 20)
+	if !strings.Contains(out[0], sgr(append(shade.del.bg(), fgCode(red))...)+"func") ||
+		!strings.Contains(out[0], sgr(append(shade.delWord.bg(), fgCode(green))...)+"x") {
+		t.Errorf("a deleted line = %q", out)
+	}
+	if ctx := renderCells(plain("same"), gitdiff.OpContext, 20); ansi.StringWidth(ctx[0]) != 4 {
+		t.Errorf("a context line = %q", ctx)
+	}
+	SetDark(true)
+	if shade != darkShades {
+		t.Error("a dark terminal keeps the light shades")
+	}
+	SetDark(false)
 	// A long line wraps at a space where it can, and anywhere where it can't.
 	got := renderCells(plain("out <- chooser.ChooseOption(src)"), gitdiff.OpContext, 16)
 	var rows []string

@@ -142,7 +142,8 @@ func TestAppReviews(t *testing.T) {
 		t.Fatalf("actions = %+v", acts)
 	}
 	key(a, "enter")
-	if a.review == nil || !strings.Contains(ansi.Strip(a.render()), "ward.go") {
+	if out := ansi.Strip(a.render()); a.review == nil || !strings.Contains(out, "ward.go") ||
+		!strings.Contains(out, "‹ set · set") {
 		t.Fatalf("the review isn't open:\n%s", ansi.Strip(a.render()))
 	}
 	key(a, "esc")

@@ -67,6 +67,41 @@ func Describe(s *queue.Store, g *queue.Goal) (string, error) {
 	return description(s, g, tasks)
 }
 
+// About is what the goal is for, as the human reads it: the first paragraph
+// of its plan's summary, or of what it was started from before it has a
+// plan, in full; or its description.
+func About(s *queue.Store, g *queue.Goal) (string, error) {
+	p, err := plan.Load(s.GoalDir(g.Name))
+	if err != nil {
+		return "", err
+	}
+	if p != nil {
+		if para := paragraph(p.Summary); para != "" {
+			return para, nil
+		}
+	}
+	tasks, err := s.Tasks(g.Name)
+	if err != nil {
+		return "", err
+	}
+	for _, t := range tasks {
+		if para := paragraph(t.Body); t.Kind == queue.Grilling && para != "" {
+			return para, nil
+		}
+	}
+	return g.Description, nil
+}
+
+// paragraph is the first paragraph of text that isn't a heading, on one line.
+func paragraph(text string) string {
+	for p := range strings.SplitSeq(strings.TrimSpace(text), "\n\n") {
+		if p = strings.TrimSpace(p); p != "" && !strings.HasPrefix(p, "#") {
+			return strings.Join(strings.Fields(p), " ")
+		}
+	}
+	return ""
+}
+
 // Clip is the first paragraph of text that isn't a heading, on one line and
 // cut to a line's worth.
 func Clip(text string) string { return clip(text) }
@@ -95,14 +130,7 @@ func description(s *queue.Store, g *queue.Goal, tasks []*queue.Task) (string, er
 // clip is the first paragraph of s that isn't a heading, on one line and cut
 // to descriptionWidth.
 func clip(s string) string {
-	var para string
-	for p := range strings.SplitSeq(strings.TrimSpace(s), "\n\n") {
-		if p = strings.TrimSpace(p); p != "" && !strings.HasPrefix(p, "#") {
-			para = p
-			break
-		}
-	}
-	line := strings.Join(strings.Fields(para), " ")
+	line := paragraph(s)
 	if r := []rune(line); len(r) > descriptionWidth {
 		line = strings.TrimRight(string(r[:descriptionWidth]), " ") + "…"
 	}

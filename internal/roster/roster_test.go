@@ -89,3 +89,33 @@ func TestBriefs(t *testing.T) {
 		t.Error("Detail of an unknown goal succeeded")
 	}
 }
+
+func TestAbout(t *testing.T) {
+	s := queue.Open(t.TempDir())
+	g := &queue.Goal{Name: "set", Title: "Next set", Description: "The set after this one.",
+		State: queue.GoalPlanning}
+	if err := s.CreateGoal(g); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := About(s, g); got != "The set after this one." {
+		t.Errorf("with only a description: %q", got)
+	}
+	long := strings.Repeat("All of the cards, ", 30)
+	if err := s.AddTask("set", &queue.Task{Title: "Grill", Kind: queue.Grilling,
+		Body: "# Next set\n\n" + long + "\nplayable.\n\nMore later."}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := About(s, g); got != strings.TrimSpace(long)+" playable." {
+		t.Errorf("from the brief: %q", got)
+	}
+	if err := plan.Save(s.GoalDir("set"), &plan.Plan{
+		Summary:     "What the plan does,\nand how.\n\nThe rest.",
+		Workstreams: []queue.Workstream{{Name: "e"}},
+		Tasks:       []plan.Task{{Key: "a", Title: "A", Workstream: "e"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := About(s, g); got != "What the plan does, and how." {
+		t.Errorf("from the plan: %q", got)
+	}
+}

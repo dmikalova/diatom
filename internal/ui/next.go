@@ -82,10 +82,8 @@ type Next struct {
 	// off, and act the action selected on a goal ready to finish.
 	confirm string
 	act     int
-	// earlier counts each goal's answered questions, and described holds
-	// each goal's description, from the last reload.
-	earlier   map[string]int
-	described map[string]string
+	// earlier counts each goal's answered questions, from the last reload.
+	earlier map[string]int
 	// stats caches a diff stat by the commit it is of.
 	stats map[string]string
 	// reviews are the reviewers of the goals whose hunks Next has shown.
@@ -125,17 +123,10 @@ func NewNext(ctx context.Context, env Env, status *Status) *Next {
 // reload rebuilds the items from the status's rows, reloaded first.
 func (n *Next) reload() {
 	n.loadErr = nil
-	store := n.env.Store
 	var tiers [4][]item
-	n.earlier, n.described = map[string]int{}, map[string]string{}
+	n.earlier = map[string]int{}
 	for i := range n.status.rows {
 		r := &n.status.rows[i]
-		name := r.goal.Name
-		if !r.intake {
-			if d, err := roster.Describe(store, r.goal); err == nil {
-				n.described[name] = d
-			}
-		}
 		if r.goal.State == queue.GoalPlanning && r.plan != nil && !r.sentBack {
 			tiers[itemPlan] = append(tiers[itemPlan], item{kind: itemPlan, row: r})
 		}
@@ -544,8 +535,8 @@ func (n *Next) contextLines(it item, w int) []string {
 	} else {
 		lines = append(lines, strings.Split(ansi.Wordwrap(tui.Bold(title), w, ""), "\n")...)
 		lines = append(lines, tui.Color(state, c)+tui.Dim(" · "+name))
-		if d := n.described[name]; d != "" {
-			lines = append(lines, clipLines(d, w, 3)...)
+		if d := r.description; d != "" {
+			lines = append(lines, clipLines(d, w, aboutLines)...)
 		}
 	}
 	switch it.kind {
@@ -573,6 +564,10 @@ func (n *Next) contextLines(it item, w int) []string {
 	}
 	return append(lines, tui.Dim(more))
 }
+
+// aboutLines is how much of what a goal is for shows above an item: a
+// paragraph, and the goal's page has the rest.
+const aboutLines = 8
 
 // clipLines wraps s to w, keeping at most max lines.
 func clipLines(s string, w, most int) []string {
