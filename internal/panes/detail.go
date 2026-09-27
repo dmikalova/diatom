@@ -208,18 +208,24 @@ func (s *Status) taskLine(d *detail, t *queue.Task, mark string) string {
 	if t.Workstream != "" {
 		ws = tui.Dim("[" + t.Workstream + "] ")
 	}
-	line := fmt.Sprintf("%s%s %s %s%s", mark, stateMark(t.State), t.ID, ws, t.Title)
+	var line strings.Builder
+	fmt.Fprintf(&line, "%s%s %s %s%s", mark, stateMark(t.State), t.ID, ws, t.Title)
 	switch t.State {
 	case queue.Active:
 		if sv, _ := latestSession(s.env.Store.SessionsDir(d.goal), t.ID); sv != nil {
 			if st := sv.latest(); st != "" {
-				line += tui.Dim(" · " + oneLine(st, s.width/2))
+				line.WriteString(tui.Dim(" · " + oneLine(st, s.width/2)))
 			}
 		}
 	case queue.Blocked:
-		line += tui.Color(" · waiting on your answer", tui.Magenta)
+		line.WriteString(tui.Color(" · waiting on your answer", tui.Magenta))
 	}
-	return line
+	for _, r := range s.rows {
+		if r.goal.Name == d.goal && r.taskCost[t.ID] > 0 {
+			line.WriteString(tui.Dim(fmt.Sprintf(" · $%.2f", r.taskCost[t.ID])))
+		}
+	}
+	return line.String()
 }
 
 func stateMark(st queue.State) string {

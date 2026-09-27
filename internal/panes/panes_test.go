@@ -822,3 +822,41 @@ func TestSessionShowsDiatomWrappingUp(t *testing.T) {
 		t.Errorf("line %q, steps:\n%s", line, steps)
 	}
 }
+
+func TestStatusShowsCosts(t *testing.T) {
+	f := newFixture(t)
+	for i, c := range []struct {
+		tasks []string
+		cost  float64
+	}{{[]string{"0001"}, 1.5}, {[]string{"0001", "0002"}, 3}, {[]string{"0001"}, 0}} {
+		id := fmt.Sprintf("2026010%dT000000Z-engine", i+1)
+		dir := filepath.Join(f.store.SessionsDir("set"), id)
+		if err := session.Create(dir, session.Spec{ID: id, Tasks: c.tasks}); err != nil {
+			t.Fatal(err)
+		}
+		if c.cost == 0 {
+			continue // still running: no cost yet
+		}
+		if err := session.WriteResult(
+			dir,
+			map[string]any{"usage": map[string]any{"costUSD": c.cost}},
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.store.AddTask("set", &queue.Task{Title: "Add cards", Kind: queue.Planned,
+		Workstream: "cards"}); err != nil {
+		t.Fatal(err)
+	}
+	s := NewStatus(context.Background(), f.env)
+	s.Update(tea.WindowSizeMsg{Width: 200, Height: 30})
+	if out := ansi.Strip(s.render()); !strings.Contains(out, "1 to review · $4.50") ||
+		!strings.HasSuffix(s.View().WindowTitle, " · $4.50") {
+		t.Errorf("titled %q:\n%s", s.View().WindowTitle, out)
+	}
+	key(s, "enter")
+	out := ansi.Strip(s.render())
+	if !strings.Contains(out, "Add ward · $3.00") || !strings.Contains(out, "Add cards · $1.50") {
+		t.Errorf("goal opened:\n%s", out)
+	}
+}

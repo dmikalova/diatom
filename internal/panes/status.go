@@ -72,6 +72,10 @@ type goalRow struct {
 	// ready counts the tasks that could start now, on a workstream with no
 	// session running.
 	ready int
+	// cost is what the goal's sessions have cost so far, and taskCost each
+	// task's even share of the sessions that worked on it.
+	cost     float64
+	taskCost map[string]float64
 }
 
 // Status shows every goal in the repo, the intake triage is sorting, and the
@@ -85,6 +89,8 @@ type Status struct {
 
 	// hunks caches each commit's hunk count; commits never change.
 	hunks map[string]int
+	// costs caches what each settled session cost, by its directory.
+	costs map[string]sessionCost
 
 	// confirm names the key and goal a first press asked to confirm, such
 	// as a sign-off.
@@ -113,7 +119,10 @@ type Status struct {
 
 // NewStatus loads the status pane.
 func NewStatus(ctx context.Context, env Env) *Status {
-	s := &Status{ctx: ctx, env: env, hunks: map[string]int{}, width: 80, height: 24}
+	s := &Status{
+		ctx: ctx, env: env, hunks: map[string]int{}, costs: map[string]sessionCost{},
+		width: 80, height: 24,
+	}
 	s.reload()
 	return s
 }
@@ -227,6 +236,7 @@ func (s *Status) row(store *queue.Store, g *queue.Goal) (goalRow, error) {
 	}
 	slices.Sort(row.activeWork)
 	row.activeWork = slices.Compact(row.activeWork)
+	row.cost, row.taskCost = s.goalCost(store.SessionsDir(g.Name))
 	if g.State == queue.GoalActive && len(row.waiting) == 0 {
 		for _, t := range schedule.Ready(tasks) {
 			if !slices.Contains(row.activeWork, t.Workstream) {
@@ -235,6 +245,48 @@ func (s *Status) row(store *queue.Store, g *queue.Goal) (goalRow, error) {
 		}
 	}
 	return row, nil
+}
+
+// sessionCost is what one session cost and the tasks it worked on.
+type sessionCost struct {
+	usd   float64
+	tasks []string
+}
+
+// goalCost adds up what the sessions in root have cost, in all and for each
+// task: a session's cost is shared evenly among its tasks. A session still
+// running has no cost yet; one stopped and resumed counts only what it cost
+// after its last start.
+func (s *Status) goalCost(root string) (float64, map[string]float64) {
+	dirs, _ := filepath.Glob(filepath.Join(root, "*"))
+	total, perTask := 0.0, map[string]float64{}
+	for _, dir := range dirs {
+		c, ok := s.costs[dir]
+		if !ok {
+			spec, err := session.Load(dir)
+			if err != nil {
+				continue
+			}
+			var res struct {
+				Usage struct {
+					CostUSD float64 `json:"costUSD"`
+				} `json:"usage"`
+			}
+			ended, err := session.ReadResult(dir, &res)
+			if err != nil || !ended {
+				continue
+			}
+			c = sessionCost{usd: res.Usage.CostUSD, tasks: spec.Tasks}
+			if st, err := session.LoadState(dir); err == nil && st.Settled {
+				s.costs[dir] = c
+			}
+		}
+		total += c.usd
+		for _, t := range c.tasks {
+			perTask[t] += c.usd / float64(len(c.tasks))
+		}
+	}
+	return total, perTask
 }
 
 // toReview counts the hunks of commits nobody has approved or rejected.
@@ -603,6 +655,13 @@ func (s *Status) View() tea.View {
 	) + " · focus " + describe(
 		s.focus,
 	)
+	total := 0.0
+	for _, r := range s.rows {
+		total += r.cost
+	}
+	if total > 0 {
+		v.WindowTitle += fmt.Sprintf(" · $%.2f", total)
+	}
 	return v
 }
 
@@ -691,7 +750,11 @@ func (s *Status) renderRow(b *strings.Builder, i int, r goalRow) {
 		mark = tui.Color("› ", tui.Cyan)
 	}
 	if r.intake {
-		fmt.Fprintf(b, "%s  %s %s\n", mark, tui.Bold("intake"), intakeLine(r))
+		cost := ""
+		if r.cost > 0 {
+			cost = tui.Dim(fmt.Sprintf(" · $%.2f", r.cost))
+		}
+		fmt.Fprintf(b, "%s  %s %s%s\n", mark, tui.Bold("intake"), intakeLine(r), cost)
 		s.renderActive(b, r)
 		return
 	}
@@ -720,6 +783,9 @@ func (s *Status) renderRow(b *strings.Builder, i int, r goalRow) {
 	}
 	if r.toReview > 0 {
 		b.WriteString(" · " + tui.Color(fmt.Sprintf("%d to review", r.toReview), tui.Yellow))
+	}
+	if r.cost > 0 {
+		b.WriteString(tui.Dim(fmt.Sprintf(" · $%.2f", r.cost)))
 	}
 	b.WriteString("\n")
 	if len(r.waiting) > 0 {
