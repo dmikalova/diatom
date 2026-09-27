@@ -17,7 +17,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/dmikalova/diatom/internal/commitmsg"
 	"github.com/dmikalova/diatom/internal/config"
 	"github.com/dmikalova/diatom/internal/finish"
 	"github.com/dmikalova/diatom/internal/gate"
@@ -42,9 +41,11 @@ type Env struct {
 	Store *queue.Store
 	Paths config.Paths
 	Now   func() time.Time
-	// Runner writes the message of a goal landing as one commit; nil makes
-	// a plain one.
+	// Runner runs the agent that settles a landing's conflicts, and Exe is
+	// diatom, for the hooks it runs with; a nil Runner leaves such conflicts
+	// unsettled.
 	Runner runner.Runner
+	Exe    string
 }
 
 type tickMsg struct{}
@@ -338,18 +339,89 @@ func (s *Status) toReview(store *queue.Store, goal string, commits []string) (in
 	return total, nil
 }
 
+// resolveProfile is the profile of the agent settling a landing's
+// conflicts: work that needs judgement, but not the most.
+const resolveProfile = "mechanical"
+
+// resolveConflict has an agent settle the conflicts rebasing a goal's commit
+// left in dir, telling log what it does.
+func resolveConflict(
+	ctx context.Context,
+	run runner.Runner,
+	profile config.Profile,
+	cfg *config.Config,
+	exe string,
+	g *queue.Goal,
+	dir string,
+	c finish.Conflict,
+	log io.Writer,
+) error {
+	prompt := fmt.Sprintf(
+		`You are settling a merge conflict. diatom is rebasing the commits of the goal %q onto
+%s, which changed the same code while the goal ran. Git applied commit %s, %q, onto %s's
+tip and left these files conflicted, with the cherry-pick in progress in your working
+directory:
+
+- %s
+
+Resolve every conflict in these files so that both sides survive: nothing %s changed may be
+lost, and the commit's own change must still be made. Keep to what this commit changes;
+don't bring in what later commits of the goal do. When one side deleted a file the other
+changed, decide from what each side meant.
+
+How the goal as a whole was reconciled with %s, as the human reviewed it, is on %s: read
+it with `+"`git show %s:<path>`"+` as a guide, not a copy.
+
+Leave no conflict markers. Only edit files: diatom stages and commits the result, and git
+commands that change the repository are blocked. End once every file is resolved.`,
+		g.Title,
+		g.Base,
+		tui.Short(c.Commit),
+		c.Subject,
+		g.Base,
+		strings.Join(c.Files, "\n- "),
+		g.Base,
+		g.Base,
+		c.Integration,
+		c.Integration,
+	)
+	spec := runner.Spec{
+		Dir:            dir,
+		Prompt:         prompt,
+		Profile:        profile,
+		CommandTimeout: cfg.CommandTimeout,
+	}
+	if exe != "" {
+		spec.Hooks.PreToolUse = exe + " hook pre-tool-use"
+	}
+	res, err := run.Run(ctx, spec, func(e runner.Event) {
+		if e.Summary != "" {
+			_, _ = fmt.Fprintln(log, "  "+e.Summary)
+		}
+	})
+	if err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(log, "  the agent %s, $%.2f\n", res.Outcome, res.Usage.CostUSD)
+	if res.Outcome != runner.Completed {
+		return fmt.Errorf("the agent settling %s ended %s", tui.Short(c.Commit), res.Outcome)
+	}
+	return nil
+}
+
 // gateLines is how much of a failing gate's output shows under the notice.
 const gateLines = 20
 
 // prepare returns the goal's commits ready to land, building them again
-// when the goal's branches have moved since, or they failed the gate. A goal
-// squashed into one commit gets its message from the commit-message profile,
-// as the agents' commits do.
+// when the goal's branches have moved since, or they failed the gate. When
+// the base changed the goal's own code, an agent settles each conflict git
+// leaves in rebasing the commits onto it.
 func prepare(
 	ctx context.Context,
 	s *queue.Store,
 	paths config.Paths,
 	run runner.Runner,
+	exe string,
 	g *queue.Goal,
 	log io.Writer,
 ) (*finish.Result, error) {
@@ -363,15 +435,12 @@ func prepare(
 	}
 	opts := finish.Options{Gate: cfg.Gate, Timeout: cfg.GateTimeout, Progress: log}
 	if run != nil {
-		profile, err := cfg.Profile("commit-message")
+		profile, err := cfg.Profile(resolveProfile)
 		if err != nil {
 			return nil, err
 		}
-		gen := commitmsg.Generator{Runner: run, Profile: profile, Check: cfg.CommitCheck}
-		opts.Message = func(ctx context.Context, stat, diff string, subjects []string) (string, error) {
-			msg, _, err := gen.Generate(ctx, commitmsg.Input{Dir: s.Repo(), Stat: stat, Diff: diff,
-				Titles: subjects})
-			return msg, err
+		opts.Resolve = func(ctx context.Context, dir string, c finish.Conflict) error {
+			return resolveConflict(ctx, run, profile, cfg, exe, g, dir, c, log)
 		}
 	}
 	return finish.Build(ctx, s, g, opts)
@@ -530,9 +599,10 @@ func (s *Status) finishKey(row *goalRow, key string) tea.Cmd {
 		return nil
 	}
 	s.busy, s.busyGoal, s.logGoal, s.log = what, g.Name, g.Name, &jobLog{}
-	store, paths, run, ctx, log := queue.Open(row.repo), s.env.Paths, s.env.Runner, s.ctx, s.log
+	store, paths, run, exe, ctx, log := queue.Open(row.repo), s.env.Paths, s.env.Runner, s.env.Exe,
+		s.ctx, s.log
 	return tea.Batch(func() tea.Msg {
-		flash, err := runFinish(ctx, store, paths, run, g, key, log)
+		flash, err := runFinish(ctx, store, paths, run, exe, g, key, log)
 		return jobMsg{flash: flash, err: err}
 	}, jobTick())
 }
@@ -576,6 +646,7 @@ func runFinish(
 	s *queue.Store,
 	paths config.Paths,
 	run runner.Runner,
+	exe string,
 	g *queue.Goal,
 	key string,
 	log io.Writer,
@@ -603,7 +674,7 @@ func runFinish(
 			return "", err
 		}
 	}
-	res, err := prepare(ctx, s, paths, run, g, log)
+	res, err := prepare(ctx, s, paths, run, exe, g, log)
 	if err != nil {
 		if wasActive {
 			// Nothing is ready to land, so the goal isn't done after all.

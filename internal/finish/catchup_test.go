@@ -3,11 +3,14 @@ package finish
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/dmikalova/diatom/internal/gate"
+	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/queue"
 )
 
@@ -93,70 +96,109 @@ func TestBuildRebasesOntoAConflictingBase(t *testing.T) {
 	f.git("commit", "--quiet", "--no-edit")
 	f.git("checkout", "--quiet", "main")
 
+	// Git alone can't put the commits on main's tip.
+	if _, err := Build(f.ctx, f.store, f.goal, Options{}); !errors.As(err, new(*ConflictError)) {
+		t.Fatalf("without a resolver, Build = %v", err)
+	}
+	// With one, it settles each conflict git leaves, in the replay.
 	var progress strings.Builder
-	res := f.build(Options{Progress: &progress})
-	if !res.Rebased || res.Squashed || !res.Carried || len(res.Stack) != 2 {
-		t.Fatalf("laid out as %+v", res)
+	var settled []Conflict
+	res := f.build(
+		Options{
+			Progress: &progress,
+			Resolve: func(_ context.Context, dir string, c Conflict) error {
+				settled = append(settled, c)
+				if head, _ := (git.Repo{Dir: dir}).Run(
+					f.ctx,
+					"rev-parse",
+					"CHERRY_PICK_HEAD",
+				); head != c.Commit {
+					t.Errorf("settling %s with %q picked", c.Commit, head)
+				}
+				return os.WriteFile(
+					filepath.Join(dir, "engine.txt"),
+					[]byte("ward, not ward\n"),
+					0o644,
+				)
+			},
+		},
+	)
+	if !res.Rebased || len(settled) != 1 || settled[0].Subject != "feat: add ward" ||
+		strings.Join(settled[0].Files, ",") != "engine.txt" ||
+		settled[0].Integration != f.goal.IntegrationBranch() {
+		t.Fatalf("laid out as %+v, settling %+v", res, settled)
 	}
 	tip := res.Tip()
-	// The goal's own commits, on main's tip with no merge, then the reviewed
-	// resolution.
 	if merges := f.git("rev-list", "--merges", "main.."+tip); merges != "" {
 		t.Errorf("merges on the way: %s", merges)
 	}
 	if ok, _ := f.repo.IsAncestor(f.ctx, "main", tip); !ok {
 		t.Error("the commits aren't on main's tip")
 	}
-	want := []string{
-		"feat: add ward",
-		"feat: add warden",
-		"fix: keep the reviewed resolution of main's changes",
-	}
-	if got := f.subjects(tip); strings.Join(got[len(got)-3:], "|") != strings.Join(want, "|") {
-		t.Errorf("subjects = %v", got)
+	// The agent settled it as the reviewed merge did, so nothing is carried.
+	if got := f.subjects(
+		tip,
+	); strings.Join(
+		got[len(got)-2:],
+		"|",
+	) != "feat: add ward|feat: add warden" ||
+		res.Carried {
+		t.Errorf("subjects = %v, carried %v", got, res.Carried)
 	}
 	if !f.sameTree(tip, f.goal.IntegrationBranch()) {
-		t.Error("the tip doesn't hold the reviewed resolution")
+		t.Error("the tip isn't the reviewed merge")
 	}
-	if !strings.Contains(progress.String(), "rebasing them onto it") {
+	if !strings.Contains(progress.String(), "an agent settling each conflict") ||
+		!strings.Contains(progress.String(), "Settling") {
 		t.Errorf("progress:\n%s", progress.String())
 	}
 }
 
-func TestBuildRebasesWhatNoLineSettles(t *testing.T) {
+func TestBuildRebaseNeedsItsConflictsSettled(t *testing.T) {
 	f := newFixture(t)
-	// main and the goal both have engine.txt; the goal changes it, and main
-	// deletes it.
-	f.git("checkout", "--quiet", "main")
-	f.write("engine.txt", "v0\n")
-	f.commitAll("feat: add the engine")
-	f.on("")
-	f.git("merge", "--quiet", "--no-edit", "main")
-	f.git("checkout", "--quiet", "main")
 	f.task("engine", f.work("engine", "engine.txt", "ward\n", "feat: add ward"))
+	f.task("cards", f.work("cards", "cards.txt", "warden\n", "feat: add warden"))
+	// main changes the goal's own file, and the catch-up's resolution lands
+	// on the integration branch, as an agent's would.
 	f.git("checkout", "--quiet", "main")
-	f.git("rm", "--quiet", "engine.txt")
-	f.git("commit", "--quiet", "-m", "refactor: drop the engine")
+	f.write("engine.txt", "not ward\n")
+	f.commitAll("feat: something else")
 	f.on("")
 	if _, err := f.repo.Run(f.ctx, "merge", "--no-edit", "main"); err == nil {
 		t.Fatal("the merge didn't conflict")
 	}
-	f.write("engine.txt", "ward\n")
+	f.write("engine.txt", "ward, not ward\n")
 	f.git("add", "-A")
 	f.git("commit", "--quiet", "--no-edit")
 	f.git("checkout", "--quiet", "main")
 
-	// No line settles a file changed on one side and deleted on the other:
-	// the rebase takes it as the reviewed resolution has it.
-	res := f.build(Options{})
-	if !res.Rebased || res.Squashed || len(res.Stack) != 1 {
+	// An agent leaving a conflict marker fails the landing.
+	_, err := Build(
+		f.ctx,
+		f.store,
+		f.goal,
+		Options{Resolve: func(context.Context, string, Conflict) error {
+			return nil
+		}},
+	)
+	if err == nil || !strings.Contains(err.Error(), "conflict markers are left") {
+		t.Errorf("an unsettled conflict = %v", err)
+	}
+	// One settling it differently from the reviewed merge gets a last commit
+	// matching the merge.
+	res := f.build(Options{Resolve: func(_ context.Context, dir string, _ Conflict) error {
+		return os.WriteFile(filepath.Join(dir, "engine.txt"), []byte("ward\n"), 0o644)
+	}})
+	if !res.Rebased || !res.Carried {
 		t.Fatalf("laid out as %+v", res)
 	}
-	if got := f.subjects(res.Tip()); got[len(got)-1] != "feat: add ward" {
+	if got := f.subjects(
+		res.Tip(),
+	); got[len(got)-1] != "fix: match the reviewed merge of main's changes" {
 		t.Errorf("subjects = %v", got)
 	}
 	if !f.sameTree(res.Tip(), f.goal.IntegrationBranch()) {
-		t.Error("the tip doesn't hold the reviewed resolution")
+		t.Error("the tip isn't the reviewed merge")
 	}
 }
 

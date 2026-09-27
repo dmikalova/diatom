@@ -214,10 +214,11 @@ to review. Once they're reviewed, the goal is ready to finish again.
 Then diatom replays the goal's commits onto `main` without the merge commits,
 with each fixup squashed into its target, runs the gate on each PR's tip, and
 lands it. When `main` changed the goal's own code, the commits are rebased
-onto `main`'s tip instead: conflicting lines go the goal's way, a file no line
-settles is taken as the reviewed resolution has it, and a last commit, if
-needed, sets the files to exactly that resolution, so `main`'s history stays
-linear and every commit on it is signed. While it lands, the goal's page shows each step and the
+onto `main`'s tip instead: git merges what it can, and an agent settles each
+conflict git leaves, keeping both `main`'s change and the commit's, with the
+merge you reviewed as its guide. If the result differs from that merge, a last
+commit brings it there, so `main`'s history stays linear and every commit on
+it is signed. The page's log shows each conflict as the agent settles it. While it lands, the goal's page shows each step and the
 gate's output as they come, with nothing else offered, and Next moves on to
 the next thing. A landing that fails leaves the goal active, with
 the reason on screen. If the workstreams can't be put in stack order, you get one PR, and

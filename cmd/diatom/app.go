@@ -65,7 +65,11 @@ func cmdApp(ctx context.Context) error {
 		return err
 	}
 	defer sched.unlock()
-	env := ui.Env{Store: s, Paths: paths, Now: time.Now, Runner: claude.Runner{}}
+	exe, err := self()
+	if err != nil {
+		return err
+	}
+	env := ui.Env{Store: s, Paths: paths, Now: time.Now, Runner: claude.Runner{}, Exe: exe}
 	app := ui.NewApp(ctx, env, sched.Scheduler)
 	p := tea.NewProgram(app, tea.WithoutSignalHandler())
 	sigs := make(chan os.Signal, 1)

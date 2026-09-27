@@ -105,10 +105,11 @@ conflicts, an agent resolves it and the resolution comes back for review before
 the goal can land. The goal's commits are then replayed onto the base branch's
 tip on `diatom/<goal>/final`, without the merges and with fixups squashed into
 the commits they revise. When the base changed the goal's own code, so the
-commits no longer apply on its tip as they are, they're rebased onto it: each
-conflicting line is resolved the goal's way, a file no line settles is taken as
-the reviewed resolution has it, and a last commit, if one is needed, sets the
-files to exactly that resolution. The base's history stays linear. A saved
+commits no longer apply on its tip as they are, they're rebased onto it: git
+merges what it can, and an agent on the mechanical profile settles each
+conflict git leaves, keeping both the base's change and the commit's. If the
+result differs from the merge you reviewed, a last commit brings it to that
+merge. The base's history stays linear. A saved
 landing with a merge or an unsigned commit is never reused. Every commit diatom makes is signed when
 `commit.gpgSign` is set. While a goal lands, its page shows each step and the
 gate's output as they come, with nothing else offered, and Next moves on. A landing that fails leaves the goal active. One whose commits fail the gate
