@@ -10,7 +10,7 @@ New work doesn't always come as a well-formed goal. After a playtest, the human 
 
 **Everything the human sends is an intake, and every intake goes to triage: an agent that sorts it into the repo's goals.** The human has two channels. Intake is how they send the agents anything to sort out. Questions are how the agents come back to them, from triage and from tasks alike.
 
-- **Every intake has a triage task**, whether it was typed into the intake box or left as a comment while approving a hunk. What the window showed when it was sent goes with it, the goal and a short excerpt, as a clue to where it belongs, not a rule: an idea can come to the human while they answer a question about something else. Triage tasks live in a hidden goal of the repo's own, which holds their questions too.
+- **Every intake has a triage task**, whether it was typed into the intake box or left as a comment while approving a hunk. What the window showed when it was sent goes with it, the goal and a short excerpt, as a clue to where it belongs, not a rule: an idea can come to the human while they answer a question about something else. Triage tasks live in a hidden goal of the repo's own, which holds their questions too. A comment on an approved hunk holds its goal's landing until triage has sorted it, since triage may add work to that goal.
 - **Triage reads the repo and all of its goals, and sorts the intake into any of:**
   - tasks on the workstreams of any active or parked goal
   - feedback for a goal still in planning: a plan waiting for sign-off is set aside, and grilling starts another round with it

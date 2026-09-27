@@ -356,3 +356,43 @@ func TestNextOpensTheNextItemOnItself(t *testing.T) {
 		t.Errorf("moved to %s, area %d", a.next.shown().id(), a.next.area)
 	}
 }
+
+// TestReviewNotesHoldTheLanding pins that a goal whose approved hunks carried
+// comments isn't offered to land until triage has sorted them: they may
+// bring it more work.
+func TestReviewNotesHoldTheLanding(t *testing.T) {
+	f := newFixture(t)
+	for _, in := range []intake.Intake{
+		{Source: "review", Goal: "set", Created: time.Unix(10, 0), Text: "check the shark"},
+		{Source: "pane", Goal: "set", Created: time.Unix(11, 0), Text: "just a hint"},
+	} {
+		if _, err := intake.Write(intake.Dir(f.repo), in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a, _ := newApp(t, f)
+	var row goalRow
+	for _, r := range a.status.rows {
+		if r.goal.Name == "set" {
+			row = r
+		}
+	}
+	if row.notes != 1 {
+		t.Fatalf("notes = %d, want only the review's", row.notes)
+	}
+	row.counts = map[queue.State]int{queue.Done: 1}
+	row.questions, row.toReview, row.ready, row.activeWork = 0, 0, 0, nil
+	if name, _ := goalStatus(row); name != "reviewing" || readyToFinish(row) ||
+		plain(relevant(row)) != "triage is sorting your review notes" {
+		t.Errorf("status %q, ready %v, %q", name, readyToFinish(row), plain(relevant(row)))
+	}
+	row.notes = 0
+	if !readyToFinish(row) {
+		t.Error("sorted, it isn't ready to finish")
+	}
+	row.goal = &queue.Goal{Name: "set", State: queue.GoalDone}
+	row.notes = 1
+	if readyToFinish(row) {
+		t.Error("a done goal with notes is ready to land")
+	}
+}

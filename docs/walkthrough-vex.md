@@ -212,7 +212,8 @@ cd ../vex-check && mage web
 
 ## 6. Land a goal
 
-Once every task is done and every hunk reviewed, the goal comes up in Next,
+Once every task is done, every hunk reviewed, and triage has sorted any
+comments you left on hunks you approved, the goal comes up in Next,
 with what it changes and the goals waiting for it. Choose one, with `enter`
 twice or its key twice:
 

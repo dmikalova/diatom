@@ -1062,6 +1062,8 @@ func relevant(r goalRow) string {
 		return tui.Color("ready to merge into "+r.goal.Base, c)
 	case r.toReview > 0:
 		return tui.Color(count(r.toReview, "hunk")+" to review", tui.Yellow)
+	case r.notes > 0:
+		return tui.Color("triage is sorting your review notes", tui.Cyan)
 	case name == "blocked":
 		// The goal's page names what it waits for.
 		return tui.Color("blocked", c)

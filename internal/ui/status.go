@@ -72,6 +72,10 @@ type goalRow struct {
 	counts    map[queue.State]int
 	questions int
 	toReview  int
+	// notes counts the comments on hunks of the goal the human approved,
+	// which triage hasn't sorted yet: it may add work to the goal, so they
+	// hold its landing up.
+	notes int
 	// settling are the workstreams of activeWork whose agent has ended,
 	// while diatom gates, commits and merges its work.
 	settling []string
@@ -180,6 +184,14 @@ func (s *Status) reload() {
 		s.loadErr = err
 		return
 	}
+	notes := map[string]int{}
+	if pending, err := intake.Pending(intake.Dir(store.Repo())); err == nil {
+		for _, in := range pending {
+			if in.Source == "review" {
+				notes[in.Goal]++
+			}
+		}
+	}
 	var rows []goalRow
 	// What the human sent comes first, while triage has any of it.
 	if g, err := store.Goal(queue.IntakeGoal); err == nil {
@@ -199,6 +211,7 @@ func (s *Status) reload() {
 			s.loadErr = err
 			continue
 		}
+		row.notes = notes[g.Name]
 		rows = append(rows, row)
 	}
 	s.rows = rows
@@ -1090,7 +1103,7 @@ func goalStatus(r goalRow) (string, int) {
 	switch {
 	case r.ready > 0:
 		return "queued", tui.Yellow
-	case left == 0 && r.counts[queue.Done] > 0 && r.toReview > 0:
+	case left == 0 && r.counts[queue.Done] > 0 && (r.toReview > 0 || r.notes > 0):
 		return "reviewing", tui.Cyan
 	case left == 0 && r.counts[queue.Done] > 0:
 		return "ready to finish", tui.Magenta

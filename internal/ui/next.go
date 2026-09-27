@@ -224,7 +224,8 @@ func (n *Next) questions(r *goalRow) []item {
 // readyToFinish reports whether a goal waits on the human to finish it: all
 // its work done and reviewed, or done but not landed.
 func readyToFinish(r goalRow) bool {
-	if r.intake {
+	if r.intake || r.notes > 0 {
+		// Triage may add work to it from the notes.
 		return false
 	}
 	if r.goal.State == queue.GoalDone {
