@@ -218,7 +218,12 @@ onto `main`'s tip instead: git merges what it can, and an agent settles each
 conflict git leaves, keeping both `main`'s change and the commit's, with the
 merge you reviewed as its guide. If the result differs from that merge, a last
 commit brings it there, so `main`'s history stays linear and every commit on
-it is signed. The page's log shows each conflict as the agent settles it. While it lands, the goal's page shows each step and the
+it is signed. The page's log shows each conflict as the agent settles it. What
+the agent changed then comes to Next for review before anything lands, just
+its edits to the files git left conflicted; rejecting a hunk has it settle
+that commit again with your comments. `P` merges into `origin/main`, then
+fast-forwards your local `main` unless it has commits of its own or your
+uncommitted changes touch what landed; nothing is stashed. While it lands, the goal's page shows each step and the
 gate's output as they come, with nothing else offered, and Next moves on to
 the next thing. A landing that fails leaves the goal active, with
 the reason on screen. If the workstreams can't be put in stack order, you get one PR, and

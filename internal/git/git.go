@@ -445,6 +445,21 @@ func (r Repo) Subject(ctx context.Context, rev string) (string, error) {
 	return r.Run(ctx, "show", "-s", "--format=%s", rev)
 }
 
+// Snapshot is the tree of the worktree's files as they are, conflict markers
+// and all, leaving the index alone.
+func (r Repo) Snapshot(ctx context.Context) (string, error) {
+	var tree string
+	err := r.withTempIndex(ctx, func(env []string) error {
+		if _, err := r.run(ctx, env, nil, "add", "--all"); err != nil {
+			return err
+		}
+		var err error
+		tree, err = r.run(ctx, env, nil, "write-tree")
+		return err
+	})
+	return tree, err
+}
+
 // NewCommit makes a commit of tree on the parents, signed as the repo's
 // commit.gpgSign asks. git commit and cherry-pick sign by that setting, but
 // commit-tree, which makes commits without a worktree, only when told to.

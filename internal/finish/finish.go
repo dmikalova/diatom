@@ -78,6 +78,9 @@ type Result struct {
 	// Unstacked says why the workstreams couldn't be put one after another,
 	// leaving the goal as one pull request in the order its commits were made.
 	Unstacked string `yaml:"unstacked,omitempty"`
+	// Settlements are how an agent settled the rebase's conflicts, each to
+	// be reviewed before the goal lands.
+	Settlements []Settlement `yaml:"settlements,omitempty"`
 	// Carried is set when the last commit carries what the goal's merges
 	// changed, and Rebased when the base moved on in the goal's own code, so
 	// the commits were rebased onto it with an agent settling each conflict.
@@ -104,6 +107,9 @@ type Options struct {
 	// Progress, when set, is told each step as it happens, and the gate's
 	// output as it comes.
 	Progress io.Writer
+	// Feedback is the human's comments on the last settlements they
+	// rejected, by the commit settled.
+	Feedback map[string]string
 	// Resolve settles a commit's conflicts that git leaves, when the base
 	// changed the goal's own code: it edits the files in dir, a replay with
 	// the commit's pick in progress, so each keeps both the base's change and
@@ -122,6 +128,19 @@ type Conflict struct {
 	// Integration is the goal's integration branch, which holds how the
 	// catch-up merged the base in, as reviewed: a guide to the resolution.
 	Integration string
+	// Feedback is what the human said, rejecting how the commit was settled
+	// last time.
+	Feedback string
+}
+
+// Settlement is how an agent settled one commit's conflicts in a landing's
+// rebase: Review is a commit whose only change is the agent's, from the files
+// as git left them to the files as it settled them, for the human to review
+// before the goal lands.
+type Settlement struct {
+	Commit  string `yaml:"commit"`
+	Subject string `yaml:"subject"`
+	Review  string `yaml:"review"`
 }
 
 // step tells opts' progress what is happening.
@@ -202,9 +221,15 @@ func Build(ctx context.Context, s *queue.Store, g *queue.Goal, opts Options) (*R
 			"each conflict git leaves", g.Base, conflict)
 		res.Unstacked = conflict.Error()
 		resolve := func(ctx context.Context, dir string, c Conflict) error {
-			c.Integration = g.IntegrationBranch()
+			c.Integration, c.Feedback = g.IntegrationBranch(), opts.Feedback[c.Commit]
 			opts.step("Settling %s %q: %s", short(c.Commit), c.Subject, strings.Join(c.Files, ", "))
-			return opts.Resolve(ctx, dir, c)
+			st, err := settlement(ctx, git.Repo{Dir: dir}, c, g.Base, func() error {
+				return opts.Resolve(ctx, dir, c)
+			})
+			if err == nil {
+				res.Settlements = append(res.Settlements, st)
+			}
+			return err
 		}
 		stack, err = replay(ctx, wt, base, arrange(commits, nil, []string{""}), resolve)
 		res.Rebased = err == nil
@@ -249,6 +274,9 @@ func Build(ctx context.Context, s *queue.Store, g *queue.Goal, opts Options) (*R
 	if err := updateBranches(ctx, repo, g, res); err != nil {
 		return nil, err
 	}
+	if err := recordSettlements(s, g, res, now(opts)); err != nil {
+		return nil, err
+	}
 	res.Built = now(opts)
 	// Where and how the goal lands outlives laying it out again.
 	if old, err := Load(s.GoalDir(g.Name)); err == nil && old != nil && old.Landing != nil {
@@ -285,6 +313,43 @@ func expectedTree(
 		)
 	}
 	return tree, err
+}
+
+// settlement runs resolve on a conflicted pick in wt, and makes the commit
+// that holds just what it changed, for review.
+func settlement(ctx context.Context, wt git.Repo, c Conflict, base string,
+	resolve func() error,
+) (Settlement, error) {
+	st := Settlement{Commit: c.Commit, Subject: c.Subject}
+	before, err := wt.Snapshot(ctx)
+	if err != nil {
+		return st, err
+	}
+	if err := resolve(); err != nil {
+		return st, err
+	}
+	after, err := wt.Snapshot(ctx)
+	if err != nil {
+		return st, err
+	}
+	head, err := wt.RevParse(ctx, "HEAD")
+	if err != nil {
+		return st, err
+	}
+	left, err := wt.NewCommit(
+		ctx,
+		before,
+		fmt.Sprintf("%s as git left it, rebased onto %s\n", c.Subject,
+			base),
+		head,
+	)
+	if err != nil {
+		return st, err
+	}
+	st.Review, err = wt.NewCommit(ctx, after, fmt.Sprintf("settle %s's conflicts with %s\n\n"+
+		"How an agent settled the conflicts git left in rebasing %s onto %s.\n", c.Subject, base,
+		short(c.Commit), base), left)
+	return st, err
 }
 
 // replayOnto replays the goal's commits onto base, one pull request per

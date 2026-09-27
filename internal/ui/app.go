@@ -741,7 +741,9 @@ func (a *App) spinOut() {
 	key := tea.KeyPressMsg{Code: code}
 	n := max(steps, -steps)
 	if nav {
-		a.sel = max(min(a.sel+steps, len(a.entries())-1), 0)
+		// A notch of the wheel sends several events, and the nav moves one
+		// entry for it, not one for each.
+		a.sel = max(min(a.sel+max(min(steps, 1), -1), len(a.entries())-1), 0)
 		a.fromNext = false
 		a.show()
 		return
@@ -939,12 +941,9 @@ func (a *App) navEntry(i int, e entry) []string {
 		}
 		return lines
 	}
-	// The selected entry is bold, with a bar down its left, bright while the
-	// nav has the keyboard.
-	bar := tui.Dim("▌")
-	if a.focus == partNav {
-		bar = tui.Color("▌", tui.Accent)
-	}
+	// The selected entry is bold, with a bar down its left: it stays lit
+	// while the main pane shows it.
+	bar := tui.Color("▌", tui.Accent)
 	for j, l := range lines {
 		lines[j] = bar + boldAll(l)
 	}

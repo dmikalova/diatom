@@ -339,6 +339,55 @@ func (s *Status) toReview(store *queue.Store, goal string, commits []string) (in
 	return total, nil
 }
 
+// reviewSettlements holds a landing back until the human has reviewed how an
+// agent settled its rebase's conflicts. A settlement they rejected is thrown
+// away with the layout, which is made again with their comments. It returns
+// a note when the goal waits on review.
+func reviewSettlements(
+	ctx context.Context,
+	s *queue.Store,
+	paths config.Paths,
+	run runner.Runner,
+	exe string,
+	g *queue.Goal,
+	res **finish.Result,
+	log io.Writer,
+) (string, error) {
+	waiting, feedback, err := finish.Settled(ctx, s, g, *res)
+	if err != nil {
+		return "", err
+	}
+	if len(feedback) > 0 {
+		_, _ = fmt.Fprintln(
+			log,
+			"You rejected how some conflicts were settled: settling them again",
+		)
+		if err := finish.SaveFeedback(s.GoalDir(g.Name), feedback); err != nil {
+			return "", err
+		}
+		if err := finish.Discard(s.GoalDir(g.Name)); err != nil {
+			return "", err
+		}
+		if *res, err = prepare(ctx, s, paths, run, exe, g, log); err != nil {
+			return "", err
+		}
+		if waiting, _, err = finish.Settled(ctx, s, g, *res); err != nil {
+			return "", err
+		}
+	}
+	if !waiting {
+		return "", nil
+	}
+	_, _ = fmt.Fprintln(log, "An agent settled conflicts: review its changes before the goal lands")
+	return fmt.Sprintf(
+		"an agent settled %s in rebasing %s onto %s: review what it changed in Next, "+
+			"then land it again",
+		count(len((*res).Settlements), "conflicted commit"),
+		g.Name,
+		g.Base,
+	), nil
+}
+
 // resolveProfile is the profile of the agent settling a landing's
 // conflicts: work that needs judgement, but not the most.
 const resolveProfile = "mechanical"
@@ -373,7 +422,7 @@ How the goal as a whole was reconciled with %s, as the human reviewed it, is on 
 it with `+"`git show %s:<path>`"+` as a guide, not a copy.
 
 Leave no conflict markers. Only edit files: diatom stages and commits the result, and git
-commands that change the repository are blocked. End once every file is resolved.`,
+commands that change the repository are blocked. End once every file is resolved.%s`,
 		g.Title,
 		g.Base,
 		tui.Short(c.Commit),
@@ -384,6 +433,7 @@ commands that change the repository are blocked. End once every file is resolved
 		g.Base,
 		c.Integration,
 		c.Integration,
+		feedbackNote(c.Feedback),
 	)
 	spec := runner.Spec{
 		Dir:            dir,
@@ -407,6 +457,15 @@ commands that change the repository are blocked. End once every file is resolved
 		return fmt.Errorf("the agent settling %s ended %s", tui.Short(c.Commit), res.Outcome)
 	}
 	return nil
+}
+
+// feedbackNote is what the human said of the last settlement, for the agent
+// settling it again.
+func feedbackNote(feedback string) string {
+	if feedback == "" {
+		return ""
+	}
+	return "\n\nThe human rejected how this commit was settled last time, saying:\n\n" + feedback
 }
 
 // gateLines is how much of a failing gate's output shows under the notice.
@@ -433,7 +492,16 @@ func prepare(
 	if err != nil {
 		return nil, err
 	}
-	opts := finish.Options{Gate: cfg.Gate, Timeout: cfg.GateTimeout, Progress: log}
+	feedback, err := finish.LoadFeedback(s.GoalDir(g.Name))
+	if err != nil {
+		return nil, err
+	}
+	opts := finish.Options{
+		Gate:     cfg.Gate,
+		Timeout:  cfg.GateTimeout,
+		Progress: log,
+		Feedback: feedback,
+	}
 	if run != nil {
 		profile, err := cfg.Profile(resolveProfile)
 		if err != nil {
@@ -683,6 +751,23 @@ func runFinish(
 		}
 		return "", err
 	}
+	if note, err := reviewSettlements(
+		ctx,
+		s,
+		paths,
+		run,
+		exe,
+		g,
+		&res,
+		log,
+	); note != "" ||
+		err != nil {
+		if wasActive || g.State == queue.GoalDone {
+			g.State = queue.GoalActive
+			err = errors.Join(err, s.SaveGoal(g))
+		}
+		return note, err
+	}
 	if failed := res.Failing(); failed != nil {
 		// Landing never forces past the gate: an agent makes it pass.
 		say("The gate fails, so it doesn't land: an agent is making it pass")
@@ -693,6 +778,9 @@ func runFinish(
 				"it pass, and it comes back to Next once it does", g.Name, g.Base),
 			fmt.Errorf("the gate on %s:\n%s", failed.Branch, gate.Tail(failed.Output, gateLines))
 	}
+	if err := finish.SaveFeedback(s.GoalDir(g.Name), nil); err != nil {
+		return "", err
+	}
 	switch key {
 	case "F":
 		say("Pushing its branches and opening its pull requests")
@@ -700,8 +788,11 @@ func runFinish(
 		return fmt.Sprintf("opened %s", strings.Join(urls, " ")), err
 	case "P":
 		say("Merging it into %s/%s", remote, g.Base)
-		_, err := finish.Land(ctx, s, g, res, finish.Push, remote, nil)
-		return fmt.Sprintf("merged %s into %s on %s", g.Name, g.Base, remote), err
+		if _, err := finish.Land(ctx, s, g, res, finish.Push, remote, nil); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("merged %s into %s on %s, and %s", g.Name, g.Base, remote,
+			finish.FollowLocal(ctx, s, g, remote, res.Tip())), nil
 	}
 	return fmt.Sprintf("%s is done, ready to land as %s", g.Name,
 		count(len(res.Stack), "pull request")), nil

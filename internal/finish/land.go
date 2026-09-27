@@ -196,3 +196,55 @@ func prName(url string) string {
 	}
 	return url
 }
+
+// FollowLocal brings the repo's own base branch up to what just landed on
+// remote, when that can't lose anything: a fast-forward, never over commits
+// of the human's own, and where the branch is checked out, never over
+// uncommitted changes to the files that landed. Nothing is stashed. It says
+// what it did, or why it left the branch for the human to pull.
+func FollowLocal(ctx context.Context, s *queue.Store, g *queue.Goal, remote, tip string) string {
+	repo := git.Repo{Dir: s.Repo()}
+	_, _ = repo.Run(ctx, "fetch", "--quiet", remote, g.Base)
+	local, err := repo.RevParse(ctx, g.Base)
+	if err != nil {
+		return "your " + g.Base + " wasn't moved: " + err.Error()
+	}
+	if ok, _ := repo.IsAncestor(ctx, local, tip); !ok {
+		return "your " + g.Base + " has commits of its own, so pull it when ready"
+	}
+	if dir := checkedOut(ctx, repo, g.Base); dir != "" {
+		if _, err := (git.Repo{Dir: dir}).Run(
+			ctx,
+			"merge",
+			"--ff-only",
+			"--quiet",
+			tip,
+		); err != nil {
+			return "your " + g.Base + " wasn't moved, since your uncommitted changes touch what landed: " +
+				"pull it when ready"
+		}
+		return "your " + g.Base + " follows"
+	}
+	if _, err := repo.Run(ctx, "update-ref", "refs/heads/"+g.Base, tip, local); err != nil {
+		return "your " + g.Base + " wasn't moved: " + err.Error()
+	}
+	return "your " + g.Base + " follows"
+}
+
+// checkedOut is the worktree with branch checked out, "" for none.
+func checkedOut(ctx context.Context, repo git.Repo, branch string) string {
+	out, err := repo.Run(ctx, "worktree", "list", "--porcelain")
+	if err != nil {
+		return ""
+	}
+	dir := ""
+	for line := range strings.SplitSeq(out, "\n") {
+		if path, ok := strings.CutPrefix(line, "worktree "); ok {
+			dir = path
+		}
+		if line == "branch refs/heads/"+branch {
+			return dir
+		}
+	}
+	return ""
+}

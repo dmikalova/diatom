@@ -332,15 +332,21 @@ func (s *Store) taskPath(goal string, state State, id string) string {
 }
 
 // AddTask assigns t the next id and writes it as pending.
-func (s *Store) AddTask(goal string, t *Task) error {
+func (s *Store) AddTask(goal string, t *Task) error { return s.addTask(goal, t, Pending) }
+
+// AddDone records a task as done from the start: work diatom did itself,
+// such as a landing's, whose commits are for review.
+func (s *Store) AddDone(goal string, t *Task) error { return s.addTask(goal, t, Done) }
+
+func (s *Store) addTask(goal string, t *Task, state State) error {
 	if t.Profile == "" {
 		t.Profile = t.Kind.DefaultProfile()
 	}
-	dir := filepath.Join(s.GoalDir(goal), "tasks", string(Pending))
+	dir := filepath.Join(s.GoalDir(goal), "tasks", string(state))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	t.State = Pending
+	t.State = state
 	return createNext(
 		filepath.Join(s.GoalDir(goal), "tasks"),
 		dir,

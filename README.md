@@ -107,9 +107,14 @@ tip on `diatom/<goal>/final`, without the merges and with fixups squashed into
 the commits they revise. When the base changed the goal's own code, so the
 commits no longer apply on its tip as they are, they're rebased onto it: git
 merges what it can, and an agent on the mechanical profile settles each
-conflict git leaves, keeping both the base's change and the commit's. If the
-result differs from the merge you reviewed, a last commit brings it to that
-merge. The base's history stays linear. A saved
+conflict git leaves, keeping both the base's change and the commit's. Before the goal
+lands, what the agent changed comes to Next for review, just its change from
+the files as git left them; rejecting a hunk settles that commit again with
+your comments. If the result differs from the merge you reviewed, a last commit
+brings it to that merge. `P` merges into the remote's base branch, then
+fast-forwards your local one when that can't lose anything: never over commits
+of your own, and never over uncommitted changes to the files that landed.
+Nothing is stashed; otherwise you pull when ready. The base's history stays linear. A saved
 landing with a merge or an unsigned commit is never reused. Every commit diatom makes is signed when
 `commit.gpgSign` is set. While a goal lands, its page shows each step and the
 gate's output as they come, with nothing else offered, and Next moves on. A landing that fails leaves the goal active. One whose commits fail the gate

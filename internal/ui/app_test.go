@@ -198,8 +198,9 @@ func TestAppGathersTheWheel(t *testing.T) {
 	if scheduled != 1 || a.dirty || a.sel != 0 {
 		t.Fatalf("spinning scheduled %d scrolls, dirty %v, moved to %d", scheduled, a.dirty, a.sel)
 	}
+	// The events of one frame are one notch, so the nav moves one entry.
 	a.Update(wheelMsg{})
-	if a.sel != 8 || !a.dirty {
+	if a.sel != 1 || !a.dirty {
 		t.Errorf("the spin scrolled to %d", a.sel)
 	}
 	a.View()
@@ -207,7 +208,7 @@ func TestAppGathersTheWheel(t *testing.T) {
 	a.Update(tea.MouseWheelMsg{X: 3, Y: 3, Button: tea.MouseWheelUp})
 	a.Update(tea.MouseWheelMsg{X: 3, Y: 3, Button: tea.MouseWheelDown})
 	a.Update(wheelMsg{})
-	if a.sel != 8 {
+	if a.sel != 1 {
 		t.Errorf("up then down moved to %d", a.sel)
 	}
 }

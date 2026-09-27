@@ -12,6 +12,7 @@ import (
 	"github.com/dmikalova/diatom/internal/gate"
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/queue"
+	"github.com/dmikalova/diatom/internal/review"
 )
 
 func TestCatchUp(t *testing.T) {
@@ -270,5 +271,140 @@ func TestALayoutThatCantLandIsMadeAgain(t *testing.T) {
 	res.Stack[len(res.Stack)-1].Tip = merge
 	if Current(f.ctx, f.store, f.goal, res) {
 		t.Error("a layout with a merge is current")
+	}
+}
+
+func TestSettlementsWaitForReview(t *testing.T) {
+	f := newFixture(t)
+	f.task("engine", f.work("engine", "engine.txt", "ward\n", "feat: add ward"))
+	f.git("checkout", "--quiet", "main")
+	f.write("engine.txt", "not ward\n")
+	f.commitAll("feat: something else")
+	f.on("")
+	if _, err := f.repo.Run(f.ctx, "merge", "--no-edit", "main"); err == nil {
+		t.Fatal("the merge didn't conflict")
+	}
+	f.write("engine.txt", "ward, not ward\n")
+	f.git("add", "-A")
+	f.git("commit", "--quiet", "--no-edit")
+	f.git("checkout", "--quiet", "main")
+
+	var feedback string
+	res := f.build(
+		Options{
+			Feedback: map[string]string{},
+			Resolve: func(_ context.Context, dir string, c Conflict) error {
+				feedback = c.Feedback
+				return os.WriteFile(
+					filepath.Join(dir, "engine.txt"),
+					[]byte("ward, not ward\n"),
+					0o644,
+				)
+			},
+		},
+	)
+	if len(res.Settlements) != 1 || feedback != "" {
+		t.Fatalf("settlements = %+v", res.Settlements)
+	}
+	// The settlement's commit holds just the agent's change: the conflict
+	// markers git left, gone.
+	st := res.Settlements[0]
+	hunks, err := review.Hunks(f.ctx, f.repo, st.Review)
+	if err != nil || len(hunks) != 1 || hunks[0].Path != "engine.txt" {
+		t.Fatalf("hunks = %+v, %v", hunks, err)
+	}
+	diff := f.git("show", "--format=", st.Review)
+	if !strings.Contains(diff, "-<<<<<<<") || !strings.Contains(diff, "+ward, not ward") {
+		t.Errorf("the settlement's change:\n%s", diff)
+	}
+	// It is up for review, on a task nothing will pick up.
+	tasks, _ := f.store.Tasks("set")
+	var landing *queue.Task
+	for _, task := range tasks {
+		if IsLanding(task) {
+			landing = task
+		}
+	}
+	if landing == nil || landing.State != queue.Done || landing.Commits[0] != st.Review {
+		t.Fatalf("the landing's task = %+v", landing)
+	}
+	if waiting, _, _ := Settled(f.ctx, f.store, f.goal, res); !waiting {
+		t.Error("an unreviewed settlement doesn't wait")
+	}
+	store := review.Store{Dir: f.store.GoalDir("set")}
+	if _, err := store.Decide(
+		hunks[0],
+		review.Reject,
+		[]review.Comment{{Text: "keep main's wording"}},
+		time.Unix(1, 0),
+	); err != nil {
+		t.Fatal(err)
+	}
+	waiting, said, _ := Settled(f.ctx, f.store, f.goal, res)
+	if waiting || !strings.Contains(said[st.Commit], "keep main's wording") {
+		t.Errorf("after rejecting: waiting %v, feedback %v", waiting, said)
+	}
+	if err := SaveFeedback(f.store.GoalDir("set"), said); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := LoadFeedback(f.store.GoalDir("set")); got[st.Commit] != said[st.Commit] {
+		t.Errorf("feedback kept = %v", got)
+	}
+	if err := SaveFeedback(f.store.GoalDir("set"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := LoadFeedback(f.store.GoalDir("set")); got != nil {
+		t.Errorf("feedback left after landing = %v", got)
+	}
+}
+
+func TestFollowLocal(t *testing.T) {
+	f := newFixture(t)
+	f.task("engine", f.work("engine", "engine.txt", "ward\n", "feat: add ward"))
+	f.git("checkout", "--quiet", "main")
+	tip := f.build(Options{}).Tip()
+	start := f.git("rev-parse", "main")
+
+	// Uncommitted changes to what landed keep main where it is.
+	f.write("engine.txt", "mine\n")
+	if note := FollowLocal(
+		f.ctx,
+		f.store,
+		f.goal,
+		"",
+		tip,
+	); !strings.Contains(
+		note,
+		"wasn't moved",
+	) ||
+		f.git("rev-parse", "main") != start {
+		t.Errorf("over uncommitted changes to what landed: %q", note)
+	}
+	f.git("checkout", "--quiet", "--", ".")
+	f.git("clean", "-fdq")
+	// Changes elsewhere stay as they were, and main follows.
+	f.write("notes.txt", "mine\n")
+	if note := FollowLocal(f.ctx, f.store, f.goal, "", tip); note != "your main follows" ||
+		f.git("rev-parse", "main") != tip {
+		t.Errorf("with other changes: %q", note)
+	}
+	if b, _ := os.ReadFile(filepath.Join(f.repo.Dir, "notes.txt")); string(b) != "mine\n" {
+		t.Error("the human's own change was lost")
+	}
+	// A main with commits of its own is left to pull.
+	f.git("reset", "--quiet", "--hard", start)
+	f.write("readme.txt", "hi\n")
+	f.commitAll("docs: a readme")
+	if note := FollowLocal(
+		f.ctx,
+		f.store,
+		f.goal,
+		"",
+		tip,
+	); !strings.Contains(
+		note,
+		"commits of its own",
+	) {
+		t.Errorf("with commits of its own: %q", note)
 	}
 }
