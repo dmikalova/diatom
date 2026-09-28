@@ -336,6 +336,12 @@ func (a *App) handle(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.saveUI()
 		}
 		if a.selecting.dragging {
+			if !a.selecting.on {
+				// A press let go where it was pressed: a click, not a
+				// selection.
+				a.selecting.dragging = false
+				return a, a.clickMain(msg.Mouse())
+			}
 			return a, a.endSelect()
 		}
 	case tea.PasteMsg:
@@ -654,26 +660,42 @@ func (a *App) mainKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			return a, a.setFocus(partNav)
 		}
-		cmd := a.status.updateDetail(msg)
-		if goal := a.status.answering; goal != "" {
-			a.status.answering = ""
-			return a, tea.Batch(cmd, a.answerFrom(goal))
-		}
-		if a.status.detail == nil {
-			// Its own way back, such as h, reached the top.
-			a.shown = ""
-			a.show()
-			if a.fromNext {
-				return a, tea.Batch(cmd, a.backToNext())
-			}
-			return a, tea.Batch(cmd, a.setFocus(partNav))
-		}
-		return a, cmd
+		return a, a.afterDetail(a.status.updateDetail(msg))
 	}
 	if back {
 		return a, a.setFocus(partNav)
 	}
 	return a, nil
+}
+
+// afterDetail follows what the goal's page asked for: answering its
+// questions, or going back once it closed itself.
+func (a *App) afterDetail(cmd tea.Cmd) tea.Cmd {
+	if goal := a.status.answering; goal != "" {
+		a.status.answering = ""
+		return tea.Batch(cmd, a.answerFrom(goal))
+	}
+	if a.status.detail == nil {
+		// Its own way back, such as h, reached the top.
+		a.shown = ""
+		a.show()
+		if a.fromNext {
+			return tea.Batch(cmd, a.backToNext())
+		}
+		return tea.Batch(cmd, a.setFocus(partNav))
+	}
+	return cmd
+}
+
+// clickMain does what a click in the main pane is on: on a goal's page, its
+// running sessions, actions and tasks, as enter would.
+func (a *App) clickMain(m tea.Mouse) tea.Cmd {
+	e := a.selected()
+	if a.review != nil || a.asking != "" || e.kind != entryGoal && e.kind != entryIntake ||
+		a.status.detail == nil {
+		return nil
+	}
+	return a.afterDetail(a.status.clickDetail(m.Y))
 }
 
 // pageReviewKey hands a key to the review opened from a goal's page, going

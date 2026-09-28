@@ -124,8 +124,9 @@ type goalRow struct {
 	// description says what the goal is for, in a paragraph.
 	description string
 	// latest is the latest step of each workstream's running session, read
-	// once a reload rather than each time the window is drawn.
-	latest map[string]string
+	// once a reload rather than each time the window is drawn, and sessions
+	// the directory of that session.
+	latest, sessions map[string]string
 }
 
 // Status is where the repo's goals, and the intake triage is sorting, stand:
@@ -278,7 +279,7 @@ func (s *Status) row(store *queue.Store, g *queue.Goal) (goalRow, error) {
 	}
 	slices.Sort(row.activeWork)
 	row.activeWork = slices.Compact(row.activeWork)
-	row.latest = map[string]string{}
+	row.latest, row.sessions = map[string]string{}, map[string]string{}
 	for _, ws := range row.activeWork {
 		name := ws
 		if name == "" {
@@ -286,7 +287,7 @@ func (s *Status) row(store *queue.Store, g *queue.Goal) (goalRow, error) {
 			name = "planning"
 		}
 		dir := newestSession(store, g.Name, name)
-		row.latest[ws] = lastEvent(dir)
+		row.latest[ws], row.sessions[ws] = lastEvent(dir), dir
 		if settling(dir) {
 			row.settling = append(row.settling, ws)
 		}
@@ -1025,8 +1026,7 @@ func scroll(lines []string, first, last int, top *int, room, w int) string {
 	return strings.Join(lines[*top:min(*top+room, len(lines))], "\n")
 }
 
-// renderRow renders one goal and what is running for it, at the head of its
-// page.
+// renderRow renders one goal at the head of its page.
 func (s *Status) renderRow(b *strings.Builder, r goalRow) {
 	mark := "  "
 	if r.intake {
@@ -1035,7 +1035,6 @@ func (s *Status) renderRow(b *strings.Builder, r goalRow) {
 			cost = tui.Dim(fmt.Sprintf(" · $%.2f", r.cost))
 		}
 		fmt.Fprintf(b, "%s  %s %s%s\n", mark, tui.Bold("intake"), intakeLine(r), cost)
-		s.renderActive(b, r)
 		return
 	}
 	fmt.Fprintf(b, "%s  %s %s\n", mark, tui.Bold(r.goal.Name), goalState(r))
@@ -1065,18 +1064,6 @@ func (s *Status) renderRow(b *strings.Builder, r goalRow) {
 	}
 	if r.goal.State == queue.GoalPlanning && len(r.waiting) == 0 {
 		b.WriteString("      " + planningLine(r) + "\n")
-	}
-	s.renderActive(b, r)
-}
-
-// renderActive shows each running session's latest step.
-func (s *Status) renderActive(b *strings.Builder, r goalRow) {
-	for _, ws := range r.activeWork {
-		name := ws
-		if ws == "" {
-			name = "planning"
-		}
-		fmt.Fprintf(b, "      %s %s\n", tui.Color("▶ "+name, tui.Green), tui.Dim(r.latest[ws]))
 	}
 }
 

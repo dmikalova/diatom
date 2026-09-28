@@ -80,8 +80,9 @@ each goal and session spent on it.
   then approve its plan there, `a` twice, or comment on it with `c`. Work the
   intake already decides skips grilling and waits for your approval.
 - **A goal's page** says where it stands and what it is for, then offers its
-  actions, its review, its plan and its tasks, each task opening to its Claude
-  sessions and their steps.
+  running sessions, each opening straight to its steps, its actions, its
+  review, its plan and its tasks, each task opening to its Claude sessions and
+  their steps. A click does what `enter` does.
 
 Tab moves between the nav, the parts of the main pane and the intake box, and
 the mouse clicks and scrolls. Outside a text box:

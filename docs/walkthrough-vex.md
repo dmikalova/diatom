@@ -165,8 +165,10 @@ something again after having nothing.
 ## 5. While the work runs
 
 A goal's page shows its task counts, open questions, hunks waiting for review,
-its cost so far, and a `▶ <workstream>` line with the latest step of any
-running session. An active goal reads **queued** while its ready work waits for
+its cost so far, and a `▶ <workstream>` line with the latest step of each
+running session. `enter` on that line opens the session's steps as they
+come, and `esc` comes back. A click on it, on an action or on a task does
+what `enter` does, and dragging selects text instead. An active goal reads **queued** while its ready work waits for
 a free session, **reviewing** once every task is done and hunks are left, and
 **ready to finish** once those are reviewed too. Its tasks open to the Claude
 sessions that worked on them, those to their steps, and those to their full

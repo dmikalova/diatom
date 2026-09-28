@@ -25,6 +25,42 @@ func hangAll(s string, w int) string {
 	return strings.Join(out, "\n")
 }
 
+// scrollRows is scroll, and what each row shown picks: pick[i] for every
+// row lines[i] wraps to.
+func scrollRows(
+	lines []string,
+	pick []int,
+	first, last int,
+	top *int,
+	room, w int,
+) (string, []int) {
+	var rows []string
+	var of []int
+	for i, l := range lines {
+		part := []string{l}
+		if ansi.StringWidth(l) > w {
+			part = tui.Hang(l, w)
+		}
+		if i == first {
+			first = len(rows)
+		}
+		for range part {
+			of = append(of, pick[i])
+		}
+		rows = append(rows, part...)
+		if i == last {
+			last = len(rows) - 1
+		}
+	}
+	if last >= *top+room {
+		*top = last - room + 1
+	}
+	*top = min(*top, first)
+	*top = max(min(*top, len(rows)-room), 0)
+	end := min(*top+room, len(rows))
+	return strings.Join(rows[*top:end], "\n"), of[*top:end]
+}
+
 // wrapLines wraps each of lines wider than w, and says where the lines
 // first and last now start and end.
 func wrapLines(lines []string, w, first, last int) (out []string, newFirst, newLast int) {

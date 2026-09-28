@@ -18,14 +18,16 @@ type detail struct {
 	goal  string
 	title string
 	tasks []*queue.Task
-	// sel runs over the goal's actions, then its tasks; top is the first
-	// line on screen.
+	// sel runs over the goal's running sessions, its actions, then its
+	// tasks; top is the first line on screen.
 	sel, top int
 	// task is the task opened; nil shows the goal.
 	task *taskView
-	// latest is the latest step of each running task's session, from the
-	// last reload.
-	latest map[string]string
+	// head is how many rows of the page come before its menu, and rows what
+	// each of the menu's rows on screen picks for sel, -1 for nothing, both
+	// from the last render, for a click to find what it is on.
+	head int
+	rows []int
 }
 
 // openDetail opens a row of the status list.
@@ -59,16 +61,7 @@ func (s *Status) reloadDetail() {
 		func(a, b *queue.Task) int { return order[a.State] - order[b.State] },
 	)
 	d.tasks = tasks
-	d.sel = min(d.sel, max(len(s.detailActions())+len(tasks)-1, 0))
-	d.latest = map[string]string{}
-	for _, t := range tasks {
-		if t.State != queue.Active {
-			continue
-		}
-		if sv, _ := latestSession(store.SessionsDir(d.goal), t.ID); sv != nil {
-			d.latest[t.ID] = sv.latest()
-		}
-	}
+	d.sel = min(d.sel, max(s.detailItems()-1, 0))
 	if d.task == nil {
 		return
 	}
@@ -79,6 +72,21 @@ func (s *Status) reloadDetail() {
 	}
 	tv.keep(d.task)
 	d.task = tv
+}
+
+// pageRunning are the workstreams of the page open with a session running,
+// "" for triage's or grilling's.
+func (s *Status) pageRunning() []string {
+	if row := s.pageRow(); row != nil {
+		return row.activeWork
+	}
+	return nil
+}
+
+// detailItems counts what the page open can select: its running sessions,
+// its actions and its tasks.
+func (s *Status) detailItems() int {
+	return len(s.pageRunning()) + len(s.detailActions()) + len(s.detail.tasks)
 }
 
 // detailRow is the status row of the goal open, nil for the intake or a
@@ -159,7 +167,6 @@ func (s *Status) updateDetail(msg tea.KeyPressMsg) tea.Cmd {
 		}
 		return nil
 	}
-	acts := s.detailActions()
 	if row := s.detailRow(); row != nil {
 		if cmd, ok := s.act(row, key); ok {
 			return cmd
@@ -172,26 +179,62 @@ func (s *Status) updateDetail(msg tea.KeyPressMsg) tea.Cmd {
 	case "esc", "left":
 		s.detail = nil
 	case "j", "down":
-		d.sel = min(d.sel+1, max(len(acts)+len(d.tasks)-1, 0))
+		d.sel = min(d.sel+1, max(s.detailItems()-1, 0))
 	case "k", "up":
 		d.sel = max(d.sel-1, 0)
 	case "enter", "space", " ", "right", "l":
-		switch {
-		case d.sel < len(acts):
-			if isEnter(key) {
-				cmd, _ := s.act(s.detailRow(), acts[d.sel].key)
-				return cmd
-			}
-		case d.sel-len(acts) < len(d.tasks):
-			tv, err := loadTask(s.env.Store, d.goal, d.tasks[d.sel-len(acts)].ID)
-			if err != nil {
-				s.err = err
-				break
-			}
-			d.task = tv
-		}
+		return s.choose(isEnter(key))
 	}
 	return nil
+}
+
+// choose does what the page has selected: opens a running session on its
+// latest step, or a task, or, on enter, does an action.
+func (s *Status) choose(enter bool) tea.Cmd {
+	d := s.detail
+	running, acts := s.pageRunning(), s.detailActions()
+	i := d.sel
+	switch {
+	case i < len(running):
+		row := s.pageRow()
+		tv, err := openSession(s.env.Store, d.goal, row.sessions[running[i]])
+		if err != nil {
+			s.err = err
+			return nil
+		}
+		d.task = tv
+	case i-len(running) < len(acts):
+		if enter {
+			cmd, _ := s.act(s.detailRow(), acts[i-len(running)].key)
+			return cmd
+		}
+	case i-len(running)-len(acts) < len(d.tasks):
+		tv, err := loadTask(s.env.Store, d.goal, d.tasks[i-len(running)-len(acts)].ID)
+		if err != nil {
+			s.err = err
+			return nil
+		}
+		d.task = tv
+	}
+	return nil
+}
+
+// clickDetail does what a click on row y of the page is on, as enter would.
+func (s *Status) clickDetail(y int) tea.Cmd {
+	d := s.detail
+	if d == nil || d.task != nil {
+		return nil
+	}
+	r := y - d.head
+	if r < 0 || r >= len(d.rows) || d.rows[r] < 0 {
+		return nil
+	}
+	if d.sel != d.rows[r] {
+		// A second click confirms what asks for one, as enter does.
+		s.confirm = ""
+	}
+	d.sel = d.rows[r]
+	return s.choose(true)
 }
 
 // isEnter reports whether key chooses what a menu has selected: enter, or
@@ -205,6 +248,7 @@ func (s *Status) renderDetail() string {
 	if d.task != nil {
 		b.WriteString(d.task.crumbs())
 	}
+	d.head = strings.Count(hangAll(b.String(), max(s.width, 1)), "\n") + 2
 	b.WriteString("\n\n")
 	foot := s.foot()
 	room := max(s.height-2-len(foot), 3)
@@ -219,46 +263,61 @@ func (s *Status) renderDetail() string {
 	return b.String()
 }
 
-// renderMenu shows where a goal stands, what can be done with it, and its
-// tasks, the running ones first with their latest step, scrolled to keep the
+// renderMenu shows where a goal stands, its running sessions with their
+// latest step, what can be done with it, and its tasks, scrolled to keep the
 // one selected in view.
 func (s *Status) renderMenu(d *detail, room int) string {
 	var lines []string
-	if row := s.pageRow(); row != nil {
-		lines = s.pageHead(*row)
-		lines = append(lines, s.jobLines(row.goal.Name, room)...)
+	var pick []int
+	add := func(item int, l ...string) {
+		for _, x := range l {
+			lines, pick = append(lines, x), append(pick, item)
+		}
 	}
-	sel := 0
-	acts := s.detailActions()
-	for i, a := range acts {
+	n, sel := 0, 0
+	// item adds a line that can be selected, marked while it is.
+	item := func(text string) {
 		mark := "  "
-		if i == d.sel {
+		if n == d.sel {
 			mark, sel = tui.Color("› ", tui.Accent), len(lines)
 		}
-		lines = append(lines, mark+tui.Color(a.key, tui.Yellow)+"  "+a.label)
+		add(n, mark+text)
+		n++
+	}
+	row := s.pageRow()
+	if row != nil {
+		add(-1, s.pageHead(*row)...)
+		for _, ws := range row.activeWork {
+			name := ws
+			if ws == "" {
+				name = "planning"
+			}
+			item(tui.Color("▶ "+name, tui.Green) + " " + tui.Dim(row.latest[ws]))
+		}
+		add(-1, "")
+		add(-1, s.jobLines(row.goal.Name, room)...)
+	}
+	acts := s.detailActions()
+	for _, a := range acts {
+		item(tui.Color(a.key, tui.Yellow) + "  " + a.label)
 	}
 	if len(acts) > 0 {
-		lines = append(lines, "")
+		add(-1, "")
 	}
-	row := s.detailRow()
-	if row != nil && row.plan != nil {
-		lines = append(lines, tui.Dim("─── plan"))
-		lines = append(
-			lines,
-			strings.Split(strings.TrimRight(plan.Describe(row.plan), "\n"), "\n")...)
-		lines = append(lines, "", tui.Dim("─── tasks"))
+	if goal := s.detailRow(); goal != nil && goal.plan != nil {
+		add(-1, tui.Dim("─── plan"))
+		add(-1, strings.Split(strings.TrimRight(plan.Describe(goal.plan), "\n"), "\n")...)
+		add(-1, "", tui.Dim("─── tasks"))
 	}
 	if len(d.tasks) == 0 {
-		lines = append(lines, tui.Dim("No tasks."))
+		add(-1, tui.Dim("No tasks."))
 	}
-	for i, t := range d.tasks {
-		mark := "  "
-		if len(acts)+i == d.sel {
-			mark, sel = tui.Color("› ", tui.Accent), len(lines)
-		}
-		lines = append(lines, s.taskLine(d, t, mark))
+	for _, t := range d.tasks {
+		item(s.taskLine(d, t))
 	}
-	return scroll(lines, sel, sel, &d.top, room, s.width)
+	out, rows := scrollRows(lines, pick, sel, sel, &d.top, room, s.width)
+	d.rows = rows
+	return out
 }
 
 // pageHead says where the goal or intake open stands: its state, what it is
@@ -288,23 +347,19 @@ func (s *Status) pageHead(row goalRow) []string {
 				" to finish, and nothing of it starts until then", tui.Red),
 		)
 	}
-	return append(lines, "")
+	return lines
 }
 
-// taskLine is one of a goal's tasks, with its latest step while it runs.
-func (s *Status) taskLine(d *detail, t *queue.Task, mark string) string {
+// taskLine is one of a goal's tasks: the page's running sessions say what
+// the running ones are doing.
+func (s *Status) taskLine(d *detail, t *queue.Task) string {
 	ws := ""
 	if t.Workstream != "" {
 		ws = tui.Dim("[" + t.Workstream + "] ")
 	}
 	var line strings.Builder
-	fmt.Fprintf(&line, "%s%s %s %s%s", mark, stateMark(t.State), t.ID, ws, t.Title)
-	switch t.State {
-	case queue.Active:
-		if st := d.latest[t.ID]; st != "" {
-			line.WriteString(tui.Dim(" · " + oneLine(st, s.width/2)))
-		}
-	case queue.Blocked:
+	fmt.Fprintf(&line, "%s %s %s%s", stateMark(t.State), t.ID, ws, t.Title)
+	if t.State == queue.Blocked {
 		line.WriteString(tui.Color(" · waiting on your answer", tui.Magenta))
 	}
 	for _, r := range s.rows {

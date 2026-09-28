@@ -299,14 +299,37 @@ func TestIntakeBeingSorted(t *testing.T) {
 	out := plain(a.render())
 	if !strings.Contains(out, "‹ Intake") || !strings.Contains(out, "1 being sorted") ||
 		!strings.Contains(out, "1 waiting on your answers") ||
-		!strings.Contains(out, "0001 Triage: notes · Two goals, then.") ||
+		!strings.Contains(out, "› ▶ planning Two goals, then.") ||
+		!regexp.MustCompile(`▶ 0001 Triage: notes *\n`).MatchString(out) ||
 		!strings.Contains(out, "0002 Triage: web · waiting on your answer") {
-		t.Fatalf("intake opened:\n%s", out)
+		t.Fatalf("intake opened, the task without the session's step:\n%s", out)
 	}
 	key(a, "p")
 	if g, _ := f.store.Goal(queue.IntakeGoal); g.State != queue.GoalActive {
 		t.Error("p parked the intake")
 	}
+	// The running session opens straight to its steps, and backs out to the
+	// page.
+	key(a, "enter")
+	if out := plain(a.render()); !strings.Contains(out, "“ Two goals, then.") {
+		t.Fatalf("the running session didn't open:\n%s", out)
+	}
+	key(a, "esc")
+	if d := a.status.detail; d == nil || d.task != nil {
+		t.Fatalf("esc from the session went to %+v", d)
+	}
+	// A click on a task opens it, as enter does.
+	for y, l := range strings.Split(plain(a.render()), "\n") {
+		if strings.Contains(l, "0002 Triage: web") {
+			at := tea.Mouse{X: a.mainLeft() + 4, Y: y, Button: tea.MouseLeft}
+			a.Update(tea.MouseClickMsg(at))
+			a.Update(tea.MouseReleaseMsg(at))
+		}
+	}
+	if d := a.status.detail; d == nil || d.task == nil || d.task.id != "0002" {
+		t.Fatalf("the click on task 0002 opened %+v", d)
+	}
+	key(a, "esc", "k")
 	// The task lists its Claude sessions; space opens one like enter.
 	key(a, "enter")
 	out = plain(a.render())
@@ -724,6 +747,38 @@ func TestShowsCosts(t *testing.T) {
 	}
 }
 
+// TestClickAGoalsAction pins that a click on one of a goal's actions does
+// it, as enter does, and that dragging over it only selects its text.
+func TestClickAGoalsAction(t *testing.T) {
+	f := newFixture(t)
+	a, _ := newApp(t, f)
+	openGoal(t, a, "set")
+	park := func() tea.Mouse {
+		for y, l := range strings.Split(plain(a.render()), "\n") {
+			if strings.Contains(l, "Park it") {
+				return tea.Mouse{X: a.mainLeft() + 4, Y: y, Button: tea.MouseLeft}
+			}
+		}
+		t.Fatalf("no park action:\n%s", plain(a.render()))
+		return tea.Mouse{}
+	}
+	at := park()
+	a.Update(tea.MouseClickMsg(at))
+	to := at
+	to.X += 6
+	a.Update(tea.MouseMotionMsg(to))
+	a.Update(tea.MouseReleaseMsg(to))
+	if g, _ := f.store.Goal("set"); g.State != queue.GoalActive {
+		t.Fatal("a drag over the park action parked the goal")
+	}
+	at = park()
+	a.Update(tea.MouseClickMsg(at))
+	a.Update(tea.MouseReleaseMsg(at))
+	if g, _ := f.store.Goal("set"); g.State != queue.GoalParked {
+		t.Errorf("after a click on park, set is %s", g.State)
+	}
+}
+
 func TestSessionShowsDiatomWrappingUp(t *testing.T) {
 	f := newFixture(t)
 	dir := filepath.Join(f.store.SessionsDir("set"), "20260101T000000Z-engine")
@@ -740,7 +795,7 @@ func TestSessionShowsDiatomWrappingUp(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	sv, err := latestSession(f.store.SessionsDir("set"), "0001")
+	sv, err := loadSession(dir, "20260101T000000Z-engine")
 	if err != nil {
 		t.Fatal(err)
 	}

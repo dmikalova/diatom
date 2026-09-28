@@ -30,6 +30,9 @@ type taskView struct {
 	// view, to read the task's text.
 	read int
 	open *sessionView
+	// direct is set when the session was opened straight from the goal's
+	// page, which backing out of it goes back to.
+	direct bool
 }
 
 // sessionView is one session of a task: how it went, and its steps.
@@ -93,22 +96,38 @@ func loadTask(s *queue.Store, goal, id string) (*taskView, error) {
 			}
 		}
 	}
-	tv.sessions, err = taskSessions(s.SessionsDir(goal), id, 0)
+	tv.sessions, err = taskSessions(s.SessionsDir(goal), id)
 	return tv, err
 }
 
-// latestSession is the newest session that worked on task, or nil.
-func latestSession(root, task string) (*sessionView, error) {
-	svs, err := taskSessions(root, task, 1)
-	if len(svs) == 0 {
+// openSession opens the session in dir on its latest step, in the view of
+// the first task it works on, for backing out of it to go back to the
+// goal's page.
+func openSession(s *queue.Store, goal, dir string) (*taskView, error) {
+	spec, err := session.Load(dir)
+	if err != nil {
 		return nil, err
 	}
-	return svs[0], err
+	if len(spec.Tasks) == 0 {
+		return nil, fmt.Errorf("session %s works on no task", spec.ID)
+	}
+	tv, err := loadTask(s, goal, spec.Tasks[0])
+	if err != nil {
+		return nil, err
+	}
+	for _, sv := range tv.sessions {
+		if sv.id == spec.ID {
+			tv.open, tv.direct = sv, true
+		}
+	}
+	if tv.open == nil {
+		return nil, fmt.Errorf("session %s is gone", spec.ID)
+	}
+	return tv, nil
 }
 
-// taskSessions reads the sessions that worked on task, newest first, up to
-// limit of them when it isn't 0.
-func taskSessions(root, task string, limit int) ([]*sessionView, error) {
+// taskSessions reads the sessions that worked on task, newest first.
+func taskSessions(root, task string) ([]*sessionView, error) {
 	dirs, err := os.ReadDir(root)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
@@ -128,9 +147,7 @@ func taskSessions(root, task string, limit int) ([]*sessionView, error) {
 		if err != nil {
 			return nil, err
 		}
-		if svs = append(svs, sv); len(svs) == limit {
-			break
-		}
+		svs = append(svs, sv)
 	}
 	return svs, nil
 }
@@ -209,7 +226,7 @@ func (sv *sessionView) running() bool { return !sv.ended && !sv.settled }
 
 // keep carries what was selected and opened in old over to the reread tv.
 func (tv *taskView) keep(old *taskView) {
-	tv.sel, tv.top, tv.read = old.sel, old.top, old.read
+	tv.sel, tv.top, tv.read, tv.direct = old.sel, old.top, old.read, old.direct
 	// New sessions come first, so the one selected moves down.
 	if len(tv.sessions) > len(old.sessions) && len(old.sessions) > 0 {
 		tv.sel += len(tv.sessions) - len(old.sessions)
@@ -238,6 +255,7 @@ func (tv *taskView) update(s *Status, key string) bool {
 	if sv := tv.open; sv != nil {
 		if sv.update(key) {
 			tv.open = nil
+			return tv.direct
 		}
 		return false
 	}
