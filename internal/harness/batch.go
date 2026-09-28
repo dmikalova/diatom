@@ -2,6 +2,7 @@ package harness
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -327,6 +328,9 @@ func (h *Harness) newSession(
 		Kind: b.Kind, Profile: b.Profile, Effort: b.Effort,
 		Gate: cfg.Gate, GateAttempts: cfg.GateAttempts, GateTimeout: cfg.GateTimeout,
 	}
+	if p, err := cfg.Profile(b.Profile); err == nil {
+		spec.Model, spec.Level = p.Model, cmp.Or(b.Effort, p.Effort)
+	}
 	for _, t := range b.Tasks {
 		spec.Tasks = append(spec.Tasks, t.ID)
 	}
@@ -554,6 +558,20 @@ func above(root, home string) []string {
 	return dirs
 }
 
+// appendSummaries adds to each task done the summary the agent gave with
+// it, what the human reads about the task in place of its replies.
+func appendSummaries(s *queue.Store, goal string, report session.Report) error {
+	for _, e := range report.Finished {
+		if strings.TrimSpace(e.Text) == "" {
+			continue
+		}
+		if err := s.AppendNote(goal, e.Task, "Summary", e.Text); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // nestedGuides lists the AGENTS.md files below the worktree's root, which
 // the prompt names for the agent to read before working in their directory.
 func nestedGuides(ctx context.Context, wt git.Repo) ([]string, error) {
@@ -610,6 +628,9 @@ func (h *Harness) finish(
 		if err := s.AppendNote(g.Name, n.Task, "Note", n.Text); err != nil {
 			return err
 		}
+	}
+	if err := appendSummaries(s, g.Name, report); err != nil {
+		return err
 	}
 	tasks, err := h.reload(s, g.Name, b.Tasks)
 	if err != nil {

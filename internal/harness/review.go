@@ -230,8 +230,10 @@ func findHunk(ctx context.Context, repo git.Repo, sha, id string) (*review.Hunk,
 
 func revisionIntro(sha, subject string, origin []*queue.Task) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "The human rejected parts of commit %s (%q). Rework the code it introduced, "+
-		"following the review comments on each hunk below. diatom commits the change as a fixup of that commit.\n\n"+
+	fmt.Fprintf(&b, "The human reviewed commit %s (%q) and commented on or rejected the hunks "+
+		"below. Take each comment with the code around it and act on what it says: a comment may ask for a "+
+		"change, or only ask a question or make a remark. Change the code where that is asked; answer a "+
+		"question or remark with `diatom task note`. diatom commits any change as a fixup of that commit.\n\n"+
 		"The commit was made for:\n", sha[:min(7, len(sha))], subject)
 	for _, t := range origin {
 		fmt.Fprintf(&b, "\n- Task %s: %s", t.ID, t.Title)
@@ -246,7 +248,8 @@ func hunkSection(h review.Hunk, rec *review.Record) string {
 	fmt.Fprintf(&b, "<!-- diatom:hunk %s -->\n### `%s`, hunk %d of %d\n\n```diff\n%s\n```\n\n",
 		h.ID, h.Path, h.Index, h.Of, h.Text())
 	if len(rec.Comments) == 0 {
-		b.WriteString("- The human rejected this hunk as a whole, without a comment.\n")
+		b.WriteString("- The human rejected this hunk without a comment: it shouldn't be in the " +
+			"commit as it is. Take it out, or, where the task needs it, do it another way.\n")
 	}
 	for _, c := range rec.Comments {
 		line := ""

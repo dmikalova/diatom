@@ -514,7 +514,7 @@ func TestCommentBoxGrowsAndTheFooterStays(t *testing.T) {
 	m := f.model()
 	if foot := ansi.Strip(
 		m.footer(),
-	); !strings.Contains(foot, "c comment and reject · d defer · b back") ||
+	); !strings.Contains(foot, "c comment · r reject · d defer · b back") ||
 		strings.Contains(foot, "combined") ||
 		strings.Contains(foot, "skip") {
 		t.Errorf("footer = %q", foot)
@@ -526,7 +526,7 @@ func TestCommentBoxGrowsAndTheFooterStays(t *testing.T) {
 		typeText(m, "more")
 	}
 	if m.input.Height() != commentLines || !strings.Contains(ansi.Strip(m.footer()),
-		"enter rejects the hunk with this comment · shift+enter adds a line") {
+		"enter sends the comment to the goal's agent · shift+enter adds a line") {
 		t.Errorf("box height %d, footer %q", m.input.Height(), ansi.Strip(m.footer()))
 	}
 	if lines := strings.Split(strings.TrimRight(m.render(), "\n"), "\n"); len(lines) > m.height {

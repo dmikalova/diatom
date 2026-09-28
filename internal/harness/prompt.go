@@ -60,8 +60,13 @@ func Prompt(in PromptInput) string {
 		"Backgrounding a command, with `&` or `nohup`, and sleeping to wait for one are refused. "+
 		"Run the narrowest check that tells you what you need, such as one package's tests; diatom "+
 		"runs the whole gate itself when you finish.\n", in.Timeout)
+	b.WriteString(silentGuide)
 	b.WriteString("- **Report each task with the task tool**, a shell command:\n")
-	b.WriteString("  - `diatom task done <id>` once the task is finished.\n")
+	b.WriteString(
+		"  - `diatom task done <id> \"<summary>\"` once the task is finished. The summary is all the " +
+			"human reads about how the task went: two or three plain sentences on what changed and anything " +
+			"they should know, such as a choice you made or something you left out.\n",
+	)
 	b.WriteString(
 		"  - `diatom task note <id> \"<text>\"` to record something a later task or the reviewer " +
 			"should know.\n",
@@ -98,8 +103,8 @@ func Prompt(in PromptInput) string {
 	switch in.Batch.Kind {
 	case queue.Revision:
 		b.WriteString(
-			"## These are revisions\n\nThe human reviewed commits and rejected some hunks. Each task " +
-				"below carries the rejected hunks of one commit with the comments on them. Work the revisions one " +
+			"## These are revisions\n\nThe human reviewed commits and commented on or rejected some hunks. " +
+				"Each task below carries those hunks of one commit with the comments on them. Work the revisions one " +
 				"at a time, and run `diatom task done <id>` as soon as each is finished, before starting the next: " +
 				"diatom splits your work at those points and commits each revision as a fixup of the commit it " +
 				"revises. A comment may ask for no change once you look into it; say why with `diatom task note` " +
@@ -171,6 +176,11 @@ func plural(n int, word string) string {
 	return fmt.Sprintf("%d %ss", n, word)
 }
 
+// silentGuide keeps an agent from writing replies nobody reads.
+const silentGuide = "- **Work silently.** Write no text between tool calls: no plan, no narration of " +
+	"what you are about to do or have just done, and no recap at the end. Nobody reads it, and it costs " +
+	"time. What the human should know goes through the task tool.\n"
+
 // askGuide is how every agent writes a question: the human answers it in a
 // pane, without the code open, often long after it was asked.
 const askGuide = "    Ask only what changes what gets built, how it is shaped or how good the code ends " +
@@ -232,6 +242,7 @@ func (h *Harness) planningPrompt(repo Repo, g *queue.Goal, in PromptInput) (stri
 		"- **Nobody reads your replies.** The session runs unattended: the human sees only what you " +
 			"report with the task tool below. A question or result left in a reply is lost.\n",
 	)
+	b.WriteString(silentGuide)
 	b.WriteString(
 		"- You don't change code in this session. Report through the task tool, a shell command:\n",
 	)

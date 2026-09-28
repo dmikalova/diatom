@@ -39,7 +39,9 @@ type taskView struct {
 type sessionView struct {
 	id      string
 	started time.Time
-	steps   []step
+	// agent is the model and effort the agent runs at, such as opus · high.
+	agent string
+	steps []step
 	// ended is set once the agent's part is over, with how it went.
 	ended   bool
 	outcome string
@@ -155,6 +157,9 @@ func taskSessions(root, task string) ([]*sessionView, error) {
 func loadSession(dir, id string) (*sessionView, error) {
 	sv := &sessionView{id: id, open: -1, follow: true}
 	sv.started, _ = time.Parse("20060102T150405Z", id[:min(len(id), 16)])
+	if spec, err := session.Load(dir); err == nil {
+		sv.agent = agentLine(spec)
+	}
 	events, err := session.ReadEvents(dir)
 	if err != nil {
 		return nil, err
@@ -179,6 +184,25 @@ func loadSession(dir, id string) (*sessionView, error) {
 	sv.settled, sv.settleErr = st.Settled, st.Error
 	sv.sel = max(len(sv.steps)-1, 0)
 	return sv, nil
+}
+
+// agentLine names the agent a session runs: its model and effort, with its
+// profile, or only the profile for a session from before diatom recorded
+// them.
+func agentLine(spec session.Spec) string {
+	var parts []string
+	for _, p := range []string{spec.Model, spec.Level} {
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
+	if len(parts) == 0 && spec.Effort != "" {
+		parts = append(parts, spec.Effort)
+	}
+	if spec.Profile != "" {
+		parts = append(parts, spec.Profile+" profile")
+	}
+	return strings.Join(parts, " · ")
 }
 
 // steps pairs each tool call in events with its result.
@@ -455,7 +479,11 @@ func (sv *sessionView) line(width int) string {
 // render lists the session's steps, the latest last, following them while
 // the session runs.
 func (sv *sessionView) render(width, room int) string {
-	lines := []string{sv.line(width), tui.Dim("session " + sv.id)}
+	about := "session " + sv.id
+	if sv.agent != "" {
+		about = sv.agent + " · " + about
+	}
+	lines := []string{sv.line(width), tui.Dim(about)}
 	if sv.settleErr != "" {
 		lines = append(lines, tui.Color("diatom couldn't settle its work: "+sv.settleErr, tui.Red))
 	}

@@ -167,7 +167,9 @@ something again after having nothing.
 A goal's page shows its task counts, open questions, hunks waiting for review,
 its cost so far, and a `▶ <workstream>` line with the latest step of each
 running session. `enter` on that line opens the session's steps as they
-come, and `esc` comes back. A click on it, on an action or on a task does
+come, under the model and effort it runs at, such as `opus · high`, and `esc`
+comes back. Agents work without narrating: each task done carries a short
+summary, which its page shows. A click on it, on an action or on a task does
 what `enter` does, and dragging selects text instead. An active goal reads **queued** while its ready work waits for
 a free session, **reviewing** once every task is done and hunks are left, and
 **ready to finish** once those are reviewed too. Its tasks open to the Claude
@@ -198,14 +200,17 @@ What needs you:
   unblocks its task.
 - **Review, whenever you like**, in Next once the questions are answered, or
   with `r` on a goal's page:
-  - `a` approves the hunk on screen. `r` rejects it, which sends it back to the
-    goal's agent to fix. `d` defers it, which asks you again once the rest are
-    done.
-  - `c` writes what to change about the line under the cursor, in a box that
-    grows to ten lines: `shift+enter` adds a line, and `enter` rejects the
-    hunk with the comment and moves on. `b` goes back through earlier
-    decisions.
-  - Rejecting with a comment becomes a revision task within seconds. The fix
+  - `a` approves the hunk on screen. `d` defers it, which asks you again once
+    the rest are done.
+  - `c` comments on the line under the cursor, in a box that grows to ten
+    lines: `shift+enter` adds a line, and `enter` sends it and moves on. A
+    comment can ask for a change, or just ask a question: the goal's agent
+    reads it with the code around it, changes the code where asked, and
+    answers a question in a note on the task.
+  - `r` rejects the hunk without a comment: the agent takes it out, or does it
+    another way where the task needs it. To say how it should change,
+    comment instead. `b` goes back through earlier decisions.
+  - A comment or rejection becomes a revision task within seconds. The fix
     comes back as a `fixup!` commit, and `v` shows it folded into the original.
   - Review doesn't hold up the agents, but you have to review everything before
     step 6.

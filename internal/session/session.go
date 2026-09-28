@@ -43,8 +43,12 @@ type Spec struct {
 	Kind       queue.Kind `json:"kind"`
 	Profile    string     `json:"profile"`
 	// Effort overrides the profile's for a retry at more effort.
-	Effort string   `json:"effort,omitempty"`
-	Tasks  []string `json:"tasks"`
+	Effort string `json:"effort,omitempty"`
+	// Model and Level are the model the agent runs on and the effort it
+	// thinks at, as its profile and any retry make them, for the human.
+	Model string   `json:"model,omitempty"`
+	Level string   `json:"level,omitempty"`
+	Tasks []string `json:"tasks"`
 	// Gate is the command the Stop hook runs, and GateAttempts how many
 	// failures it sends back to the agent before letting the session end.
 	Gate         string `json:"gate"`

@@ -362,6 +362,29 @@ func TestConfigIsReadOnce(t *testing.T) {
 	}
 }
 
+// TestDoneSummaryAndModel pins that the summary an agent gives with a done
+// task is added to it, that agents are told to work silently, and that the
+// session records the model and effort it runs at.
+func TestDoneSummaryAndModel(t *testing.T) {
+	f := newFixture(t)
+	task := f.add("engine", "Add ward")
+	f.agent.act = func(_ *testing.T, _ string, s agentSession) {
+		s.report(session.EntryDone, task.ID, "Ward is a keyword now.")
+	}
+	f.step()
+	if got := f.task(task.ID); !strings.Contains(got.Body, "## Summary\n\nWard is a keyword now.") {
+		t.Errorf("task body = %q", got.Body)
+	}
+	if !strings.Contains(f.agent.last.Prompt, "Work silently") {
+		t.Error("the prompt doesn't ask for silence between steps")
+	}
+	dirs, _ := filepath.Glob(filepath.Join(f.store.SessionsDir("set"), "*-engine"))
+	spec, err := session.Load(dirs[0])
+	if err != nil || spec.Model != "opus" || spec.Level != "medium" {
+		t.Errorf("spec = %+v, %v", spec, err)
+	}
+}
+
 func TestManualStepsParkUntilDone(t *testing.T) {
 	f := newFixture(t)
 	task := f.add("engine", "Add the bucket")

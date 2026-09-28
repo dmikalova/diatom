@@ -783,6 +783,7 @@ func TestSessionShowsDiatomWrappingUp(t *testing.T) {
 	f := newFixture(t)
 	dir := filepath.Join(f.store.SessionsDir("set"), "20260101T000000Z-engine")
 	if err := session.Create(dir, session.Spec{ID: "20260101T000000Z-engine",
+		Profile: "implementation", Model: "opus", Level: "high",
 		Tasks: []string{"0001"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -803,7 +804,8 @@ func TestSessionShowsDiatomWrappingUp(t *testing.T) {
 	steps := plain(sv.render(200, 20))
 	if !strings.Contains(line, "▶ diatom wrapping up") ||
 		!strings.Contains(line, "Running the gate") ||
-		!strings.Contains(steps, "▶ diatom: Running the gate `check`") {
+		!strings.Contains(steps, "▶ diatom: Running the gate `check`") ||
+		!strings.Contains(steps, "opus · high · implementation profile · session") {
 		t.Errorf("line %q, steps:\n%s", line, steps)
 	}
 }

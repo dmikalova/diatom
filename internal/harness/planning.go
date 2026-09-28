@@ -213,6 +213,9 @@ func (h *Harness) finishPlanning(
 			return err
 		}
 	}
+	if err := appendSummaries(s, g.Name, report); err != nil {
+		return err
+	}
 	asked := map[string]bool{}
 	ask := func(task, text string) error {
 		asked[task] = true

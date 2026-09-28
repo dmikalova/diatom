@@ -181,8 +181,8 @@ func (m *Model) updateEditing(msg tea.KeyPressMsg) (*Model, tea.Cmd) {
 		m.input.Reset()
 		return m, nil
 	case "enter":
-		// A comment says what to change, so it rejects the hunk with it: the
-		// goal's agent revises it, and the next hunk comes up.
+		// A comment goes back to the goal's agent, recorded as a rejection:
+		// the agent acts on it, and the next hunk comes up.
 		text := strings.TrimSpace(m.input.Value())
 		m.editing = false
 		m.input.Reset()

@@ -274,9 +274,11 @@ func (m *Model) row(l line, cursor bool, gutter, width int) []string {
 func (m *Model) footer() string {
 	if m.editing {
 		return m.input.View() + "\n" +
-			dim("enter rejects the hunk with this comment · shift+enter adds a line · esc cancels")
+			dim(
+				"enter sends the comment to the goal's agent · shift+enter adds a line · esc cancels",
+			)
 	}
-	keys := "a approve · r reject · c comment and reject · d defer · b back"
+	keys := "a approve · c comment · r reject · d defer · b back"
 	if m.cur >= 0 && m.items[m.cur].Revision != nil && m.items[m.cur].Revision.Revises != "" {
 		keys += " · v combined"
 	}
