@@ -45,16 +45,20 @@ gh auth status        # diatom opens PRs and reads CI checks with gh
    ```
 
    vex needs no gate of its own: it has a `go.mod`, so it gets the Go gate
-   from your home config, `mage ci:check`. Without one, diatom would ask for it
-   when it opens. The gate is `ci:check`, not `ci:fix`, because it must only
-   check. vex's AGENTS.md forbids git operations, which matches diatom: the
-   harness makes every commit.
+   from your home config, `mage ci:check`, and its fix, `mage ci:fix`, from
+   `[fixes]` beside it. Without a gate, diatom would ask for one when it
+   opens. The gate is `ci:check`, not `ci:fix`, because it must only check:
+   when a session ends, diatom runs the fix first, to format and regenerate
+   files, then the gate, and agents are told to run neither. vex's AGENTS.md
+   forbids git operations, which matches diatom: the harness makes every
+   commit.
 
    vex's `ci:check` takes about 12 seconds warm, and over a minute on a cold
-   build cache. A gate still running after 2 minutes is stuck: diatom stops
-   it and counts it as failed. Each command an agent runs is stopped after 30
-   seconds, so agents run narrow checks and leave the whole gate to diatom.
-   Set `gateTimeout` or `commandTimeout` in this file to change either.
+   build cache. A fix and gate still running after 5 minutes are stuck:
+   diatom stops them and counts the gate as failed. Each command an agent
+   runs is stopped after 2 minutes, so agents run narrow checks and leave
+   the whole gate to diatom. Set `gateTimeout` or `commandTimeout` in this
+   file to change either.
 
 ## 2. Open diatom
 

@@ -256,7 +256,7 @@ func (h *Harness) mergeIn(
 				"worktree: resolve every conflicted file, keeping the intent of both sides.",
 		)
 	case git.Merged:
-		r, err := h.runGate(ctx, wt.Dir, repo.Config)
+		r, err := h.runGate(ctx, wt.Dir, repo.Config, repo.Config.Gate)
 		if ctx.Err() != nil {
 			// Stopped: undo the merge, which is made again next time.
 			return false, false, errors.Join(
@@ -326,7 +326,7 @@ func (h *Harness) newSession(
 	spec := session.Spec{
 		ID: id, Repo: s.Repo(), Goal: g.Name, Workstream: b.Workstream, Worktree: wt.Dir,
 		Kind: b.Kind, Profile: b.Profile, Effort: b.Effort,
-		Gate: cfg.Gate, GateAttempts: cfg.GateAttempts, GateTimeout: cfg.GateTimeout,
+		Gate: cfg.SessionGate(), GateAttempts: cfg.GateAttempts, GateTimeout: cfg.GateTimeout,
 	}
 	if p, err := cfg.Profile(b.Profile); err == nil {
 		spec.Model, spec.Level = p.Model, cmp.Or(b.Effort, p.Effort)
@@ -354,7 +354,7 @@ func (h *Harness) newSession(
 		return "", spec, err
 	}
 	in := PromptInput{
-		Goal: g, Batch: b, Gate: cfg.Gate, Timeout: cfg.CommandTimeout,
+		Goal: g, Batch: b, Gate: cfg.Gate, Fix: cfg.Fix, Timeout: cfg.CommandTimeout,
 		TaskDir: filepath.Join(s.GoalDir(g.Name), "tasks", string(queue.Active)),
 		Merging: wt.MergeInProgress(ctx),
 		Guides:  guides,
@@ -732,11 +732,12 @@ func (h *Harness) check(
 	if fp, err := wt.Fingerprint(ctx); err != nil || fp == hookPassed {
 		return err == nil, "", err
 	}
-	h.settling(dir, "Running the gate `"+repo.Config.Gate+"`")
+	command := repo.Config.SessionGate()
+	h.settling(dir, "Running the gate `"+command+"`")
 	start := h.now()
-	r, err := h.runGate(ctx, wt.Dir, repo.Config)
+	r, err := h.runGate(ctx, wt.Dir, repo.Config, command)
 	if err == nil {
-		err = session.AppendEvent(dir, session.GateEvent(h.now(), repo.Config.Gate,
+		err = session.AppendEvent(dir, session.GateEvent(h.now(), command,
 			h.now().Sub(start), r.Passed, r.Output))
 	}
 	return r.Passed, r.Output, err

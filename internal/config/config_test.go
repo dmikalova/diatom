@@ -192,7 +192,7 @@ func TestRetryEffort(t *testing.T) {
 func TestTimeouts(t *testing.T) {
 	root, paths := tree(t)
 	cfg, err := Load(root, paths)
-	if err != nil || cfg.CommandTimeout != 30*time.Second || cfg.GateTimeout != 2*time.Minute {
+	if err != nil || cfg.CommandTimeout != 2*time.Minute || cfg.GateTimeout != 5*time.Minute {
 		t.Fatalf("defaults = %v and %v, %v", cfg.CommandTimeout, cfg.GateTimeout, err)
 	}
 	write(t, filepath.Join(root, DirName), "commandTimeout = \"1m\"\ngateTimeout = \"3m30s\"\n")
@@ -217,7 +217,7 @@ func TestGateByKind(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte("{}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(root, paths); err == nil || !strings.Contains(err.Error(), "set gate in") {
+	if _, err := Load(root, paths); err == nil || !strings.Contains(err.Error(), "set its own in") {
 		t.Errorf("a Go and node repo = %v, want it told to set its own gate", err)
 	}
 	if err := SetGate(root, "make check"); err != nil {
@@ -225,6 +225,21 @@ func TestGateByKind(t *testing.T) {
 	}
 	if cfg, err := Load(root, paths); err != nil || cfg.Gate != "make check" {
 		t.Errorf("after SetGate = %q, %v", cfg.Gate, err)
+	}
+}
+
+func TestFixByKind(t *testing.T) {
+	root, paths := tree(t)
+	write(t, paths.XDG, "[gates]\ngo = \"mage ci:check\"\n[fixes]\ngo = \"mage ci:fix\"\n")
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(root, paths)
+	if err != nil || cfg.Fix != "mage ci:fix" || cfg.SessionGate() != "mage ci:fix; mage ci:check" {
+		t.Errorf("fix = %q, session gate %q, %v", cfg.Fix, cfg.SessionGate(), err)
+	}
+	if cfg := (&Config{Gate: "make check"}); cfg.SessionGate() != "make check" {
+		t.Errorf("without a fix, the session gate is %q", cfg.SessionGate())
 	}
 }
 

@@ -17,7 +17,9 @@ import (
 type PromptInput struct {
 	Goal  *queue.Goal
 	Batch schedule.Batch
-	Gate  string
+	// Gate is the repo's gate, and Fix what diatom runs before it, if
+	// anything.
+	Gate, Fix string
 	// Timeout is how long each command the agent runs may take.
 	Timeout time.Duration
 	// TaskDir holds the batch's task files while it runs.
@@ -50,17 +52,31 @@ func Prompt(in PromptInput) string {
 		"- **Only edit files.** diatom does every git operation, and git commands that change the " +
 			"repository are blocked. Read-only ones such as `git status`, `git diff` and `git log` are fine.\n",
 	)
-	fmt.Fprintf(
-		&b,
-		"- **The gate runs when you finish.** diatom runs `%s` before the session may end. "+
-			"If it fails you get its output back and keep fixing. When it passes, diatom commits your work.\n",
-		in.Gate,
-	)
+	if in.Fix != "" {
+		fmt.Fprintf(
+			&b,
+			"- **The gate runs when you finish.** diatom runs `%s` to format and regenerate "+
+				"files, then the gate `%s`, before the session may end. Don't run either yourself: they take "+
+				"minutes. If the gate fails you get its output back and keep fixing. When it passes, diatom "+
+				"commits your work.\n",
+			in.Fix,
+			in.Gate,
+		)
+	} else {
+		fmt.Fprintf(
+			&b,
+			"- **The gate runs when you finish.** diatom runs `%s` before the session may "+
+				"end; don't run it yourself. If it fails you get its output back and keep fixing. When it passes, "+
+				"diatom commits your work.\n",
+			in.Gate,
+		)
+	}
 	fmt.Fprintf(&b, "- **Commands run in the foreground, and each is stopped after %s.** "+
 		"Backgrounding a command, with `&` or `nohup`, and sleeping to wait for one are refused. "+
 		"Run the narrowest check that tells you what you need, such as one package's tests; diatom "+
 		"runs the whole gate itself when you finish.\n", in.Timeout)
 	b.WriteString(silentGuide)
+	b.WriteString(readGuide)
 	b.WriteString("- **Report each task with the task tool**, a shell command:\n")
 	b.WriteString(
 		"  - `diatom task done <id> \"<summary>\"` once the task is finished. The summary is all the " +
@@ -181,6 +197,14 @@ const silentGuide = "- **Work silently.** Write no text between tool calls: no p
 	"what you are about to do or have just done, and no recap at the end. Nobody reads it, and it costs " +
 	"time. What the human should know goes through the task tool.\n"
 
+// readGuide keeps an agent's turns few: each one re-reads the whole session.
+const readGuide = "- **Read in few, whole pieces.** Every step re-reads the whole session so far, so " +
+	"fewer, bigger reads cost less. Read a file you need whole, in one Read of up to 2,000 lines, and " +
+	"not again; don't page through it with `sed -n`. In a big file, find the part you need with " +
+	"`grep -n` or `rg -n -C 5` first. Commands already run in your working directory: don't `cd` to it " +
+	"by its full path. Never search the whole disk with `find /`: a Go dependency's source is under " +
+	"`go env GOMODCACHE`, and `go doc` shows its API.\n"
+
 // askGuide is how every agent writes a question: the human answers it in a
 // pane, without the code open, often long after it was asked.
 const askGuide = "    Ask only what changes what gets built, how it is shaped or how good the code ends " +
@@ -243,6 +267,7 @@ func (h *Harness) planningPrompt(repo Repo, g *queue.Goal, in PromptInput) (stri
 			"report with the task tool below. A question or result left in a reply is lost.\n",
 	)
 	b.WriteString(silentGuide)
+	b.WriteString(readGuide)
 	b.WriteString(
 		"- You don't change code in this session. Report through the task tool, a shell command:\n",
 	)

@@ -51,6 +51,14 @@ type Repo struct {
 	// Gates maps a kind of project, such as go or node, to the gate of a
 	// repo of that kind that sets no gate of its own.
 	Gates map[string]string `toml:"gates"`
+	// Fix formats and regenerates what the gate checks, such as
+	// `mage ci:fix`, run with `sh -c` in the worktree before the gate when a
+	// session ends, so an agent never runs it. Empty runs none. Unset, it
+	// is the Fixes entry for the kind of project the repo is.
+	Fix string `toml:"fix"`
+	// Fixes maps a kind of project to the fix of a repo of that kind that
+	// sets no fix of its own.
+	Fixes map[string]string `toml:"fixes"`
 	// GateAttempts is how many times the Stop hook sends a failing gate back
 	// to the agent before the task is retried with more effort.
 	GateAttempts int `toml:"gateAttempts"`
@@ -230,11 +238,25 @@ func Load(root string, paths Paths) (*Config, error) {
 		}
 	}
 	if c.Gate == "" && root != "" {
-		if c.Gate, err = kindGate(root, c.Gates); err != nil {
+		if c.Gate, err = kindCommand(root, "gates", c.Gates); err != nil {
+			return nil, err
+		}
+	}
+	if c.Fix == "" && root != "" {
+		if c.Fix, err = kindCommand(root, "fixes", c.Fixes); err != nil {
 			return nil, err
 		}
 	}
 	return c, nil
+}
+
+// SessionGate is what a session's work must pass before it ends: the fix,
+// when there is one, then the gate, whose result decides.
+func (c *Config) SessionGate() string {
+	if strings.TrimSpace(c.Fix) == "" {
+		return c.Gate
+	}
+	return c.Fix + "; " + c.Gate
 }
 
 // kind is a kind of project Gates may name, with the files at a repo's root
@@ -266,13 +288,14 @@ func Kinds(root string) []string {
 	return found
 }
 
-// kindGate is the gate Gates gives the repo at root, or "" when it gives
-// none. A repo of two kinds that both have one must set its own gate.
-func kindGate(root string, gates map[string]string) (string, error) {
+// kindCommand is the command table gives the repo at root, such as its gate
+// from gates, or "" when it gives none. A repo of two kinds that both have
+// one must set its own.
+func kindCommand(root, table string, gates map[string]string) (string, error) {
 	for name := range gates {
 		if !slices.ContainsFunc(kinds, func(k kind) bool { return k.name == name }) {
-			return "", fmt.Errorf("config: gates.%s: no such kind of project; the kinds are %s",
-				name, kindNames())
+			return "", fmt.Errorf("config: %s.%s: no such kind of project; the kinds are %s",
+				table, name, kindNames())
 		}
 	}
 	var gate, from string
@@ -281,8 +304,8 @@ func kindGate(root string, gates map[string]string) (string, error) {
 		switch {
 		case g == "":
 		case gate != "" && g != gate:
-			return "", fmt.Errorf("config: %s is both a %s and a %s project, whose gates differ: "+
-				"set gate in %s", root, from, k, filepath.Join(root, DirName, FileName))
+			return "", fmt.Errorf("config: %s is both a %s and a %s project, whose %s differ: "+
+				"set its own in %s", root, from, k, table, filepath.Join(root, DirName, FileName))
 		default:
 			gate, from = g, k
 		}

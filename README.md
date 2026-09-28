@@ -164,8 +164,9 @@ it in the repo's `.diatom/config.toml`.
 ```toml
 gate = "mage ci:check"            # this repo's gate
 gateAttempts = 3                  # gate failures sent back before a retry at more effort
-gateTimeout = "2m"                # a gate running longer is stuck, and fails
-commandTimeout = "30s"            # an agent's command running longer is stopped
+fix = "mage ci:fix"               # formats and regenerates before the gate; agents never run it
+gateTimeout = "5m"                # the fix and gate running longer are stuck, and fail
+commandTimeout = "2m"             # an agent's command running longer is stopped
 autoApprove = ["*_test.go"]       # files whose hunks are approved without review
 maxSessions = 1                   # sessions at once in this repo
 maxBatch = 10                     # tasks per session, following chains of dependent tasks
@@ -183,6 +184,9 @@ month = 600                       # the last 30 days
 [gates]                           # the gate of each kind of repo that sets none
 go = "mage ci:check"
 node = "npm test"
+
+[fixes]                           # the fix of each kind of repo that sets none
+go = "mage ci:fix"
 
 [mcpServers.docs]                 # the only MCP servers agents get
 command = "docs-mcp"

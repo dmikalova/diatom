@@ -194,7 +194,8 @@ func (h *Harness) resume(ctx context.Context, r Resumable) error {
 		}
 		// The Stop hook reads the gate from the spec, which an older diatom
 		// or config may have written: it checks against the config of now.
-		r.Spec.Gate, r.Spec.GateAttempts, r.Spec.GateTimeout = cfg.Gate, cfg.GateAttempts, cfg.GateTimeout
+		r.Spec.Gate, r.Spec.GateAttempts, r.Spec.GateTimeout = cfg.SessionGate(), cfg.GateAttempts,
+			cfg.GateTimeout
 		if err := session.Create(r.Dir, r.Spec); err != nil {
 			return err
 		}

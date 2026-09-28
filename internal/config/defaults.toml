@@ -1,8 +1,8 @@
 # diatom's built-in defaults, the lowest layer of every config merge. Override
 # any of them in ~/.config/diatom/config.toml or a .diatom/config.toml.
 gateAttempts = 3
-gateTimeout = "2m"
-commandTimeout = "30s"
+gateTimeout = "5m"
+commandTimeout = "2m"
 maxSessions = 1
 maxBatch = 10
 editor = "nvim"

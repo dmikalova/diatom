@@ -502,13 +502,16 @@ func (h *Harness) now() time.Time {
 	return time.Now()
 }
 
+// runGate runs command, the repo's gate, with a session's fix before it or
+// alone.
 func (h *Harness) runGate(
 	ctx context.Context,
 	dir string,
 	cfg *config.Config,
+	command string,
 ) (gate.Result, error) {
 	if h.Gate != nil {
-		return gate.Within(cfg.GateTimeout, h.Gate)(ctx, dir, cfg.Gate)
+		return gate.Within(cfg.GateTimeout, h.Gate)(ctx, dir, command)
 	}
-	return gate.Serial(gate.Within(cfg.GateTimeout, gate.Run))(ctx, dir, cfg.Gate)
+	return gate.Serial(gate.Within(cfg.GateTimeout, gate.Run))(ctx, dir, command)
 }

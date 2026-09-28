@@ -117,7 +117,7 @@ func TestStopMidSessionResumesIt(t *testing.T) {
 	if len(f.sessionDirs()) != 1 {
 		t.Error("resuming made a new session")
 	}
-	if spec, _ := session.Load(dirs[0]); spec.Gate != "check" || spec.GateTimeout != 2*time.Minute {
+	if spec, _ := session.Load(dirs[0]); spec.Gate != "check" || spec.GateTimeout != 5*time.Minute {
 		t.Errorf("resumed spec = %+v, want the gate of now", spec)
 	}
 	if rs, err := f.h.Recover(context.Background()); err != nil || len(rs) != 0 {

@@ -11,7 +11,7 @@ import (
 // included, is blocked: an allowlist fails closed when git grows a new way to
 // write.
 var readOnly = []string{
-	"blame", "cat-file", "check-attr", "check-ignore", "count-objects", "describe",
+	"archive", "blame", "cat-file", "check-attr", "check-ignore", "count-objects", "describe",
 	"diff", "diff-files", "diff-index", "diff-tree", "for-each-ref", "grep", "help",
 	"log", "ls-files", "ls-remote", "ls-tree", "merge-base", "name-rev", "range-diff",
 	"rev-list", "rev-parse", "shortlog", "show", "show-branch", "show-ref", "status",
@@ -36,6 +36,28 @@ var listing = map[string]func(args []string) bool{
 	// harness's.
 	"restore": func(a []string) bool { return !hasAny("--staged", "-S", "-W")(a) },
 	"apply":   func(a []string) bool { return !hasAny("--index", "--cached", "-3", "--3way")(a) },
+	// Checking files out of the index is restoring them; checking out a
+	// branch or a commit's files moves HEAD or the index.
+	"checkout": checkoutFiles,
+	// Removing or moving tracked files is editing them, which the harness
+	// stages anyway; touching the index alone is not.
+	"rm": func(a []string) bool { return !hasAny("--cached")(a) },
+	"mv": func([]string) bool { return true },
+}
+
+// checkoutFiles reports whether a checkout only restores files from the
+// index: `git checkout -- <paths>`, with nothing but options before the --.
+func checkoutFiles(args []string) bool {
+	i := slices.Index(args, "--")
+	if i < 0 || i == len(args)-1 {
+		return false
+	}
+	for _, a := range args[:i] {
+		if !strings.HasPrefix(a, "-") || a == "-b" || a == "-B" || a == "--orphan" {
+			return false
+		}
+	}
+	return true
 }
 
 // gitOptionsWithValue are git's global options that take the next word.
