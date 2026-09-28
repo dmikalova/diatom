@@ -314,9 +314,13 @@ whenever you like.
 - **Cost.** `[budget]` caps what sessions cost today, over the last 7 days
   and over the last 30. Once one is spent, the footer shows it in red and no
   new session starts; the ones running finish. Grilling runs on Opus at high
-  effort, and implementation on Opus at medium. The window's title shows
-  today's cost, and each goal's page its own and each task's. A session's
-  cost counts on the days its agent worked, shared by how many steps it took
+  effort, and implementation on Opus at medium. The footer shows today's
+  cost, and each goal's page its own and each task's. A session that works
+  through several tasks is counted once, and each task gets the part of it
+  its own model calls cost, by their tokens, up to where the agent reports it
+  done; what follows the last report, such as fixing the gate, is shared
+  evenly. A session from before diatom logged its calls is shared evenly
+  among its tasks. A session's cost counts on the days its agent worked, shared by how many steps it took
   on each, so a session that runs past midnight or resumes the next morning
   counts on both days. A finished goal's sessions count until they are 30
   days old. A spent day's budget only holds new sessions until midnight, so

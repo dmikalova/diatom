@@ -361,14 +361,15 @@ func stage(store *queue.Store, row *goalRow) error {
 }
 
 // goalCost adds up what the goal's sessions have cost, in all and for each
-// task: a session's cost is shared evenly among its tasks. A session still
-// running counts what its runs that ended cost.
+// task: a session's cost goes to its tasks by the model calls made for each,
+// or evenly for a session that logged none. A session still running counts
+// what its runs that ended cost.
 func (s *Status) goalCost(goal string) (float64, map[string]float64) {
 	total, perTask := 0.0, map[string]float64{}
 	for _, c := range s.spent.Goal(s.env.Store, goal) {
 		total += c.USD
 		for _, t := range c.Tasks {
-			perTask[t] += c.USD / float64(len(c.Tasks))
+			perTask[t] += c.Share(t)
 		}
 	}
 	return total, perTask

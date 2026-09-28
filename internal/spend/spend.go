@@ -26,7 +26,10 @@ type Session struct {
 	Kind           queue.Kind
 	USD            float64
 	Tasks          []string
-	Parts          []Part
+	// Shares are each task's part of USD, from the model calls made for it;
+	// nil shares it evenly, for a session that logged no calls.
+	Shares map[string]float64
+	Parts  []Part
 	// Ended is set once the agent's last run has ended.
 	Ended bool
 }
@@ -68,16 +71,23 @@ func (t *Tally) Session(dir string) (Session, bool) {
 	}
 	runs := st.Earlier
 	at, ended := session.Ended(dir)
+	// output is what the agent wrote, in tokens, when a single run holds it
+	// all: a resumed session's result counts only its last run's.
+	output := 0
 	if ended {
 		var res struct {
 			Usage struct {
-				CostUSD float64 `json:"costUSD"`
+				OutputTokens int     `json:"outputTokens"`
+				CostUSD      float64 `json:"costUSD"`
 			} `json:"usage"`
 		}
 		if ok, err := session.ReadResult(dir, &res); err != nil || !ok {
 			return Session{}, false
 		}
 		runs = append(runs, session.Run{Ended: at, CostUSD: res.Usage.CostUSD + st.CommitCostUSD})
+		if len(st.Earlier) == 0 {
+			output = res.Usage.OutputTokens
+		}
 	}
 	if len(runs) == 0 {
 		return Session{}, false
@@ -85,7 +95,8 @@ func (t *Tally) Session(dir string) (Session, bool) {
 	events, _ := session.ReadEvents(dir)
 	c = Session{
 		ID: filepath.Base(dir), Workstream: spec.Workstream, Kind: spec.Kind,
-		Tasks: spec.Tasks, Parts: spread(runs, events), Ended: ended,
+		Tasks: spec.Tasks, Shares: shares(spec.Tasks, events, output),
+		Parts: spread(runs, events), Ended: ended,
 	}
 	for _, r := range runs {
 		c.USD += r.CostUSD
@@ -96,6 +107,18 @@ func (t *Tally) Session(dir string) (Session, bool) {
 		t.mu.Unlock()
 	}
 	return c, true
+}
+
+// Share is what the session cost for task: its share of USD, or an even
+// one.
+func (c Session) Share(task string) float64 {
+	if c.Shares != nil {
+		return c.USD * c.Shares[task]
+	}
+	if !slices.Contains(c.Tasks, task) {
+		return 0
+	}
+	return c.USD / float64(len(c.Tasks))
 }
 
 // spread shares each run's cost among the days its agent worked, by how many
@@ -111,7 +134,8 @@ func spread(runs []session.Run, events []session.Event) []Part {
 		steps := 0
 		for _, e := range events {
 			if e.Time.IsZero() || !e.Time.After(from) || e.Time.After(r.Ended) ||
-				e.Type == session.EventGate || e.Type == session.EventSettle {
+				e.Type == session.EventGate || e.Type == session.EventSettle ||
+				e.Type == session.EventCall {
 				continue
 			}
 			steps++

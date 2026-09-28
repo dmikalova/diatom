@@ -293,12 +293,23 @@ type streamEvent struct {
 	Type    string `json:"type"`
 	Subtype string `json:"subtype"`
 	Message struct {
+		ID    string `json:"id"`
+		Usage struct {
+			InputTokens   int `json:"input_tokens"`
+			CacheCreation int `json:"cache_creation_input_tokens"`
+			CacheRead     int `json:"cache_read_input_tokens"`
+			Ephemeral     *struct {
+				FiveMinutes int `json:"ephemeral_5m_input_tokens"`
+				OneHour     int `json:"ephemeral_1h_input_tokens"`
+			} `json:"cache_creation"`
+		} `json:"usage"`
 		Content []struct {
-			Type  string          `json:"type"`
-			Text  string          `json:"text"`
-			ID    string          `json:"id"`
-			Name  string          `json:"name"`
-			Input json.RawMessage `json:"input"`
+			Type     string          `json:"type"`
+			Text     string          `json:"text"`
+			Thinking string          `json:"thinking"`
+			ID       string          `json:"id"`
+			Name     string          `json:"name"`
+			Input    json.RawMessage `json:"input"`
 			// A tool result's fields.
 			ToolUseID string          `json:"tool_use_id"`
 			Content   json.RawMessage `json:"content"`
@@ -348,6 +359,9 @@ func Parse(
 				started = nil
 			}
 		case "assistant", "user":
+			if ev.Type == "assistant" && ev.Message.ID != "" {
+				onEvent(callEvent(ev))
+			}
 			contentEvents(ev, onEvent)
 		case "result":
 			sawResult = true
@@ -370,6 +384,20 @@ func Parse(
 		return res, sawResult, err
 	}
 	return res, sawResult, nil
+}
+
+// callEvent reports the model call an assistant message is part of: what it
+// read, and the characters of the part in this event.
+func callEvent(ev streamEvent) runner.Event {
+	u := ev.Message.Usage
+	c := &runner.Call{Input: u.InputTokens, CacheRead: u.CacheRead, CacheWrite: u.CacheCreation}
+	if e := u.Ephemeral; e != nil {
+		c.CacheWrite, c.CacheWrite1h = e.FiveMinutes, e.OneHour
+	}
+	for _, part := range ev.Message.Content {
+		c.Wrote += len(part.Text) + len(part.Thinking) + len(part.Input)
+	}
+	return runner.Event{Type: runner.EventCall, ID: ev.Message.ID, Call: c}
 }
 
 // contentEvents reports what a message holds: the agent's words and tool

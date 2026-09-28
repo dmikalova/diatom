@@ -74,6 +74,35 @@ func TestParse(t *testing.T) {
 	}
 }
 
+// TestParseCalls pins that each part of an assistant message reports its
+// model call: the tokens it read, as the message's usage gives them, and
+// the characters of that part.
+func TestParseCalls(t *testing.T) {
+	const calls = `{"type":"assistant","message":{"id":"msg_1","usage":{"input_tokens":9,"cache_creation_input_tokens":6566,"cache_read_input_tokens":20,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":6566},"output_tokens":6},"content":[{"type":"thinking","thinking":"hmm"}]}}
+{"type":"assistant","message":{"id":"msg_1","usage":{"input_tokens":9,"cache_creation_input_tokens":6566,"cache_read_input_tokens":20,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":6566},"output_tokens":6},"content":[{"type":"text","text":"Hi there"}]}}
+`
+	var got []runner.Event
+	if _, _, err := Parse(strings.NewReader(calls), func(e runner.Event) {
+		if e.Type == runner.EventCall {
+			got = append(got, e)
+		}
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	want := runner.Call{Input: 9, CacheWrite1h: 6566, CacheRead: 20}
+	if len(got) != 2 || got[0].ID != "msg_1" || got[1].ID != "msg_1" {
+		t.Fatalf("calls = %+v", got)
+	}
+	first, second := *got[0].Call, *got[1].Call
+	if first.Wrote != 3 || second.Wrote != 8 {
+		t.Errorf("wrote %d and %d, want 3 and 8", first.Wrote, second.Wrote)
+	}
+	first.Wrote = 0
+	if first != want {
+		t.Errorf("call = %+v, want %+v", first, want)
+	}
+}
+
 func TestParseOutcomes(t *testing.T) {
 	for line, want := range map[string]runner.Outcome{
 		`{"type":"result","subtype":"error_max_turns","is_error":true}`:        runner.TurnLimit,

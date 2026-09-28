@@ -80,7 +80,24 @@ const (
 	EventText   EventType = "text"
 	EventTool   EventType = "tool"
 	EventResult EventType = "result"
+	// EventCall is one of the agent's model calls, in its Call.
+	EventCall EventType = "call"
 )
+
+// Call is what one of the agent's model calls read, in tokens, as the
+// backend counts them, and how much it wrote, in characters: the backend's
+// count of a call's output comes before the call has finished. A call can
+// be reported in several events, one per part of its message, each with the
+// same ID and tokens and the characters of its own part.
+type Call struct {
+	Input int `json:"input"`
+	// CacheWrite and CacheWrite1h are what the call wrote to the prompt
+	// cache for five minutes and for an hour, which cost more to write.
+	CacheWrite   int `json:"cacheWrite,omitempty"`
+	CacheWrite1h int `json:"cacheWrite1h,omitempty"`
+	CacheRead    int `json:"cacheRead,omitempty"`
+	Wrote        int `json:"wrote,omitempty"`
+}
 
 // Event is one piece of a session's progress.
 type Event struct {
@@ -97,6 +114,8 @@ type Event struct {
 	Detail string `json:"detail,omitempty"`
 	// Failed marks a result that is an error.
 	Failed bool `json:"failed,omitempty"`
+	// Call is a model call's, for EventCall; ID is then the call's.
+	Call *Call `json:"call,omitempty"`
 }
 
 // Outcome is how a session ended.

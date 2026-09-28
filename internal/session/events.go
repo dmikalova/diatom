@@ -16,11 +16,23 @@ import (
 const EventsFile = "events.jsonl"
 
 // EventGate is a gate run, and EventSettle a step diatom takes after the
-// agent, such as committing; the other types are the runner's.
+// agent, such as committing; the other types are the runner's, EventCall
+// among them: one of the agent's model calls, which is no step of its own.
 const (
 	EventGate   = "gate"
 	EventSettle = "settle"
+	EventCall   = "call"
 )
+
+// Call is what one of the agent's model calls read, in tokens, and wrote, in
+// characters, as the runner logs it.
+type Call struct {
+	Input        int `json:"input"`
+	CacheWrite   int `json:"cacheWrite,omitempty"`
+	CacheWrite1h int `json:"cacheWrite1h,omitempty"`
+	CacheRead    int `json:"cacheRead,omitempty"`
+	Wrote        int `json:"wrote,omitempty"`
+}
 
 // Settling records a step diatom starts on after the agent.
 func Settling(now time.Time, what string) Event {
@@ -39,6 +51,7 @@ type Event struct {
 	// Detail is a tool call's whole input, or the end of an output.
 	Detail string `json:"detail,omitempty"`
 	Failed bool   `json:"failed,omitempty"`
+	Call   *Call  `json:"call,omitempty"`
 }
 
 // GateEvent records a gate run that took took.

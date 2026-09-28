@@ -231,6 +231,8 @@ func steps(events []session.Event) []step {
 				failed: e.Failed, done: true})
 		case session.EventSettle:
 			out = append(out, step{at: e.Time, kind: e.Type, summary: e.Summary})
+		case session.EventCall:
+			// What a model call cost, which is no step.
 		default:
 			out = append(out, step{at: e.Time, kind: e.Type, summary: e.Text, input: e.Text})
 		}
