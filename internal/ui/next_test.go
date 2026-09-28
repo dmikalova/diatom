@@ -286,6 +286,34 @@ func TestNextOffersToFinishAGoal(t *testing.T) {
 	}
 }
 
+func TestNextManualSteps(t *testing.T) {
+	f := newFixture(t)
+	if err := f.store.Answer("set", "0001", "No.", f.env.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.AddQuestion("set", &queue.Question{Task: "0001", Manual: true,
+		Text: "1. Run tofu apply in infra/."}); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := newApp(t, f)
+	out := plain(a.render())
+	for _, want := range []string{"👤 Steps to do by hand, for task 0001: Add ward",
+		"1. Run tofu apply in infra/.", "👤 1", "👤 set", "1 step to do by hand"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the steps lack %q:\n%s", want, out)
+		}
+	}
+	key(a, "enter", "tab", "enter")
+	if !strings.Contains(a.next.flash, "enter again to say the steps are done") {
+		t.Fatalf("first empty enter: %q", a.next.flash)
+	}
+	key(a, "enter")
+	open, _ := f.store.Questions("set", queue.QuestionOpen)
+	if len(open) != 2 || open[1].Answer != "Done." {
+		t.Errorf("after two enters = %+v", open)
+	}
+}
+
 func TestNextAnswersOnSeveralLines(t *testing.T) {
 	f := newFixture(t)
 	a, _ := newApp(t, f)

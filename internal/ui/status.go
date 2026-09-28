@@ -67,11 +67,13 @@ func tick() tea.Cmd {
 
 // goalRow is one goal in the status pane.
 type goalRow struct {
-	repo      string
-	goal      *queue.Goal
-	counts    map[queue.State]int
-	questions int
-	toReview  int
+	repo   string
+	goal   *queue.Goal
+	counts map[queue.State]int
+	// questions counts the goal's open questions, and manual those of them
+	// that are steps for the human to do by hand.
+	questions, manual int
+	toReview          int
 	// notes counts the comments on hunks of the goal the human approved,
 	// which triage hasn't sorted yet: it may add work to the goal, so they
 	// hold its landing up.
@@ -252,6 +254,9 @@ func (s *Status) row(store *queue.Store, g *queue.Goal) (goalRow, error) {
 	for _, q := range qs {
 		if q.Answer == "" {
 			row.questions++
+			if q.Manual {
+				row.manual++
+			}
 		}
 	}
 	if row.toReview, err = s.toReview(store, g.Name, commits); err != nil {
@@ -1109,6 +1114,9 @@ func goalStatus(r goalRow) (string, int) {
 		(r.goal.State == queue.GoalActive || r.goal.State == queue.GoalPlanning) {
 		// Opening the goal says which goals it waits for.
 		return "blocked", tui.Red
+	}
+	if r.manual > 0 {
+		return "needs you by hand", tui.Magenta
 	}
 	if r.goal.State != queue.GoalActive || len(r.activeWork) > 0 {
 		return string(r.goal.State), stateColors[r.goal.State]

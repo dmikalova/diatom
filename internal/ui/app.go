@@ -1109,19 +1109,22 @@ func boldAll(s string) string {
 	return tui.SGR(1) + strings.ReplaceAll(s, tui.Reset, tui.Reset+tui.SGR(1)) + tui.Reset
 }
 
-// nextCounts sums up what waits across every goal: plans to approve,
-// questions, goals ready to finish, hunks to review, and goals blocked.
+// nextCounts sums up what waits across every goal: plans to approve, steps
+// to do by hand, questions, goals ready to finish, hunks to review, and
+// goals blocked.
 func (a *App) nextCounts() string {
-	var plans, questions, finishing, hunks, blocked int
+	var plans, manual, questions, finishing, hunks, blocked int
 	for _, it := range a.next.items {
-		switch it.kind {
-		case itemPlan:
+		switch {
+		case it.kind == itemPlan:
 			plans++
-		case itemQuestion:
+		case it.kind == itemQuestion && it.q.Manual:
+			manual++
+		case it.kind == itemQuestion:
 			questions++
-		case itemFinish:
+		case it.kind == itemFinish:
 			finishing++
-		case itemReview:
+		case it.kind == itemReview:
 			hunks += it.row.toReview
 		}
 	}
@@ -1134,7 +1137,7 @@ func (a *App) nextCounts() string {
 	for _, c := range []struct {
 		emoji string
 		n     int
-	}{{"📝", plans}, {"❓", questions}, {"📩", finishing}, {"🔎", hunks}, {"🔗", blocked}} {
+	}{{"📝", plans}, {"👤", manual}, {"❓", questions}, {"📩", finishing}, {"🔎", hunks}, {"🔗", blocked}} {
 		if c.n > 0 {
 			parts = append(parts, emoji(c.emoji)+" "+strconv.Itoa(c.n))
 		}
@@ -1168,6 +1171,8 @@ func relevant(r goalRow) string {
 	switch {
 	case planReady(&r):
 		return tui.Color("plan to approve", tui.Green)
+	case r.manual > 0:
+		return tui.Color(manualLabel(r.manual), tui.Magenta)
 	case r.questions > 0:
 		return tui.Color(count(r.questions, "question"), tui.Magenta)
 	case name == "ready to finish":
@@ -1223,14 +1228,20 @@ func count(n int, thing string) string {
 	return fmt.Sprintf("%d %ss", n, thing)
 }
 
-// navGlyph is where a goal stands, as the nav shows it: a robot while an
-// agent works on it, and the merge sign while diatom does its git work, such
-// as committing a session's work or landing it.
+// manualLabel counts a goal's steps to do by hand.
+func manualLabel(n int) string { return count(n, "step") + " to do by hand" }
+
+// navGlyph is where a goal stands, as the nav shows it: a person while it
+// waits on steps the human does by hand, a robot while an agent works on
+// it, and the merge sign while diatom does its git work, such as committing
+// a session's work or landing it.
 func navGlyph(r goalRow, landing bool) string {
 	name, c := goalStatus(r)
 	switch {
 	case landing:
 		return emoji("🔀")
+	case r.manual > 0:
+		return emoji("👤")
 	case len(r.activeWork) > len(r.settling):
 		return emoji("🤖")
 	case len(r.settling) > 0:

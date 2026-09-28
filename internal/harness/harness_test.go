@@ -342,6 +342,33 @@ func TestQuestionParksAndAnswerResumes(t *testing.T) {
 	}
 }
 
+func TestManualStepsParkUntilDone(t *testing.T) {
+	f := newFixture(t)
+	task := f.add("engine", "Add the bucket")
+	f.agent.act = func(_ *testing.T, _ string, s agentSession) {
+		s.report(session.EntryManual, task.ID, "1. Run tofu apply in infra/.")
+	}
+	f.step()
+	open, _ := f.store.Questions("set", queue.QuestionOpen)
+	if got := f.task(task.ID); got.State != queue.Blocked || len(open) != 1 || !open[0].Manual {
+		t.Fatalf("task %s, open %+v", got.State, open)
+	}
+	if err := f.store.Answer("set", open[0].ID, "Done.", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	f.agent.act = func(_ *testing.T, _ string, s agentSession) { s.report(session.EntryDone, task.ID, "") }
+	f.step()
+	got := f.task(task.ID)
+	if got.State != queue.Done ||
+		!strings.Contains(got.Body, "## Manual steps 0001\n\n1. Run tofu apply in infra/.") ||
+		!strings.Contains(got.Body, "## Done by hand 0001\n\nDone.") {
+		t.Errorf("task after the steps = %s %q", got.State, got.Body)
+	}
+	if !strings.Contains(f.agent.last.Prompt, "diatom task manual") {
+		t.Error("the prompt doesn't offer manual steps")
+	}
+}
+
 func TestGateFailureEscalatesThenAsks(t *testing.T) {
 	f := newFixture(t)
 	task := f.add("engine", "Add ward")

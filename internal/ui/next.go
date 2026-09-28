@@ -113,7 +113,9 @@ type Next struct {
 // The answer box's hints, for a question and for a plan.
 const (
 	answerHint = "Your answer. enter sends it, shift+enter adds a line, esc goes back."
-	planHint   = "What to change in the plan. enter sends it back to grilling, shift+enter adds a " +
+	manualHint = "enter twice with nothing typed once it's done. Or write what happened, such as " +
+		"an error, and enter sends it. esc goes back."
+	planHint = "What to change in the plan. enter sends it back to grilling, shift+enter adds a " +
 		"line, esc goes back."
 	moreHint = "What more the goal needs before it lands. enter adds it as a task, shift+enter " +
 		"adds a line, esc goes back."
@@ -425,8 +427,16 @@ func (n *Next) answerKey(it item, msg tea.KeyPressMsg) nextKey {
 		return nextKey{cmd: n.setArea(areaBody)}
 	case "enter":
 		text := strings.TrimSpace(n.answer.Value())
-		if text == "" {
+		if text == "" && !it.q.Manual {
 			return nextKey{}
+		}
+		if text == "" {
+			if n.confirm != it.id() {
+				n.confirm = it.id()
+				n.flash = "enter again to say the steps are done"
+				return nextKey{}
+			}
+			text = "Done."
 		}
 		if err := n.env.Store.Answer(it.row.goal.Name, it.q.ID, text, n.env.Now()); err != nil {
 			n.err = err
@@ -635,6 +645,38 @@ func (n *Next) moreKey(it item, msg tea.KeyPressMsg) nextKey {
 	return nextKey{cmd: cmd}
 }
 
+// lower is what shows below the item: the answer box, or what can be done
+// with it.
+func (n *Next) lower(it item, w int) []string {
+	var acts []action
+	hint := answerHint
+	switch it.kind {
+	case itemQuestion:
+		if it.q.Manual {
+			hint = manualHint
+		}
+		return n.answerBox(hint, w)
+	case itemFinish:
+		acts, hint = finishActions(it), moreHint
+	case itemPlan:
+		acts, hint = planActions(it), planHint
+	default:
+		return nil
+	}
+	if n.more {
+		return n.answerBox(hint, w)
+	}
+	lines := make([]string, 0, len(acts))
+	for i, a := range acts {
+		mark := "  "
+		if i == n.act {
+			mark = tui.Color("› ", tui.Accent)
+		}
+		lines = append(lines, mark+tui.Color(a.key, tui.Yellow)+"  "+a.label)
+	}
+	return lines
+}
+
 // answerBox is the answer box sized to w, hinting what to write.
 func (n *Next) answerBox(hint string, w int) []string {
 	n.answer.Placeholder = hint
@@ -687,27 +729,7 @@ func (n *Next) render(focused bool, foot []string) string {
 	}
 	w := max(n.width-2, 20)
 	ctxLines := n.contextLines(*it, w)
-	var lower []string
-	switch it.kind {
-	case itemQuestion:
-		lower = n.answerBox(answerHint, w)
-	case itemFinish, itemPlan:
-		acts, hint := finishActions(*it), moreHint
-		if it.kind == itemPlan {
-			acts, hint = planActions(*it), planHint
-		}
-		if n.more {
-			lower = n.answerBox(hint, w)
-			break
-		}
-		for i, a := range acts {
-			mark := "  "
-			if i == n.act {
-				mark = tui.Color("› ", tui.Accent)
-			}
-			lower = append(lower, mark+tui.Color(a.key, tui.Yellow)+"  "+a.label)
-		}
-	}
+	lower := n.lower(*it, w)
 	used := len(ctxLines) + 2 + len(foot)
 	if len(lower) > 0 {
 		used += len(lower) + 1
@@ -785,13 +807,21 @@ func (n *Next) contextLines(it item, w int) []string {
 	case itemQuestion:
 		if it.task != nil {
 			asked := fmt.Sprintf("Asked by task %s: %s", it.task.ID, it.task.Title)
+			if it.q.Manual {
+				asked = fmt.Sprintf(
+					"%s Steps to do by hand, for task %s: %s",
+					emoji("👤"),
+					it.task.ID,
+					it.task.Title,
+				)
+			}
 			if r.intake {
 				asked = "Asked while sorting: " + roster.Clip(it.task.Body)
 			}
 			lines = append(lines, clipLines(asked, w, 2)...)
 		}
 	case itemPlan:
-		lines = append(lines, tui.Dim("Grilling's plan, waiting for you to sign it off"))
+		lines = append(lines, tui.Dim("Grilling's plan, waiting for you to approve it"))
 	case itemFinish:
 		lines = append(lines, tui.Dim("All its work is done and reviewed"))
 	case itemReview:
@@ -917,8 +947,13 @@ func (n *Next) onScreen() (goal, context string) {
 	}
 	switch it.kind {
 	case itemQuestion:
+		what := "question"
+		if it.q.Manual {
+			what = "manual steps"
+		}
 		return goal, fmt.Sprintf(
-			"question %s of %s (%q), from task %s: %s",
+			"%s %s of %s (%q), from task %s: %s",
+			what,
 			it.q.ID,
 			g.Name,
 			g.Title,
@@ -926,7 +961,7 @@ func (n *Next) onScreen() (goal, context string) {
 			excerpt(it.q.Text),
 		)
 	case itemPlan:
-		return goal, fmt.Sprintf("the plan of %s (%q), waiting for sign-off: %s", g.Name, g.Title,
+		return goal, fmt.Sprintf("the plan of %s (%q), waiting for approval: %s", g.Name, g.Title,
 			excerpt(it.row.plan.Summary))
 	case itemFinish:
 		return goal, fmt.Sprintf("%s (%q), ready to finish", g.Name, g.Title)

@@ -208,11 +208,15 @@ const (
 	QuestionClosed QuestionState = "closed"
 )
 
-// Question is something an agent needs the human to decide. The task that
-// raised it is blocked until it is answered (ADR 0009).
+// Question is something an agent needs the human to decide, or to do. The
+// task that raised it is blocked until it is answered (ADR 0009).
 type Question struct {
-	ID       string    `yaml:"id"`
-	Task     string    `yaml:"task"`
+	ID   string `yaml:"id"`
+	Task string `yaml:"task"`
+	// Manual marks steps the human has to do by hand, such as running tofu
+	// apply, rather than a decision: its answer says they are done, or what
+	// happened instead.
+	Manual   bool      `yaml:"manual,omitempty"`
 	Created  time.Time `yaml:"created"`
 	Answer   string    `yaml:"answer,omitempty"`
 	Answered time.Time `yaml:"answered,omitempty"`

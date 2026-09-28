@@ -72,6 +72,7 @@ func Prompt(in PromptInput) string {
 			"passing the gate.\n",
 	)
 	b.WriteString(askGuide)
+	b.WriteString(manualGuide)
 	b.WriteString(newGoalGuide)
 	b.WriteString(
 		"- A task you don't mark done goes back in the queue, and a later session continues from " +
@@ -182,6 +183,15 @@ const askGuide = "    Ask only what changes what gets built, how it is shaped or
 	"the card, function, file, command output or case it is about, quoted briefly, so the choice is " +
 	"concrete rather than abstract. End with your recommended answer and why. Write plain sentences, " +
 	"with no headings and no capitals for emphasis.\n"
+
+// manualGuide is how an agent hands the human what only they can do.
+const manualGuide = "  - `diatom task manual <id> \"<steps>\"` when the task needs the human to do " +
+	"something by hand that you can't or mustn't, such as running `tofu apply`, signing in to a " +
+	"service, or setting a secret. The task is parked until they say it is done, and their reply comes " +
+	"back in the task text, so finish what you can first and leave the files passing the gate.\n" +
+	"    Write numbered steps the human can follow without the code open: the exact commands, " +
+	"where to run them, what to check in the output, and what to do if it fails. Say why each step " +
+	"is needed, briefly, and never ask for a decision here: that is a question.\n"
 
 // newGoalGuide is how a session other than triage starts a goal: only when
 // the human asks for one.

@@ -20,5 +20,6 @@ New work doesn't always come as a well-formed goal. After a playtest, the human 
 - **Planning sessions can't end without reporting.** A question or plan written only in the agent's reply reaches nobody, so the Stop hook of triage and grilling sends the agent back, twice at most, until each task is asked about or handed in.
 - **Asking for a new goal is itself an intake**, so there is one input path for everything. "Turn `docs/todo-agent.md` into goals, one per section" is one intake, which triage turns into several goals.
 - **A question parks its task, and the session ends.** The worker moves on to other ready work. The answer makes the task ready again and is added to its context.
+- **Manual steps are a question too.** What only the human may do, such as applying infrastructure, is handed to them as numbered steps that park the task the same way. Their answer says the steps are done, or what happened instead, so a failed apply comes back to the agent as context rather than as a guess. The goal shows 👤 while it waits on them.
 - **Grilling works in rounds.** Each round is one set of questions, and the answers queue the next round.
 - **Questions from every goal and from triage appear in Next** (ADR 0007), so a question from a goal the human isn't looking at still reaches them.

@@ -395,8 +395,12 @@ func (h *Harness) applyAnswers(s *queue.Store, goal string) error {
 		if err != nil {
 			return err
 		}
-		t.Body = appendSection(t.Body, "Question "+q.ID, q.Text)
-		t.Body = appendSection(t.Body, "Answer "+q.ID, q.Answer)
+		asked, answer := "Question ", "Answer "
+		if q.Manual {
+			asked, answer = "Manual steps ", "Done by hand "
+		}
+		t.Body = appendSection(t.Body, asked+q.ID, q.Text)
+		t.Body = appendSection(t.Body, answer+q.ID, q.Answer)
 		if t.State == queue.Blocked && !stillBlocked(t.ID, q.ID, open) {
 			if err := s.Move(goal, t, queue.Pending); err != nil {
 				return err

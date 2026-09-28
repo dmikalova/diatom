@@ -71,9 +71,9 @@ ready. The nav down the left lists:
 - **Intake**: what triage is sorting, and its questions.
 - **The goals**, each on two lines: a glyph for where it stands and its
   title, then the one thing about it that matters most now, such as
-  `2 questions`, `48 hunks to review` or `blocked`. The glyph is 🤖 while an
-  agent works on the goal, and 🔀 while diatom commits a session's work or
-  lands the goal.
+  `2 questions`, `48 hunks to review` or `blocked`. The glyph is 👤 while
+  the goal waits on steps you do by hand, 🤖 while an agent works on it, and
+  🔀 while diatom commits a session's work or lands it.
 - **A menu** at the foot: ☑️ Finished lists the finished goals, the latest
   first; 📒 the scheduler's log, which `L` opens too; and 💰 Spending shows
   what each of the last 30 days cost against the budget, with `enter` on a day
@@ -151,6 +151,13 @@ from the list of what can be done below it:
 
 On a planning goal's page, `a` opens its plan the same way, and after it any
 questions the goal still has.
+
+Some work needs you to do something by hand that agents mustn't, such as
+running `tofu apply` or setting a secret. The agent finishes what it can,
+then hands you numbered steps, which come to Next with the questions, marked
+👤. Do them, then press `enter` twice with nothing typed to say they are
+done, or write what happened instead, such as the error you got. Either way
+the task picks up again with your reply.
 
 With the terminal in the background, a notification says when Next has
 something again after having nothing.

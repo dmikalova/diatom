@@ -109,6 +109,9 @@ const (
 	EntryDone = "done"
 	EntryAsk  = "ask"
 	EntryNote = "note"
+	// EntryManual gives the human steps to do by hand, a question whose
+	// answer says they are done.
+	EntryManual = "manual"
 	// EntryAdd is a task triage adds to one of a goal's workstreams.
 	EntryAdd = "add"
 	// EntryFeedback is feedback triage passes to a goal in grilling.
@@ -156,7 +159,8 @@ type Report struct {
 	Done map[string]bool
 	// Finished are the done entries in the order the agent reported them.
 	Finished []Entry
-	// Questions are the questions the agent asked, in order.
+	// Questions are the questions the agent asked, and the manual steps it
+	// gave, in order.
 	Questions []Entry
 	// Notes are the notes the agent added, in order.
 	Notes []Entry
@@ -187,7 +191,7 @@ func ReadReport(dir string) (Report, error) {
 		case EntryDone:
 			r.Done[e.Task] = true
 			r.Finished = append(r.Finished, e)
-		case EntryAsk:
+		case EntryAsk, EntryManual:
 			r.Questions = append(r.Questions, e)
 		case EntryNote:
 			r.Notes = append(r.Notes, e)

@@ -138,7 +138,11 @@ func (s *Status) detailActions() []action {
 	if row != nil && row.questions > 0 {
 		// a answers them, and goes on to the plan when there is one.
 		acts = slices.DeleteFunc(acts, func(a action) bool { return a.key == "a" })
-		acts = append([]action{{"a", "Answer its " + count(row.questions, "question")}}, acts...)
+		label := "Answer its " + count(row.questions, "question")
+		if row.manual == row.questions {
+			label = "Do its " + manualLabel(row.manual)
+		}
+		acts = append([]action{{"a", label}}, acts...)
 	}
 	return acts
 }

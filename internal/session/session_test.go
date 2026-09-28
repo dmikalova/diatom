@@ -29,6 +29,7 @@ func TestSpecAndReport(t *testing.T) {
 		{Type: EntryNote, Task: "0001", Text: "found it"},
 		{Type: EntryDone, Task: "0001"},
 		{Type: EntryAsk, Task: "0002", Text: "Which timing wins?"},
+		{Type: EntryManual, Task: "0002", Text: "Run tofu apply."},
 	} {
 		if err := Append(dir, spec, e); err != nil {
 			t.Fatal(err)
@@ -43,7 +44,8 @@ func TestSpecAndReport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !r.Done["0001"] || r.Done["0002"] || len(r.Questions) != 1 || len(r.Notes) != 1 {
+	if !r.Done["0001"] || r.Done["0002"] || len(r.Questions) != 2 ||
+		r.Questions[1].Type != EntryManual || len(r.Notes) != 1 {
 		t.Errorf("Report = %+v", r)
 	}
 }

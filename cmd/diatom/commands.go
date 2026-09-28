@@ -74,7 +74,7 @@ func cmdTask(ctx context.Context, args []string, stdin io.Reader, stdout io.Writ
 		return fmt.Errorf("%w: task needs a subcommand", errUsage)
 	}
 	switch sub, rest := args[0], args[1:]; sub {
-	case session.EntryDone, session.EntryNote, session.EntryAsk:
+	case session.EntryDone, session.EntryNote, session.EntryAsk, session.EntryManual:
 		return taskReport(ctx, sub, rest, stdout)
 	case "add-task", "after", "feedback", "new-goal", "plan":
 		return planningReport(sub, rest, stdin, stdout)
@@ -141,6 +141,13 @@ func taskReport(ctx context.Context, typ string, args []string, stdout io.Writer
 		_, _ = fmt.Fprintf(
 			stdout,
 			"Your question is queued for the human and task %s is parked. Move on to the other tasks.\n",
+			e.Task,
+		)
+	case session.EntryManual:
+		_, _ = fmt.Fprintf(
+			stdout,
+			"Your steps are queued for the human and task %s is parked until they say they are done. "+
+				"Move on to the other tasks.\n",
 			e.Task,
 		)
 	default:

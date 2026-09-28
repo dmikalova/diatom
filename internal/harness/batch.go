@@ -617,10 +617,9 @@ func (h *Harness) finish(
 	}
 	asked := map[string]bool{}
 	for _, q := range report.Questions {
-		if err := s.AddQuestion(
-			g.Name,
-			&queue.Question{Task: q.Task, Text: q.Text, Created: h.now()},
-		); err != nil {
+		if err := s.AddQuestion(g.Name, &queue.Question{
+			Task: q.Task, Text: q.Text, Manual: q.Type == session.EntryManual, Created: h.now(),
+		}); err != nil {
 			return err
 		}
 		asked[q.Task] = true

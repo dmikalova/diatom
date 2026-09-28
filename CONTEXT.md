@@ -80,6 +80,10 @@ _Avoid_: skip, snooze, postpone
 Something an agent needs the human to decide. The task that raised it is parked until it is answered.
 _Avoid_: prompt, query, blocker
 
+**Manual steps**:
+A question that asks the human to do something by hand rather than to decide, such as running `tofu apply`: the task is parked until they say it is done.
+_Avoid_: manual task, chore
+
 **Answer**:
 The human's reply to a question. It makes the parked task ready again.
 _Avoid_: response, reply
