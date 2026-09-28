@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dmikalova/diatom/internal/commitmsg"
 	"github.com/dmikalova/diatom/internal/gate"
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/queue"
@@ -382,5 +383,30 @@ func TestPushAndOpenPRs(t *testing.T) {
 	if err := push(f.ctx, f.store, f.goal, res, "origin"); err == nil ||
 		!strings.Contains(err.Error(), "main on origin moved on") {
 		t.Errorf("push onto a moved main = %v", err)
+	}
+}
+
+// TestBuildWrapsLongBodies pins that a commit whose body was written before
+// diatom wrapped its messages lands with its body wrapped.
+func TestBuildWrapsLongBodies(t *testing.T) {
+	f := newFixture(t)
+	long := "Document the two self-repeat templates (sentence vs. arrow form) and when each " +
+		"applies. Register the Repeat rule term to the effect rules index with its definition."
+	sha := f.work("engine", "engine.txt", "ward\n", "docs: add rule 39\n\n"+long)
+	f.task("engine", sha)
+	res := f.build(Options{
+		Gate: "check",
+		RunGate: func(context.Context, string, string) (gate.Result, error) {
+			return gate.Result{Passed: true}, nil
+		},
+	})
+	body := f.git("log", "-1", "--format=%b", res.Tip())
+	for l := range strings.SplitSeq(body, "\n") {
+		if len(l) > commitmsg.BodyWidth {
+			t.Errorf("a %d-column line landed: %q", len(l), l)
+		}
+	}
+	if !strings.Contains(strings.ReplaceAll(body, "\n", " "), long) {
+		t.Errorf("the body changed:\n%s", body)
 	}
 }

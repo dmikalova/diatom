@@ -423,6 +423,13 @@ func (r Repo) Commit(ctx context.Context, message string) (string, error) {
 	return r.RevParse(ctx, "HEAD")
 }
 
+// Amend gives HEAD a new message, its change as it is.
+func (r Repo) Amend(ctx context.Context, message string) error {
+	_, err := r.run(ctx, nil, strings.NewReader(message),
+		"commit", "--amend", "--no-verify", "--allow-empty", "--file=-")
+	return err
+}
+
 // CommitMerge stages everything and commits the merge in progress with git's
 // default message.
 func (r Repo) CommitMerge(ctx context.Context) (string, error) {

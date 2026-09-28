@@ -90,7 +90,8 @@ func Prompt(in Input) string {
 	var b strings.Builder
 	b.WriteString("Write a semantic commit message (Conventional Commits format) for this change. ")
 	b.WriteString("Output ONLY the commit message, nothing else. ")
-	b.WriteString("Use a short subject line and optionally a body separated by a blank line.\n\n")
+	b.WriteString("Use a short subject line and optionally a body separated by a blank line. ")
+	fmt.Fprintf(&b, "Wrap the body at %d columns.\n\n", BodyWidth)
 	if len(in.Titles) > 0 {
 		b.WriteString("The change completes these tasks:\n\n")
 		for _, t := range in.Titles {
@@ -121,7 +122,83 @@ func Clean(text string) (string, error) {
 	if i := indexFence(lines); i >= 0 {
 		lines = lines[:i]
 	}
-	return strings.TrimSpace(strings.Join(lines, "\n")) + "\n", nil
+	return Wrap(strings.TrimSpace(strings.Join(lines, "\n"))) + "\n", nil
+}
+
+// BodyWidth is the column a commit body wraps at: git's convention, well
+// inside any commitlint's line limit.
+const BodyWidth = 72
+
+// listItem matches the start of a list item in a body: a bullet or a number.
+var listItem = regexp.MustCompile(`^(\s*(?:[-*+]|\d+[.)])\s+)`)
+
+// trailer matches a git trailer line, such as Co-authored-by: or
+// BREAKING CHANGE:, which must stay on a line of its own.
+var trailer = regexp.MustCompile(`^(?:[A-Za-z][A-Za-z-]*|BREAKING CHANGE): \S`)
+
+// Wrap wraps a message's body at BodyWidth, whatever the model wrote: each
+// paragraph and each list item is filled to the width, a list item's later
+// lines hanging under its text. The subject, indented code and trailers are
+// left as they are.
+func Wrap(msg string) string {
+	subject, body, ok := strings.Cut(msg, "\n")
+	if !ok {
+		return msg
+	}
+	blocks := strings.Split(strings.Trim(body, "\n"), "\n\n")
+	for i, block := range blocks {
+		blocks[i] = wrapBlock(block)
+	}
+	return subject + "\n\n" + strings.Join(blocks, "\n\n")
+}
+
+// wrapBlock fills one paragraph of a body, or each item of a list.
+func wrapBlock(block string) string {
+	lines := strings.Split(block, "\n")
+	for _, l := range lines {
+		if strings.HasPrefix(l, "    ") || strings.HasPrefix(l, "\t") || trailer.MatchString(l) {
+			return block
+		}
+	}
+	var out []string
+	var mark, text string
+	flush := func() {
+		if mark != "" || text != "" {
+			out = append(out, fill(mark, text)...)
+		}
+		mark, text = "", ""
+	}
+	for _, l := range lines {
+		if m := listItem.FindString(l); m != "" {
+			flush()
+			mark, text = m, strings.TrimSpace(l[len(m):])
+			continue
+		}
+		text = strings.TrimSpace(text + " " + strings.TrimSpace(l))
+	}
+	flush()
+	return strings.Join(out, "\n")
+}
+
+// fill wraps text at BodyWidth after mark, the later lines indented under
+// the text. A word longer than the width, such as a URL, keeps a line of its
+// own.
+func fill(mark, text string) []string {
+	indent := strings.Repeat(" ", len(mark))
+	var lines []string
+	line := mark
+	for w := range strings.FieldsSeq(text) {
+		switch {
+		case len(line) == len(mark):
+			line += w
+		case len(line)+1+len(w) > BodyWidth:
+			lines = append(lines, line)
+			line = indent + w
+		default:
+			line += " " + w
+		}
+	}
+	return append(lines, line)
 }
 
 func indexFence(lines []string) int {

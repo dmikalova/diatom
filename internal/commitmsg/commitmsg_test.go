@@ -102,3 +102,44 @@ func TestGenerateRunsCheck(t *testing.T) {
 		t.Errorf("Generate with check = %q, %v", msg, err)
 	}
 }
+
+func TestWrap(t *testing.T) {
+	long := "docs: add rule 39\n\nDocument the two self-repeat templates (sentence vs. arrow form) and when " +
+		"each applies. Register the Repeat rule term\nwith its definition.\n\n" +
+		"- a list item that runs well past the width and so wraps under its own text, not the margin\n" +
+		"- short\n\n" +
+		"    indented code stays exactly as it is, however long it is, so nothing in it moves at all\n\n" +
+		"Refs: https://example.com/a/very/long/url/that/stays/on/its/own/line/unbroken/by/the/wrap\n" +
+		"Co-authored-by: A <a@b.c>"
+	got := Wrap(long)
+	want := "docs: add rule 39\n\n" +
+		"Document the two self-repeat templates (sentence vs. arrow form) and\n" +
+		"when each applies. Register the Repeat rule term with its definition.\n\n" +
+		"- a list item that runs well past the width and so wraps under its own\n" +
+		"  text, not the margin\n" +
+		"- short\n\n" +
+		"    indented code stays exactly as it is, however long it is, so nothing in it moves at all\n\n" +
+		"Refs: https://example.com/a/very/long/url/that/stays/on/its/own/line/unbroken/by/the/wrap\n" +
+		"Co-authored-by: A <a@b.c>"
+	if got != want {
+		t.Errorf("Wrap =\n%s\nwant\n%s", got, want)
+	}
+	if Wrap("fix: only a subject") != "fix: only a subject" {
+		t.Error("a subject alone changed")
+	}
+	if got := fill("", strings.Repeat("x", 90)+" y"); len(got) != 2 || got[1] != "y" {
+		t.Errorf("a long word = %q", got)
+	}
+	msg, err := Clean("Here it is:\nfeat: x\n\n" + strings.Repeat("word ", 30))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for l := range strings.SplitSeq(msg, "\n") {
+		if len(l) > BodyWidth {
+			t.Errorf("Clean left a %d-column line", len(l))
+		}
+	}
+	if !strings.Contains(Prompt(Input{}), "Wrap the body at 72 columns") {
+		t.Error("the prompt doesn't ask for the width")
+	}
+}

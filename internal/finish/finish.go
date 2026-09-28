@@ -16,6 +16,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"github.com/dmikalova/diatom/internal/commitmsg"
 	"github.com/dmikalova/diatom/internal/gate"
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/queue"
@@ -640,6 +641,38 @@ func apply(ctx context.Context, wt git.Repo, st *step, resolve Resolver) ([]stri
 
 // pick replays one commit, dropping it if the base already has it.
 func pick(ctx context.Context, wt git.Repo, c commit, resolve Resolver) error {
+	before, err := wt.RevParse(ctx, "HEAD")
+	if err != nil {
+		return err
+	}
+	if err := replayOne(ctx, wt, c, resolve); err != nil {
+		return err
+	}
+	return rewrap(ctx, wt, before)
+}
+
+// rewrap wraps the message of the commit just replayed, when HEAD moved
+// from before, at the width diatom writes: a commit made before diatom
+// wrapped its messages, or before the repo's commitlint limited them, lands
+// well formed all the same.
+func rewrap(ctx context.Context, wt git.Repo, before string) error {
+	head, err := wt.RevParse(ctx, "HEAD")
+	if err != nil || head == before {
+		return err
+	}
+	msg, err := wt.Output(ctx, "log", "-1", "--format=%B", "HEAD")
+	if err != nil {
+		return err
+	}
+	msg = strings.TrimRight(msg, "\n")
+	if wrapped := commitmsg.Wrap(msg); wrapped != msg {
+		return wt.Amend(ctx, wrapped+"\n")
+	}
+	return nil
+}
+
+// replayOne cherry-picks one commit, settling what conflicts.
+func replayOne(ctx context.Context, wt git.Repo, c commit, resolve Resolver) error {
 	_, err := wt.Run(ctx, "cherry-pick", "--allow-empty", "--empty=drop", c.sha)
 	if err == nil {
 		return nil
