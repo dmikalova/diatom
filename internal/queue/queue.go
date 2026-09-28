@@ -74,6 +74,9 @@ type Goal struct {
 	// grilling included, until each is finished, merged upstream with its
 	// checks passing (ADR 0003).
 	After []string `yaml:"after,omitempty"`
+	// CaughtUp names the goals of After whose landed work has been merged
+	// into the goal's branches, once each, as the goal stopped waiting.
+	CaughtUp []string `yaml:"caughtUp,omitempty"`
 }
 
 // Workstream is a named line of work within a goal, with its own branch and

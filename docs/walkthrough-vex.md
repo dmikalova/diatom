@@ -121,7 +121,8 @@ Open Intake to watch triage work. Anything it can't decide comes to Next.
 A goal can wait for others: nothing of it runs, grilling included, until they
 are finished (step 7). The nav marks it **blocked** (🔗) with the goal it waits for, and its page names
 the goals it waits for. Its branch then starts from `main` with them landed,
-so it never overlaps them.
+so it never overlaps them. A branch grilling made before they landed has
+`main` merged in once as the goal stops waiting.
 
 ## 4. Next: answer questions, then sign off each plan
 

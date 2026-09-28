@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -302,6 +303,9 @@ func (h *Harness) loadGoal(
 		// have landed: its branch then starts from them (ADR 0003).
 		return &schedule.Goal{}, nil
 	}
+	if err := h.catchUpAfter(ctx, repo, g); err != nil {
+		return nil, err
+	}
 	switch {
 	case g.Name == queue.IntakeGoal:
 	case g.State == queue.GoalActive:
@@ -340,6 +344,40 @@ func (h *Harness) loadGoal(
 		}
 	}
 	return sg, nil
+}
+
+// catchUpAfter merges into a goal that waited what the goals it waited for
+// landed, once for each, as it stops waiting. A branch made before they
+// landed, such as by the grilling that found the goal must wait, would
+// otherwise go on without them. A merge that conflicts goes to an agent, as
+// catching up before landing does.
+func (h *Harness) catchUpAfter(ctx context.Context, repo Repo, g *queue.Goal) error {
+	var fresh []string
+	for _, a := range g.After {
+		if !slices.Contains(g.CaughtUp, a) {
+			fresh = append(fresh, a)
+		}
+	}
+	if len(fresh) == 0 {
+		return nil
+	}
+	main := git.Repo{Dir: repo.Store.Repo()}
+	if main.BranchExists(ctx, g.IntegrationBranch()) {
+		unlock := h.lockRepo(main.Dir)
+		up, err := finish.CatchUp(ctx, repo.Store, g, "origin", h.now())
+		unlock()
+		if err != nil {
+			return fmt.Errorf(
+				"merging %s's landed work into it: %w",
+				strings.Join(fresh, ", "),
+				err,
+			)
+		}
+		h.log().Info("a goal that waited took in what it waited for", "goal", g.Name,
+			"after", fresh, "clean", up)
+	}
+	g.CaughtUp = append(g.CaughtUp, fresh...)
+	return repo.Store.SaveGoal(g)
 }
 
 // applyAnswers adds each answered question's answer to its task, makes the

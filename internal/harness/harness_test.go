@@ -906,3 +906,59 @@ func TestBudgetHoldsNewSessions(t *testing.T) {
 		t.Errorf("the budget clearing unlogged:\n%s", logged.String())
 	}
 }
+
+// TestAGoalThatWaitedTakesInWhatLanded pins that a goal whose branch was made
+// before the goals it waited for landed, as grilling makes it, merges their
+// work in once as it stops waiting.
+func TestAGoalThatWaitedTakesInWhatLanded(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	if err := f.store.CreateGoal(
+		&queue.Goal{Name: "early", Title: "Early", State: queue.GoalFinished,
+			Base: "main"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	late := &queue.Goal{Name: "late", Title: "Late", State: queue.GoalPlanning, Base: "main",
+		After: []string{"early"}}
+	if err := f.store.CreateGoal(late); err != nil {
+		t.Fatal(err)
+	}
+	// Its branch, from before early landed.
+	if err := f.main.CreateBranch(ctx, late.IntegrationBranch(), "main"); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, f.main.Dir, "early.txt", "landed\n")
+	if _, err := f.main.StageAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	landed, err := f.main.Commit(ctx, "feat: early")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.h.plan(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	if in, err := f.main.IsAncestor(ctx, landed, late.IntegrationBranch()); err != nil || !in {
+		t.Fatalf("the goal's branch lacks what landed: %v, %v", in, err)
+	}
+	g, _ := f.store.Goal("late")
+	if !slices.Equal(g.CaughtUp, []string{"early"}) {
+		t.Errorf("caught up = %v", g.CaughtUp)
+	}
+	// Once only: later work on main isn't merged in on every pass.
+	writeFile(t, f.main.Dir, "later.txt", "later\n")
+	if _, err := f.main.StageAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	later, err := f.main.Commit(ctx, "feat: later")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.h.plan(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	if in, _ := f.main.IsAncestor(ctx, later, late.IntegrationBranch()); in {
+		t.Error("main was merged in again")
+	}
+}
