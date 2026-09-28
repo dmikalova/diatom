@@ -149,6 +149,11 @@ directory up to your home, then `~/.config/diatom/config.toml`. The closest file
 wins. The built-in defaults are in
 [`internal/config/defaults.toml`](internal/config/defaults.toml).
 
+diatom reads the config once, when it starts. A change takes effect the next
+time it starts, which `U` does without losing any running session, so a
+mistake saved mid-run can't stop the scheduler: diatom refuses to start on it
+instead, naming the file and line.
+
 Every repo needs a gate, the check every commit must pass. A repo that sets
 none gets the one `[gates]` names for its kind of project: go (a `go.mod`),
 node (`package.json`), deno (`deno.json`), rust (`Cargo.toml`) or python
@@ -162,7 +167,7 @@ gateTimeout = "2m"                # a gate running longer is stuck, and fails
 commandTimeout = "30s"            # an agent's command running longer is stopped
 autoApprove = ["*_test.go"]       # files whose hunks are approved without review
 maxSessions = 1                   # sessions at once in this repo
-maxBatch = 5                      # tasks per session, following chains of dependent tasks
+maxBatch = 10                     # tasks per session, following chains of dependent tasks
 commitCheck = "project-standards commit-msg"   # lints a commit message file
 instructions = ["~/notes/go.md"] # more files for every agent's system prompt
 skills = ["grill-me", "grilling"] # skills every session may load: names in ~/.claude/skills, or paths

@@ -36,7 +36,7 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if c.GateAttempts != 3 || c.MaxSessions != 1 || c.MaxBatch != 5 {
+	if c.GateAttempts != 3 || c.MaxSessions != 1 || c.MaxBatch != 10 {
 		t.Errorf("defaults = %+v", c.Repo)
 	}
 	p, err := c.Profile("implementation")
@@ -120,18 +120,6 @@ func TestLoadErrors(t *testing.T) {
 				t.Errorf("Load error = %v, want it to contain %q", err, tt.want)
 			}
 		})
-	}
-}
-
-func TestLoadHome(t *testing.T) {
-	_, paths := tree(t)
-	write(t, paths.XDG, "autoUpdate = true\n")
-	c, err := LoadHome(paths)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !c.AutoUpdate {
-		t.Error("AutoUpdate = false")
 	}
 }
 

@@ -10,7 +10,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/dmikalova/diatom/internal/config"
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/schedule"
@@ -151,7 +150,7 @@ func (h *Harness) Resume(ctx context.Context, r Resumable) error {
 }
 
 func (h *Harness) resume(ctx context.Context, r Resumable) error {
-	cfg, err := config.Load(r.Repo, h.Paths)
+	cfg, err := h.config(r.Repo)
 	if err != nil {
 		return err
 	}

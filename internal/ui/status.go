@@ -49,6 +49,17 @@ type Env struct {
 	// unsettled.
 	Runner runner.Runner
 	Exe    string
+	// Config is the repo's config, read once when diatom starts: a change
+	// to it takes effect on the next start. Nil reads it afresh each time.
+	Config *config.Config
+}
+
+// config is the repo's config.
+func (e Env) config() (*config.Config, error) {
+	if e.Config != nil {
+		return e.Config, nil
+	}
+	return config.Load(e.Store.Repo(), e.Paths)
 }
 
 // now is the window's clock.
@@ -185,7 +196,7 @@ func (s *Status) reload() {
 	s.days = s.spent.Days(store, s.env.now())
 	s.totals = spend.Sum(s.days, s.env.now())
 	land := ""
-	if cfg, err := config.Load(store.Repo(), s.env.Paths); err == nil {
+	if cfg, err := s.env.config(); err == nil {
 		s.budget, land = cfg.Budget, cfg.Land
 	}
 	goals, err := store.Goals()
@@ -386,7 +397,7 @@ func (s *Status) toReview(store *queue.Store, goal string, commits []string) (in
 func reviewSettlements(
 	ctx context.Context,
 	s *queue.Store,
-	paths config.Paths,
+	env Env,
 	run runner.Runner,
 	exe string,
 	g *queue.Goal,
@@ -408,7 +419,7 @@ func reviewSettlements(
 		if err := finish.Discard(s.GoalDir(g.Name)); err != nil {
 			return "", err
 		}
-		if *res, err = prepare(ctx, s, paths, run, exe, g, log); err != nil {
+		if *res, err = prepare(ctx, s, env, run, exe, g, log); err != nil {
 			return "", err
 		}
 		if waiting, _, err = finish.Settled(ctx, s, g, *res); err != nil {
@@ -554,7 +565,7 @@ const gateLines = 20
 func prepare(
 	ctx context.Context,
 	s *queue.Store,
-	paths config.Paths,
+	env Env,
 	run runner.Runner,
 	exe string,
 	g *queue.Goal,
@@ -564,7 +575,7 @@ func prepare(
 	if err != nil || res != nil && res.Failing() == nil {
 		return res, err
 	}
-	cfg, err := config.Load(s.Repo(), paths)
+	cfg, err := env.config()
 	if err != nil {
 		return nil, err
 	}
@@ -809,9 +820,9 @@ func (s *Status) start(j job) tea.Cmd {
 		return func() tea.Msg { return jobMsg{err: err} }
 	}
 	s.busy, s.busyGoal, s.logGoal, s.log = j.what, g.Name, g.Name, &jobLog{}
-	paths, run, exe, ctx, log := s.env.Paths, s.env.Runner, s.env.Exe, s.ctx, s.log
+	env, run, exe, ctx, log := s.env, s.env.Runner, s.env.Exe, s.ctx, s.log
 	return tea.Batch(func() tea.Msg {
-		flash, err := runFinish(ctx, store, paths, run, exe, g, j.key, log)
+		flash, err := runFinish(ctx, store, env, run, exe, g, j.key, log)
 		return jobMsg{flash: flash, err: err}
 	}, jobTick())
 }
@@ -853,7 +864,7 @@ func (l *jobLog) tail(n int) []string {
 func runFinish(
 	ctx context.Context,
 	s *queue.Store,
-	paths config.Paths,
+	env Env,
 	run runner.Runner,
 	exe string,
 	g *queue.Goal,
@@ -883,7 +894,7 @@ func runFinish(
 			return "", err
 		}
 	}
-	res, err := prepare(ctx, s, paths, run, exe, g, log)
+	res, err := prepare(ctx, s, env, run, exe, g, log)
 	if err != nil {
 		if wasActive {
 			// Nothing is ready to land, so the goal isn't done after all.
@@ -895,7 +906,7 @@ func runFinish(
 	if note, err := reviewSettlements(
 		ctx,
 		s,
-		paths,
+		env,
 		run,
 		exe,
 		g,

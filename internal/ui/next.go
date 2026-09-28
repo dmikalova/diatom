@@ -11,7 +11,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/dmikalova/diatom/internal/config"
 	"github.com/dmikalova/diatom/internal/finish"
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/intake"
@@ -509,7 +508,7 @@ func (n *Next) approve(it item, byEnter bool) tea.Cmd {
 			g.Name, len(it.row.plan.Workstreams), len(it.row.plan.Tasks))
 		return nil
 	}
-	cfg, err := config.Load(n.env.Store.Repo(), n.env.Paths)
+	cfg, err := n.env.config()
 	if err == nil {
 		err = plan.Approve(n.ctx, n.env.Store, cfg, g.Name, n.env.Now())
 	}

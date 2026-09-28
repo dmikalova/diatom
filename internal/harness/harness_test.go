@@ -342,6 +342,26 @@ func TestQuestionParksAndAnswerResumes(t *testing.T) {
 	}
 }
 
+// TestConfigIsReadOnce pins that the scheduler runs on the config it was
+// started with: a mistake saved to the config file mid-run doesn't stop it.
+func TestConfigIsReadOnce(t *testing.T) {
+	f := newFixture(t)
+	cfg, err := config.Load(f.h.Root, f.h.Paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.h.Config = cfg
+	writeFile(t, f.h.Paths.XDG, "config.toml", "[gates]\ngo = \"x\"\nskills = [\"grill-me\"]\n")
+	task := f.add("engine", "Add ward")
+	f.agent.act = func(_ *testing.T, _ string, s agentSession) { s.report(session.EntryDone, task.ID, "") }
+	if got := f.step(); len(got) != 1 {
+		t.Fatalf("batches = %+v", got)
+	}
+	if got := f.task(task.ID); got.State != queue.Done {
+		t.Errorf("task is %s", got.State)
+	}
+}
+
 func TestManualStepsParkUntilDone(t *testing.T) {
 	f := newFixture(t)
 	task := f.add("engine", "Add the bucket")

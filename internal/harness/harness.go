@@ -32,6 +32,10 @@ type Harness struct {
 	Paths config.Paths
 	// Root is the repo the scheduler works in, one per scheduler (ADR 0007).
 	Root string
+	// Config is Root's config, read once when diatom starts, so a change to
+	// it, or a mistake in it, takes effect on the next start rather than
+	// stopping the running scheduler. Nil reads it afresh each time.
+	Config *config.Config
 	// Runner runs agent sessions.
 	Runner runner.Runner
 	// Exe is the diatom binary the agent's hooks and task tool run.
@@ -244,10 +248,18 @@ func (h *Harness) overBudget(repo Repo) bool {
 	return over != ""
 }
 
+// config is the repo's config: the one read at start for Root.
+func (h *Harness) config(repo string) (*config.Config, error) {
+	if h.Config != nil && repo == h.Root {
+		return h.Config, nil
+	}
+	return config.Load(repo, h.Paths)
+}
+
 // load reads one repo's active goals and their ready tasks, applying answered
 // questions first so their tasks are ready again.
 func (h *Harness) load(ctx context.Context, path string) (Repo, []*schedule.Goal, error) {
-	cfg, err := config.Load(path, h.Paths)
+	cfg, err := h.config(path)
 	if err != nil {
 		return Repo{}, nil, err
 	}

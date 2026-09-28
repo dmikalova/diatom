@@ -44,7 +44,10 @@ func cmdApp(ctx context.Context) error {
 	if err := ensureGate(s, paths, os.Stdin, os.Stderr, terminal(os.Stdin)); err != nil {
 		return err
 	}
-	home, err := config.LoadHome(paths)
+	// The config is read once: a change to it takes effect when diatom
+	// next starts, as U does, and a mistake in it can't stop the running
+	// scheduler.
+	cfg, err := config.Load(s.Repo(), paths)
 	if err != nil {
 		return err
 	}
@@ -54,13 +57,13 @@ func cmdApp(ctx context.Context) error {
 	}
 	defer func() { _ = logFile.Close() }()
 	log := slog.New(slog.NewTextHandler(logFile, nil))
-	up := updater{log: log, auto: home.AutoUpdate, current: update.Current(), goCmd: update.RunGo}
+	up := updater{log: log, auto: cfg.AutoUpdate, current: update.Current(), goCmd: update.RunGo}
 	if bin := up.check(ctx); bin != "" {
 		// Nothing runs yet, so the new release takes over straight away.
 		return update.Exec(bin)
 	}
 
-	sched, err := startScheduler(s, paths, log)
+	sched, err := startScheduler(s, paths, cfg, log)
 	if err != nil {
 		return err
 	}
@@ -69,7 +72,9 @@ func cmdApp(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	env := ui.Env{Store: s, Paths: paths, Now: time.Now, Runner: claude.Runner{}, Exe: exe}
+	env := ui.Env{
+		Store: s, Paths: paths, Now: time.Now, Runner: claude.Runner{}, Exe: exe, Config: cfg,
+	}
 	app := ui.NewApp(ctx, env, sched.Scheduler)
 	p := tea.NewProgram(app, tea.WithoutSignalHandler())
 	sigs := make(chan os.Signal, 1)
@@ -119,7 +124,12 @@ type scheduler struct {
 
 // startScheduler runs the repo's scheduler in the background, or when diatom
 // is open on the repo elsewhere, none: the app then only views.
-func startScheduler(s *queue.Store, paths config.Paths, log *slog.Logger) (*scheduler, error) {
+func startScheduler(
+	s *queue.Store,
+	paths config.Paths,
+	cfg *config.Config,
+	log *slog.Logger,
+) (*scheduler, error) {
 	unlock, err := s.LockScheduler()
 	if err != nil {
 		pid, perr := s.Scheduler()
@@ -149,7 +159,9 @@ func startScheduler(s *queue.Store, paths config.Paths, log *slog.Logger) (*sche
 		suspended()
 	}
 	log.Info("diatom scheduler starting", "version", update.Version(), "repo", s.Repo())
-	h := &harness.Harness{Paths: paths, Root: s.Repo(), Runner: claude.Runner{}, Exe: exe, Log: log}
+	h := &harness.Harness{
+		Paths: paths, Root: s.Repo(), Config: cfg, Runner: claude.Runner{}, Exe: exe, Log: log,
+	}
 	go func() {
 		defer close(done)
 		if sc.err = h.Run(drain, suspend); sc.err != nil {

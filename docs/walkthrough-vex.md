@@ -174,7 +174,7 @@ command and output.
 
 A freed session goes to the most urgent kind of work first: fixes, then
 revisions, triage, grilling and planned work. Among work of the same kind it
-goes to the goal highest in the nav. A session takes up to 5 tasks of one
+goes to the goal highest in the nav. A session takes up to 10 tasks of one
 workstream at once, following a chain of tasks that depend on each other, so
 related work shares one agent's context. A chain that goes from a mechanical
 task to an implementation one runs all of it on the implementation profile.

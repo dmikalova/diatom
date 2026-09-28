@@ -4,7 +4,7 @@ gateAttempts = 3
 gateTimeout = "2m"
 commandTimeout = "30s"
 maxSessions = 1
-maxBatch = 5
+maxBatch = 10
 
 [profiles.planning]
 model = "opus"

@@ -317,12 +317,6 @@ func kindNames() string {
 	return strings.Join(names, ", ")
 }
 
-// LoadHome reads the home settings alone, for the scheduler, which runs
-// outside any one repo.
-func LoadHome(paths Paths) (*Config, error) {
-	return Load("", paths)
-}
-
 // walk returns the config layers for root, furthest (the defaults) first.
 func walk(root string, paths Paths) ([]map[string]any, error) {
 	base, err := parse(defaults, "defaults.toml")
