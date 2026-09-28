@@ -261,7 +261,8 @@ func (h *Harness) finishPlanning(
 			)
 			done = false
 		}
-		if err := h.settle(repo, g.Name, t, done, asked[t.ID]); err != nil {
+		if err := h.settle(repo, g.Name, t, done, asked[t.ID],
+			ended(filepath.Base(dir), res)); err != nil {
 			return err
 		}
 		// A triage that asked is waiting on the human, not done.

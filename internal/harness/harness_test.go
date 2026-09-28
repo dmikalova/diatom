@@ -2,6 +2,7 @@ package harness
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -29,8 +30,10 @@ import (
 // agent stands in for a coding agent: act runs in the session with its
 // worktree and session directory.
 type agent struct {
-	mu       sync.Mutex
-	last     runner.Spec
+	mu   sync.Mutex
+	last runner.Spec
+	// outcome is how each session ends, Completed when unset.
+	outcome  runner.Outcome
 	act      func(t *testing.T, wt string, s agentSession)
 	sessions int
 	t        *testing.T
@@ -96,7 +99,8 @@ func (a *agent) Run(
 		return runner.Result{Usage: runner.Usage{CostUSD: 0.25}}, ctx.Err()
 	}
 	return runner.Result{
-		Outcome: runner.Completed,
+		Outcome: cmp.Or(a.outcome, runner.Completed),
+		Turns:   300,
 		Usage:   runner.Usage{InputTokens: 100, CostUSD: 1},
 	}, nil
 }
@@ -382,6 +386,30 @@ func TestDoneSummaryAndModel(t *testing.T) {
 	spec, err := session.Load(dirs[0])
 	if err != nil || spec.Model != "opus" || spec.Level != "medium" {
 		t.Errorf("spec = %+v, %v", spec, err)
+	}
+}
+
+// TestTurnLimitIsNamed pins that a task left unfinished at the turn limit
+// says so, and that its retry and the human's question say it too.
+func TestTurnLimitIsNamed(t *testing.T) {
+	f := newFixture(t)
+	task := f.add("engine", "Add ward")
+	f.agent.outcome = runner.TurnLimit
+	f.agent.act = func(t *testing.T, wt string, _ agentSession) { writeFile(t, wt, "ward.txt", "x\n") }
+	f.step()
+	got := f.task(task.ID)
+	if got.State != queue.Pending || !strings.Contains(got.Body, "## Unfinished") ||
+		!strings.Contains(got.Body, "hit the turn limit after 300 turns") {
+		t.Fatalf("after one session at the limit: %s %q", got.State, got.Body)
+	}
+	f.step()
+	got = f.task(task.ID)
+	if !strings.Contains(
+		got.Body,
+		"2 sessions ended without finishing the task, the last: Session ",
+	) ||
+		!strings.Contains(got.Body, "turn limit after 300 turns.") {
+		t.Errorf("the retry doesn't say why: %q", got.Body)
 	}
 }
 

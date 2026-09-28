@@ -661,7 +661,8 @@ func (h *Harness) finish(
 		return h.requeue(s, g.Name, tasks, asked, err)
 	}
 	if !passed {
-		return h.failed(ctx, repo, g, wt, tasks, asked, filepath.Base(dir), output)
+		id := filepath.Base(dir)
+		return h.failed(ctx, repo, g, wt, tasks, asked, id, ended(id, res), output)
 	}
 
 	h.settling(dir, "Committing the work")
@@ -675,7 +676,8 @@ func (h *Harness) finish(
 			t.Commits = append(t.Commits, sha)
 		}
 		t.Usage = append(t.Usage, share)
-		if err := h.settle(repo, g.Name, t, report.Done[t.ID], asked[t.ID]); err != nil {
+		if err := h.settle(repo, g.Name, t, report.Done[t.ID], asked[t.ID],
+			ended(filepath.Base(dir), res)); err != nil {
 			return err
 		}
 	}
@@ -751,7 +753,7 @@ func (h *Harness) failed(
 	wt git.Repo,
 	tasks []*queue.Task,
 	asked map[string]bool,
-	id, output string,
+	id, how, output string,
 ) error {
 	if !wt.MergeInProgress(ctx) {
 		if err := wt.Stash(ctx, "diatom: session "+id+" failed the gate"); err != nil {
@@ -766,8 +768,8 @@ func (h *Harness) failed(
 			}
 			continue
 		}
-		reason := fmt.Sprintf("Session %s ended with the gate failing, and its work was stashed "+
-			"(`git stash list` in the worktree):\n\n```text\n%s\n```", id, output)
+		reason := fmt.Sprintf("%s with the gate failing, and its work was stashed "+
+			"(`git stash list` in the worktree):\n\n```text\n%s\n```", how, output)
 		if err := h.escalate(repo, g.Name, t, reason); err != nil {
 			return err
 		}
@@ -864,8 +866,16 @@ func (h *Harness) commitMessage(
 	return wt.Commit(ctx, msg)
 }
 
-// settle moves a task on after a session that passed the gate.
-func (h *Harness) settle(repo Repo, goal string, t *queue.Task, done, asked bool) error {
+// settle moves a task on after a session that passed the gate. A task left
+// unfinished says how its session ended, how the one after it reads, and
+// the retry and the human's question say it again.
+func (h *Harness) settle(
+	repo Repo,
+	goal string,
+	t *queue.Task,
+	done, asked bool,
+	how string,
+) error {
 	s := repo.Store
 	switch {
 	case asked:
@@ -874,15 +884,30 @@ func (h *Harness) settle(repo Repo, goal string, t *queue.Task, done, asked bool
 		return s.Move(goal, t, queue.Done)
 	}
 	t.Attempts++
+	t.Body = appendSection(t.Body, "Unfinished", how+" before the task was done. The work "+
+		"it left passed the gate and was committed; carry on from it.")
 	if t.Attempts >= maxIncomplete {
 		return h.escalate(
 			repo,
 			goal,
 			t,
-			fmt.Sprintf("%d sessions ended without finishing the task.", t.Attempts),
+			fmt.Sprintf("%d sessions ended without finishing the task, the last: %s.",
+				t.Attempts, how),
 		)
 	}
 	return s.Move(goal, t, queue.Pending)
+}
+
+// ended says how a session ended, for a task it left unfinished: at the turn
+// limit, failing, or with the agent stopping on its own.
+func ended(id string, res runner.Result) string {
+	switch res.Outcome {
+	case runner.TurnLimit:
+		return fmt.Sprintf("Session %s hit the turn limit after %d turns", id, res.Turns)
+	case runner.Failed:
+		return fmt.Sprintf("Session %s failed after %d turns", id, res.Turns)
+	}
+	return fmt.Sprintf("Session %s ended after %d turns without marking it done", id, res.Turns)
 }
 
 // escalate retries a failed task once on the same profile and model with one
