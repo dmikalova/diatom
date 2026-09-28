@@ -20,6 +20,7 @@ import (
 	"github.com/dmikalova/diatom/internal/gate"
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/hook"
+	"github.com/dmikalova/diatom/internal/ledger"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/runner"
 	"github.com/dmikalova/diatom/internal/schedule"
@@ -95,6 +96,7 @@ func (h *Harness) Run(stop, kill context.Context) error {
 	if err != nil {
 		return err
 	}
+	h.backfillLedger(kill)
 	p := &slots{
 		running: map[schedule.Running]bool{},
 		cooling: map[schedule.Running]time.Time{},
@@ -228,9 +230,7 @@ func (h *Harness) plan(
 // overBudget reports whether one of the repo's budgets is spent, when no new
 // session may start: the ones running carry on. It logs each change.
 func (h *Harness) overBudget(repo Repo) bool {
-	if h.spent == nil {
-		h.spent = spend.New()
-	}
+	h.tally()
 	b := repo.Config.Budget
 	over := ""
 	if b != (config.Budget{}) {
@@ -457,6 +457,40 @@ func (h *Harness) watchDone(ctx context.Context, s *queue.Store, goals []*queue.
 	}
 }
 
+// tally is what the repo's sessions cost, read once and kept.
+func (h *Harness) tally() *spend.Tally {
+	if h.spent == nil {
+		h.spent = spend.New()
+	}
+	return h.spent
+}
+
+// recordLanded keeps what a goal that just finished landed and cost in the
+// ledger, which outlasts its sessions.
+func (h *Harness) recordLanded(ctx context.Context, s *queue.Store, g *queue.Goal) {
+	l, err := ledger.Measure(ctx, s, h.tally(), g)
+	if err == nil {
+		err = ledger.Record(ledger.Path(h.Paths), l)
+	}
+	if err != nil {
+		h.log().Warn("recording a landed goal in the ledger failed", "goal", g.Name, "err", err)
+		return
+	}
+	h.log().Info("landed goal recorded", "goal", g.Name, "added", l.Added(), "costUSD", l.CostUSD)
+}
+
+// backfillLedger records the repo's finished goals the ledger lacks, such as
+// those that finished before it was kept.
+func (h *Harness) backfillLedger(ctx context.Context) {
+	n, err := ledger.Backfill(ctx, ledger.Path(h.Paths), queue.Open(h.Root), h.tally())
+	if err != nil {
+		h.log().Warn("backfilling the ledger of landed goals failed", "err", err)
+	}
+	if n > 0 {
+		h.log().Info("the ledger took in finished goals", "goals", n)
+	}
+}
+
 // watchLanding finishes a done goal once it has landed upstream: merged into
 // its base branch there, with the checks passing (ADR 0003). A failed check
 // is kept on the goal's layout for the window, and tried again later.
@@ -476,6 +510,7 @@ func (h *Harness) watchLanding(ctx context.Context, s *queue.Store, g *queue.Goa
 		return
 	}
 	h.log().Info("goal finished: merged upstream and passing", "repo", s.Repo(), "goal", g.Name)
+	h.recordLanded(ctx, s, g)
 	if err := finish.RemoveWorktrees(ctx, s, g); err != nil {
 		h.log().Warn("removing a finished goal's worktrees failed", "goal", g.Name, "err", err)
 	}

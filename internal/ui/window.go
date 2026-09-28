@@ -23,13 +23,7 @@ type uiState struct {
 }
 
 // uiStatePath is where the window's state is kept: the XDG state directory.
-func uiStatePath(p config.Paths) string {
-	dir := os.Getenv("XDG_STATE_HOME")
-	if dir == "" {
-		dir = filepath.Join(p.Home, ".local", "state")
-	}
-	return filepath.Join(dir, "diatom", "ui.toml")
-}
+func uiStatePath(p config.Paths) string { return filepath.Join(p.StateDir(), "ui.toml") }
 
 // loadUI reads how the window was left; with nothing kept, it starts as new.
 func (a *App) loadUI() {

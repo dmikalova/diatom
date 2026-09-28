@@ -81,7 +81,14 @@ ready. The nav down the left lists:
 - **A menu** at the foot: ☑️ Finished lists the finished goals, the latest
   first; 📒 the scheduler's log, which `L` opens too; and 💰 Spending shows
   what each of the last 30 days cost against the budget, with `enter` on a day
-  showing what each goal and session spent on it.
+  showing what each goal and session spent on it. Above the days, Landed
+  shows what the repo's landed goals came to: the lines of code, added to
+  code and test files, that merged for each dollar their sessions spent,
+  over all time and for each of the last six weeks, so you can see whether a
+  change to diatom made the work cheaper. Each goal is kept in a ledger in
+  `~/.local/state/diatom/landed.jsonl` when it finishes, long after its
+  sessions are gone, and a goal that finished before is taken in when diatom
+  starts. `diatom ledger` prints it goal by goal.
 - **The footer**: what the sessions cost today, over the last 7 days and over
   the last 30, as `D$22 · W$80 · M$200`, and anything wrong with the
   scheduler. Clicking the cost opens the spending, and the rest the

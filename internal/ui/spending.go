@@ -2,11 +2,14 @@ package ui
 
 import (
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/dmikalova/diatom/internal/ledger"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/spend"
 	"github.com/dmikalova/diatom/internal/tui"
@@ -27,6 +30,7 @@ func (a *App) renderSpending(w, h int) string {
 		a.totalsLine(),
 		"",
 	}
+	head = append(head, a.landedLines(w)...)
 	if len(days) == 0 {
 		return strings.Join(append(head, tui.Dim("Nothing spent in the last 30 days.")), "\n")
 	}
@@ -90,6 +94,53 @@ func (a *App) totalsLine() string {
 		parts = append(parts, t)
 	}
 	return strings.Join(parts, tui.Dim(" · "))
+}
+
+// landedWeeks is how many weeks the landed lines show.
+const landedWeeks = 6
+
+// landedLines show what the repo's landed goals came to, from the ledger
+// that outlasts their sessions: lines of code, those added to code and test
+// files, for each dollar their sessions spent, over all time and for each
+// of the last weeks.
+func (a *App) landedLines(w int) []string {
+	all, err := ledger.Load(ledger.Path(a.env.Paths))
+	if err != nil {
+		return []string{tui.Color("the ledger of landed goals: "+err.Error(), tui.Red), ""}
+	}
+	repo := a.env.Store.Repo()
+	all = slices.DeleteFunc(all, func(l ledger.Landed) bool { return l.Repo != repo })
+	if len(all) == 0 {
+		return nil
+	}
+	sum := ledger.Sum(all)
+	lines := []string{
+		tui.Bold("Landed") + tui.Dim(" · lines of code for each dollar, as merged"),
+		fmt.Sprintf("%s · %s lines of code, %s of docs, for $%.2f · %s",
+			count(sum.Goals, "goal"), thousands(sum.LOC), thousands(sum.Docs), sum.CostUSD,
+			tui.Bold(fmt.Sprintf("%.0f lines/$", sum.PerDollar()))),
+	}
+	weeks := ledger.Weeks(all)
+	best := 0.0
+	for _, p := range weeks {
+		best = max(best, p.PerDollar())
+	}
+	for _, p := range weeks[:min(len(weeks), landedWeeks)] {
+		row := fmt.Sprintf("  week of %-7s %9s %9s %7s ", p.Start.Format("Jan 2"),
+			fmt.Sprintf("$%.2f", p.CostUSD), thousands(p.LOC), fmt.Sprintf("%.0f/$", p.PerDollar()))
+		bar := strings.Repeat("█", max(int(float64(max(w-44, 1))*p.PerDollar()/max(best, 1)), 1))
+		lines = append(lines, row+tui.Color(bar, tui.Green))
+	}
+	return append(lines, "")
+}
+
+// thousands writes n with a comma between each three digits.
+func thousands(n int) string {
+	s := strconv.Itoa(n)
+	for i := len(s) - 3; i > 0 && s[i-1] != '-'; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	return s
 }
 
 // renderSpendDay shows what each goal's sessions spent on a day, the most

@@ -91,6 +91,10 @@ the mouse clicks and scrolls. Outside a text box:
   it
 - `L` opens the scheduler's log, which is also in the menu at the nav's foot
   and opens from its footer
+- 💰 Spending, in that menu, shows each day's cost against the budget, and
+  what landed goals came to in lines of code per dollar, which `diatom
+  ledger` prints goal by goal from a ledger kept in
+  `~/.local/state/diatom/landed.jsonl`
 - dragging in the main pane selects text within it, and copies it on release
 - `y` copies the selection, or else what has the keyboard, as cmd+c does in
   Ghostty with `keybind = performable:super+c=copy_to_clipboard`

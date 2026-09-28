@@ -5,6 +5,7 @@
 // Usage:
 //
 //	diatom
+//	diatom ledger
 //	diatom version
 //
 // diatom opens a window on the repository the current directory is in, and
@@ -55,6 +56,8 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		err = cmdTask(ctx, rest, stdin, stdout)
 	case "hook":
 		err = cmdHook(ctx, rest, stdin, stdout)
+	case "ledger":
+		err = cmdLedger(ctx, stdout)
 	case "version":
 		v := version
 		if v == "dev" {
@@ -79,6 +82,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 
 const usage = `Usage:
   diatom           open diatom on the repo; quitting suspends its sessions
+  diatom ledger    the repo's landed goals: lines of code for each dollar
   diatom version
 
 Inside an agent session:

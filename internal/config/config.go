@@ -216,6 +216,18 @@ func (p Paths) Expand(path string) string {
 	return path
 }
 
+// StateDir is where diatom keeps what it must remember across repos and
+// restarts, such as the window's layout and the ledger of landed goals:
+// $XDG_STATE_HOME/diatom, or ~/.local/state/diatom. A state directory, not a
+// cache, as nothing clears it.
+func (p Paths) StateDir() string {
+	dir := os.Getenv("XDG_STATE_HOME")
+	if dir == "" {
+		dir = filepath.Join(p.Home, ".local", "state")
+	}
+	return filepath.Join(dir, "diatom")
+}
+
 // SkillDir resolves a profile's skill: a bare name is a directory in
 // ~/.claude/skills, anything else a path.
 func (p Paths) SkillDir(skill string) string {

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -8,6 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/dmikalova/diatom/internal/ledger"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/runner"
 	"github.com/dmikalova/diatom/internal/session"
@@ -85,5 +87,28 @@ func TestSpendingWithNothingSpent(t *testing.T) {
 	if a.spendOpen || !strings.Contains(out, "Nothing spent in the last 30 days.") ||
 		!strings.Contains(out, "No budget") {
 		t.Errorf("nothing spent:\n%s", out)
+	}
+}
+
+// TestSpendingShowsLandedLines pins that the spending shows what the repo's
+// landed goals came to, from the ledger: lines of code for each dollar, over
+// all time and by week, and none of another repo's.
+func TestSpendingShowsLandedLines(t *testing.T) {
+	f := newFixture(t)
+	f.env.Now = time.Now
+	at := time.Now().Format(time.RFC3339)
+	write(t, ledger.Path(f.env.Paths), fmt.Sprintf(
+		`{"repo":%q,"goal":"ward","finished":%q,"code":{"added":1500},"tests":{"added":500},`+
+			`"docs":{"added":80},"costUSD":20}`+"\n"+
+			`{"repo":"/elsewhere","goal":"x","finished":%q,"code":{"added":9},"costUSD":1}`+"\n",
+		f.repo, at, at))
+	a, _ := newApp(t, f)
+	a.openEntry(entrySpending)
+	out := plain(a.render())
+	for _, want := range []string{"Landed", "1 goal · 2,000 lines of code, 80 of docs, for $20.00",
+		"100 lines/$", "week of", "100/$"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the spending lacks %q:\n%s", want, out)
+		}
 	}
 }
