@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/intake"
@@ -95,6 +96,41 @@ func TestNextAnswersAndMovesOn(t *testing.T) {
 	// The review of the goal's commit is left.
 	if it := a.next.shown(); it == nil || it.kind != itemReview {
 		t.Errorf("after the questions, Next shows %+v", it)
+	}
+}
+
+// TestNextReviewRulesJoinTheNav pins that the reviewer's rule under a
+// hunk's head runs on to the nav's border, as Next's own rules do.
+func TestNextReviewRulesJoinTheNav(t *testing.T) {
+	f := newFixture(t)
+	if err := f.store.Answer("set", "0001", "No.", f.env.Now()); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := newApp(t, f)
+	if it := a.next.shown(); it == nil || it.kind != itemReview {
+		t.Fatalf("Next shows %+v", it)
+	}
+	joined := 0
+	for l := range strings.SplitSeq(plain(a.render()), "\n") {
+		if strings.Contains(l, "├──") {
+			joined++
+		}
+	}
+	if joined < 2 {
+		t.Errorf("%d rules join the nav, want Next's and the reviewer's:\n%s", joined,
+			plain(a.render()))
+	}
+}
+
+// TestGraphemeModeRedraws pins that the screen is drawn again once the
+// terminal measures graphemes, which the first frames didn't.
+func TestGraphemeModeRedraws(t *testing.T) {
+	f := newFixture(t)
+	a, _ := newApp(t, f)
+	if _, cmd := a.Update(
+		tea.ModeReportMsg{Mode: ansi.ModeUnicodeCore, Value: ansi.ModeSet},
+	); cmd == nil {
+		t.Error("the unicode mode report redraws nothing")
 	}
 }
 

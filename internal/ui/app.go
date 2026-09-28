@@ -283,6 +283,14 @@ func (a *App) handle(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		a.width, a.height = msg.Width, msg.Height
 		a.layout()
+	case tea.ModeReportMsg:
+		if msg.Mode == ansi.ModeUnicodeCore {
+			// The terminal measures graphemes now, as the renderer does from
+			// here on. What the first frames drew measured an emoji such as
+			// ☑️ one cell narrower, and the renderer only redraws cells it
+			// sees change, so the whole screen is drawn again.
+			return a, tea.ClearScreen
+		}
 	case tickMsg:
 		a.reload()
 		a.show()

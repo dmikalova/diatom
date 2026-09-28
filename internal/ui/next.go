@@ -753,11 +753,17 @@ func (n *Next) render(focused bool, foot []string) string {
 	var out []string
 	mark := func(a nextArea, lines []string) {
 		n.bounds[a] = len(out)
-		bar := "  "
+		bar, rule := "  ", tui.Dim("──")
 		if focused && n.area == a {
-			bar = tui.Color("▌ ", tui.Accent)
+			bar, rule = tui.Color("▌ ", tui.Accent), tui.Color("▌", tui.Accent)+tui.Dim("─")
 		}
 		for _, l := range lines {
+			if ruleStart(l) {
+				// A rule, such as the reviewer's under its hunk's head, runs
+				// on to the nav's border and joins it.
+				out = append(out, rule+l)
+				continue
+			}
 			out = append(out, bar+l)
 		}
 	}
