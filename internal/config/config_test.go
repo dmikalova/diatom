@@ -273,3 +273,33 @@ func TestBudget(t *testing.T) {
 		t.Errorf("budget = %+v, %v", cfg.Budget, err)
 	}
 }
+
+func TestCovers(t *testing.T) {
+	all := []string{"Read", "Edit", "Bash", "Skill"}
+	c := &Config{Profiles: map[string]Profile{
+		"implementation": {Model: "opus", Effort: "medium", Tools: all},
+		"mechanical":     {Model: "sonnet", Effort: "medium", Tools: all[:3]},
+		"deep":           {Model: "claude-sonnet-5", Effort: "high", Tools: all},
+		"readonly":       {Model: "opus", Tools: all[:1]},
+		"skilled":        {Model: "sonnet", Tools: all[:1], Skills: []string{"grilling"}},
+		"custom":         {Model: "my-model", Tools: all[:1]},
+	}}
+	for _, tc := range []struct {
+		a, b string
+		want bool
+	}{
+		{"implementation", "mechanical", true},
+		{"mechanical", "implementation", false}, // a weaker model
+		{"implementation", "deep", false},       // less effort
+		{"deep", "mechanical", true},
+		{"readonly", "mechanical", false}, // fewer tools
+		{"implementation", "skilled", false},
+		{"implementation", "custom", false}, // a model of no known family
+		{"custom", "custom", true},
+		{"implementation", "missing", false},
+	} {
+		if got := c.Covers(tc.a, tc.b); got != tc.want {
+			t.Errorf("Covers(%s, %s) = %v, want %v", tc.a, tc.b, got, tc.want)
+		}
+	}
+}

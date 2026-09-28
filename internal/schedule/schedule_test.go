@@ -200,3 +200,44 @@ func TestNextChainsDependentTasks(t *testing.T) {
 		t.Errorf("Next with a batch of 2 = %+v", got)
 	}
 }
+
+// TestNextChainsOntoACoveringProfile pins that a chain goes on to a task on
+// another profile when one covers the other, running on the one that does,
+// and stops at a profile neither covers.
+func TestNextChainsOntoACoveringProfile(t *testing.T) {
+	on := func(tk *queue.Task, profile string, deps ...string) *queue.Task {
+		tk.Profile, tk.DependsOn = profile, deps
+		return tk
+	}
+	g := &Goal{
+		Repo:  "vex",
+		Name:  "g",
+		Ready: []*queue.Task{on(task("1", queue.Planned, "vocab"), "mechanical")},
+		Later: []*queue.Task{
+			on(task("2", queue.Planned, "vocab"), "implementation", "1"),
+			on(task("3", queue.Planned, "vocab"), "mechanical", "2"),
+			on(task("4", queue.Planned, "vocab"), "research", "3"),
+		},
+		Unfinished: map[string]bool{"1": true, "2": true, "3": true, "4": true},
+	}
+	stronger := map[string]int{"mechanical": 1, "implementation": 2}
+	covers := func(a, b string) bool {
+		return a == b || stronger[a] > 0 && stronger[b] > 0 && stronger[a] >= stronger[b]
+	}
+	lim := Limits{Repos: map[string]RepoLimits{"vex": {Sessions: 1}}, Covers: covers}
+	got := Next([]*Goal{g}, nil, lim)
+	if len(got) != 1 || !slices.Equal(ids(got[0]), []string{"1", "2", "3"}) ||
+		got[0].Profile != "implementation" {
+		t.Fatalf("Next = %+v, want 1, 2, 3 on implementation", got)
+	}
+	lim.Covers = nil
+	if got := Next(
+		[]*Goal{g},
+		nil,
+		lim,
+	); len(got) != 1 ||
+		!slices.Equal(ids(got[0]), []string{"1"}) ||
+		got[0].Profile != "mechanical" {
+		t.Errorf("Next without Covers = %+v, want 1 alone on mechanical", got)
+	}
+}

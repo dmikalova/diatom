@@ -217,7 +217,7 @@ func (h *Harness) plan(
 	lim := schedule.Limits{Repos: map[string]schedule.RepoLimits{h.Root: {
 		Sessions: repo.Config.MaxSessions,
 		Batch:    repo.Config.MaxBatch,
-	}}}
+	}}, Covers: repo.Config.Covers}
 	return schedule.Next(goals, busy, lim), map[string]Repo{h.Root: repo}, err
 }
 

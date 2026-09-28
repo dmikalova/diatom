@@ -8,6 +8,7 @@ package config
 
 import (
 	"bytes"
+	"cmp"
 	_ "embed"
 	"errors"
 	"fmt"
@@ -422,4 +423,41 @@ func RetryEffort(effort string) string {
 		return effort
 	}
 	return efforts[i+1]
+}
+
+// tiers orders the model families by capability, least first.
+var tiers = []string{"haiku", "sonnet", "opus"}
+
+// tier is a model's place in tiers, or -1 for one of no family it knows.
+func tier(model string) int {
+	return slices.IndexFunc(tiers, func(f string) bool { return strings.Contains(model, f) })
+}
+
+// Covers reports whether profile a can do profile b's work: the same one, or
+// one on a model at least as capable, thinking at least as hard, with every
+// tool and skill b has. A session that chains a task needing b onto work
+// needing a stays on a (ADR 0004).
+func (c *Config) Covers(a, b string) bool {
+	if a == b {
+		return true
+	}
+	pa, okA := c.Profiles[a]
+	pb, okB := c.Profiles[b]
+	if !okA || !okB {
+		return false
+	}
+	ta, tb := tier(pa.Model), tier(pb.Model)
+	if (ta < 0 || tb < 0) && pa.Model != pb.Model || ta < tb {
+		return false
+	}
+	level := func(e string) int { return slices.Index(efforts, cmp.Or(e, "medium")) }
+	return level(pa.Effort) >= level(pb.Effort) &&
+		!slices.ContainsFunc(
+			pb.Tools,
+			func(t string) bool { return !slices.Contains(pa.Tools, t) },
+		) &&
+		!slices.ContainsFunc(
+			pb.Skills,
+			func(s string) bool { return !slices.Contains(pa.Skills, s) },
+		)
 }

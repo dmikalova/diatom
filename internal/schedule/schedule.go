@@ -5,8 +5,9 @@
 // Ready tasks run in a strict priority order: gate repair, then conflict
 // resolution, then revisions, then planned work. A session takes a batch: as
 // many ready tasks as fit, of the same kind, profile and effort, in the same
-// workstream. A workstream runs one session at a time, because a session owns
-// its worktree.
+// workstream, then the chain of tasks that wait only on them there, the
+// session moving up to the more capable profile a task of the chain needs. A
+// workstream runs one session at a time, because a session owns its worktree.
 package schedule
 
 import (
@@ -79,6 +80,9 @@ type Limits struct {
 	Repos map[string]RepoLimits
 	// Machine caps the sessions across every repo given; 0 is no cap.
 	Machine int
+	// Covers reports whether profile a can do profile b's work, so a chain
+	// may go on from one to the other on a. Nil covers only a profile itself.
+	Covers func(a, b string) bool
 }
 
 // RepoLimits are one repo's caps.
@@ -108,7 +112,8 @@ type candidate struct {
 // sessions already running: the priority order first, then the older goal,
 // then the task's own priority and id. A batch goes on, in order, to tasks
 // that wait only on tasks done or already in it, so a chain of dependent
-// tasks in a workstream runs in one session.
+// tasks in a workstream runs in one session, on the most capable profile
+// the chain needs.
 func Next(goals []*Goal, running []Running, lim Limits) []Batch {
 	var cands []candidate
 	for _, g := range goals {
@@ -154,7 +159,7 @@ func Next(goals []*Goal, running []Running, lim Limits) []Batch {
 				taken[o.task] = true
 			}
 		}
-		chain(&b, c.goal, taken, rl.Batch)
+		chain(&b, c.goal, taken, rl.Batch, lim.Covers)
 		batches = append(batches, b)
 		busy[key] = true
 		perRepo[key.repo]++
@@ -171,8 +176,15 @@ func repoLimits(lim Limits, repo string) RepoLimits {
 }
 
 // chain adds to b, one at a time and in priority order, the goal's later
-// tasks whose dependencies are all done or in b, up to size tasks.
-func chain(b *Batch, g *Goal, taken map[*queue.Task]bool, size int) {
+// tasks whose dependencies are all done or in b, up to size tasks. A task on
+// another profile joins when one of the two profiles covers the other, and
+// the batch runs on the one that does: a second session would read its
+// instructions and the code all over again, costing more than the cheaper
+// model saves on a task of the chain.
+func chain(b *Batch, g *Goal, taken map[*queue.Task]bool, size int, covers func(a, b string) bool) {
+	if covers == nil {
+		covers = func(a, b string) bool { return a == b }
+	}
 	later := slices.Clone(g.Later)
 	slices.SortStableFunc(later, func(x, y *queue.Task) int {
 		return cmp.Or(cmp.Compare(x.Priority, y.Priority), cmp.Compare(x.ID, y.ID))
@@ -184,7 +196,8 @@ func chain(b *Batch, g *Goal, taken map[*queue.Task]bool, size int) {
 	for size == 0 || len(b.Tasks) < size {
 		i := slices.IndexFunc(later, func(t *queue.Task) bool {
 			return !taken[t] && t.Workstream == b.Workstream && t.Kind == b.Kind &&
-				t.Profile == b.Profile && t.Effort == b.Effort &&
+				(covers(b.Profile, t.Profile) || covers(t.Profile, b.Profile)) &&
+				t.Effort == b.Effort &&
 				!slices.ContainsFunc(
 					t.DependsOn,
 					func(d string) bool { return g.Unfinished[d] && !in[d] },
@@ -194,6 +207,9 @@ func chain(b *Batch, g *Goal, taken map[*queue.Task]bool, size int) {
 			return
 		}
 		t := later[i]
+		if !covers(b.Profile, t.Profile) {
+			b.Profile = t.Profile
+		}
 		b.Tasks = append(b.Tasks, t)
 		taken[t], in[t.ID] = true, true
 	}
