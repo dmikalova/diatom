@@ -82,11 +82,16 @@ type Repo struct {
 	CommitCheck string `toml:"commitCheck"`
 	// ADR says where a goal's ADRs go and how they're written (ADR 0010).
 	ADR ADR `toml:"adr"`
-	// Instructions are files appended to every agent's system prompt, such
-	// as ~/AGENTS.md. A missing file is skipped. The repo's own root AGENTS.md
-	// is always added after them. Agents get no other context unless it is
-	// configured here, in a profile's skills or in MCPServers (ADR 0006).
+	// Instructions are files appended to every agent's system prompt. A
+	// missing file is skipped. The AGENTS.md of every directory from the home
+	// directory down to the repo's own are always added after them. Agents
+	// get no other context unless it is configured here, in Skills, in a
+	// profile's skills or in MCPServers (ADR 0006).
 	Instructions []string `toml:"instructions"`
+	// Skills are the skills every agent session may load, on top of its
+	// profile's own: a bare name is a directory in ~/.claude/skills, anything
+	// else a path to a skill directory.
+	Skills []string `toml:"skills"`
 	// MCPServers are the MCP servers agents may use, in Claude Code's
 	// mcpServers format. None of the user's own servers are loaded.
 	MCPServers map[string]any `toml:"mcpServers"`

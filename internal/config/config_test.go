@@ -165,13 +165,20 @@ func TestPathsExpand(t *testing.T) {
 
 func TestLoadContextDefaults(t *testing.T) {
 	root, paths := tree(t)
+	write(t, paths.XDG, "skills = [\"grill-me\", \"grilling\"]\n")
 	write(t, filepath.Join(root, DirName), "[mcpServers.docs]\ncommand = \"docs-mcp\"\n")
 	c, err := Load(root, paths)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(c.Instructions) != 1 || c.Instructions[0] != "~/AGENTS.md" {
-		t.Errorf("Instructions = %v", c.Instructions)
+	if len(c.Instructions) != 0 {
+		t.Errorf(
+			"Instructions = %v, want none: AGENTS.md files are found by the walk",
+			c.Instructions,
+		)
+	}
+	if len(c.Skills) != 2 || c.Skills[0] != "grill-me" {
+		t.Errorf("Skills = %v", c.Skills)
 	}
 	if s := c.Profiles["planning"].Skills; len(s) != 1 || s[0] != "grilling" {
 		t.Errorf("planning skills = %v", s)

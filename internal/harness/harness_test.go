@@ -698,12 +698,22 @@ func TestSessionContext(t *testing.T) {
 	home := f.h.Paths.Home
 	writeFile(t, home, "AGENTS.md", "Be terse.\n")
 	writeFile(t, home, ".claude/skills/grilling/SKILL.md", "---\nname: grilling\n---\n")
+	writeFile(t, home, ".claude/skills/grill-me/SKILL.md", "---\nname: grill-me\n---\n")
 	writeFile(
 		t,
 		f.h.Paths.XDG,
 		"config.toml",
-		"[profiles.implementation]\nskills = [\"grilling\"]\n",
+		"skills = [\"grill-me\", \"grilling\"]\ninstructions = [\"~/org.md\"]\n"+
+			"[profiles.implementation]\nskills = [\"grilling\"]\n",
 	)
+	// The directory above the repo has its own, and a link to it is read once.
+	writeFile(t, filepath.Dir(f.main.Dir), "AGENTS.md", "Org rules.\n")
+	if err := os.Symlink(
+		filepath.Join(filepath.Dir(f.main.Dir), "AGENTS.md"),
+		filepath.Join(home, "org.md"),
+	); err != nil {
+		t.Fatal(err)
+	}
 	writeFile(
 		t,
 		f.main.Dir,
@@ -724,19 +734,21 @@ func TestSessionContext(t *testing.T) {
 	f.step()
 
 	spec := f.agent.last
-	if !strings.Contains(spec.Instructions, "Be terse.") ||
-		!strings.Contains(spec.Instructions, "Run mage.") ||
+	terse, org, mage := strings.Index(spec.Instructions, "Be terse."),
 		strings.Index(
 			spec.Instructions,
-			"Be terse.",
-		) > strings.Index(
-			spec.Instructions,
-			"Run mage.",
-		) {
-		t.Errorf("instructions = %q, want ~/AGENTS.md then the repo's", spec.Instructions)
+			"Org rules.",
+		), strings.Index(spec.Instructions, "Run mage.")
+	if org < 0 || terse < org || mage < terse ||
+		strings.Count(spec.Instructions, "Org rules.") != 1 {
+		t.Errorf("instructions = %q, want the configured file, ~/AGENTS.md, then the repo's, "+
+			"and the one above the repo only once, as the file linked to",
+			spec.Instructions)
 	}
-	if len(spec.Skills) != 1 ||
-		spec.Skills[0] != filepath.Join(home, ".claude", "skills", "grilling") {
+	skills := filepath.Join(home, ".claude", "skills")
+	if !slices.Equal(spec.Skills, []string{
+		filepath.Join(skills, "grill-me"), filepath.Join(skills, "grilling"),
+	}) {
 		t.Errorf("skills = %v", spec.Skills)
 	}
 	if _, ok := spec.MCPServers["docs"]; !ok {

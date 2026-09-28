@@ -5,7 +5,6 @@ gateTimeout = "2m"
 commandTimeout = "30s"
 maxSessions = 1
 maxBatch = 5
-instructions = ["~/AGENTS.md"]
 
 [profiles.planning]
 model = "opus"

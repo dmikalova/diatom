@@ -164,7 +164,8 @@ autoApprove = ["*_test.go"]       # files whose hunks are approved without revie
 maxSessions = 1                   # sessions at once in this repo
 maxBatch = 5                      # tasks per session, following chains of dependent tasks
 commitCheck = "project-standards commit-msg"   # lints a commit message file
-instructions = ["~/AGENTS.md"]    # appended to every agent's system prompt
+instructions = ["~/notes/go.md"] # more files for every agent's system prompt
+skills = ["grill-me", "grilling"] # skills every session may load: names in ~/.claude/skills, or paths
 land = "merge"                    # how goals land: "merge" into their base, "prs"; unset offers both
 
 [budget]                          # dollars; once one is spent, nothing new starts
@@ -181,9 +182,14 @@ command = "docs-mcp"
 ```
 
 Agent sessions load none of your own Claude Code settings, skills, plugins or
-MCP servers (ADR 0011). They get the instruction files above, the repo's own
-`AGENTS.md`, `CLAUDE.md` and project settings, and the skills their profile
-lists.
+MCP servers (ADR 0011). They get the instruction files above, the `AGENTS.md`
+of every directory from your home directory down to the repo's, the repo's
+`CLAUDE.md` and project settings, the MCP servers above and the skills above
+and in their profile. Any config file in the walk-up can set `skills`,
+`instructions` and `mcpServers`, `~/.config/diatom/config.toml` for every repo;
+a nearer file's list replaces a further one's, while MCP servers add up by
+name. A nested `AGENTS.md`, such as `internal/engine/AGENTS.md`, isn't loaded:
+the prompt names it for the agent to read before working in that directory.
 
 Only `~/.config/diatom/config.toml` may set these:
 

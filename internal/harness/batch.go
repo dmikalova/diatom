@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -415,13 +416,19 @@ func (h *Harness) runSession(
 	if b.Effort != "" {
 		profile.Effort = b.Effort
 	}
-	instructions, err := h.instructions(repo.Config, wt)
+	instructions, err := h.instructions(repo.Config, repo.Store.Repo(), wt)
 	if err != nil {
 		return runner.Result{}, err
 	}
 	var skills []string
-	for _, sk := range profile.Skills {
-		skills = append(skills, h.Paths.SkillDir(sk))
+	for _, sk := range slices.Concat(repo.Config.Skills, profile.Skills) {
+		if dir := h.Paths.SkillDir(sk); !slices.Contains(skills, dir) {
+			skills = append(skills, dir)
+		}
+	}
+	if len(skills) > 0 && !slices.Contains(profile.Tools, "Skill") {
+		// A skill is only of use with the tool that loads it.
+		profile.Tools = append(slices.Clone(profile.Tools), "Skill")
 	}
 	prompt := []byte(resumeNote)
 	if resume == "" {
@@ -489,16 +496,24 @@ func (h *Harness) runSession(
 }
 
 // instructions gathers what is appended to the agent's system prompt: the
-// configured instruction files, such as ~/AGENTS.md, then the worktree's root
-// AGENTS.md. Claude Code reads neither on its own, and the session loads no
-// other user context (ADR 0006).
-func (h *Harness) instructions(cfg *config.Config, wt git.Repo) (string, error) {
-	var parts []string
-	paths := make([]string, 0, len(cfg.Instructions)+1)
+// configured instruction files, then the AGENTS.md of every directory from
+// the home directory down to the repo's, the repo's own read from the
+// worktree, each file once. Claude Code reads none of them on its own, and
+// the session loads no other user context (ADR 0006). The AGENTS.md files
+// below the repo's root are left to the prompt, which names them for the
+// agent to read before working in their directory.
+func (h *Harness) instructions(cfg *config.Config, root string, wt git.Repo) (string, error) {
+	paths := make([]string, 0, len(cfg.Instructions)+4)
 	for _, p := range cfg.Instructions {
 		paths = append(paths, h.Paths.Expand(p))
 	}
-	for _, p := range append(paths, filepath.Join(wt.Dir, "AGENTS.md")) {
+	for _, dir := range above(root, h.Paths.Home) {
+		paths = append(paths, filepath.Join(dir, "AGENTS.md"))
+	}
+	paths = append(paths, filepath.Join(wt.Dir, "AGENTS.md"))
+	var parts []string
+	seen := map[string]bool{}
+	for _, p := range paths {
 		b, err := os.ReadFile(p)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
@@ -506,12 +521,37 @@ func (h *Harness) instructions(cfg *config.Config, wt git.Repo) (string, error) 
 		if err != nil {
 			return "", err
 		}
+		file, err := filepath.EvalSymlinks(p)
+		if err != nil {
+			return "", err
+		}
+		if seen[file] {
+			continue
+		}
+		seen[file] = true
 		parts = append(
 			parts,
 			fmt.Sprintf("# Instructions from %s\n\n%s", p, string(bytes.TrimSpace(b))),
 		)
 	}
 	return strings.Join(parts, "\n\n"), nil
+}
+
+// above lists the directories above root, furthest first, up to home, or up
+// to the filesystem's root with home first when root isn't under home.
+func above(root, home string) []string {
+	var dirs []string
+	for dir := filepath.Dir(root); ; dir = filepath.Dir(dir) {
+		dirs = append(dirs, dir)
+		if dir == home || filepath.Dir(dir) == dir {
+			break
+		}
+	}
+	if home != "" && dirs[len(dirs)-1] != home {
+		dirs = append(dirs, home)
+	}
+	slices.Reverse(dirs)
+	return dirs
 }
 
 // nestedGuides lists the AGENTS.md files below the worktree's root, which
