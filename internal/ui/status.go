@@ -27,6 +27,7 @@ import (
 	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/review"
+	"github.com/dmikalova/diatom/internal/reviewui"
 	"github.com/dmikalova/diatom/internal/roster"
 	"github.com/dmikalova/diatom/internal/runner"
 	"github.com/dmikalova/diatom/internal/schedule"
@@ -52,6 +53,18 @@ type Env struct {
 	// Config is the repo's config, read once when diatom starts: a change
 	// to it takes effect on the next start. Nil reads it afresh each time.
 	Config *config.Config
+}
+
+// reviewer opens a goal's review, with the editor its o opens.
+func (e Env) reviewer(ctx context.Context, goal string) (*reviewui.Model, error) {
+	rv, err := reviewui.New(ctx, e.Store, goal)
+	if err != nil {
+		return nil, err
+	}
+	if cfg, err := e.config(); err == nil {
+		rv.Editor = strings.Fields(cfg.Editor)
+	}
+	return rv, nil
 }
 
 // config is the repo's config.

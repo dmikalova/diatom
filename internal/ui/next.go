@@ -91,8 +91,8 @@ type Next struct {
 	// more is set while the human says what more a goal ready to finish
 	// needs, in the answer box.
 	more bool
-	// only is the goal whose plan and questions are seen to on its page, ""
-	// for all of Next: its items are the only ones shown.
+	// only is the goal seen to from its page, "" for all of Next: its items
+	// are the only ones shown, in Next's order.
 	only string
 	// stats is each finishing goal's diff stat, from the last reload, and
 	// statCache each stat by the commit it is of.
@@ -188,13 +188,12 @@ func (n *Next) reload() {
 	}
 }
 
-// first is the item to show next: the first waiting, or, while a goal's
-// plan and questions are seen to on its page, the first of those, "" for
+// first is the item to show next: the first waiting, or, while a goal is
+// seen to from its page, the first of its own, in the same order, "" for
 // none.
 func (n *Next) first() string {
 	for _, it := range n.items {
-		if n.only == "" ||
-			(it.kind == itemQuestion || it.kind == itemPlan) && it.row.goal.Name == n.only {
+		if n.only == "" || it.row.goal.Name == n.only {
 			return it.id()
 		}
 	}
@@ -216,7 +215,7 @@ func (n *Next) reviewer(goal string) *reviewui.Model {
 	if rv, ok := n.reviews[goal]; ok {
 		return rv
 	}
-	rv, err := reviewui.New(n.ctx, n.env.Store, goal)
+	rv, err := n.env.reviewer(n.ctx, goal)
 	if err != nil {
 		n.loadErr = err
 		return nil
@@ -410,8 +409,11 @@ func (n *Next) reviewKey(it item, msg tea.KeyPressMsg) nextKey {
 	if rv.Pending() != before {
 		n.status.reload()
 		n.reload()
-		if n.shown() == nil || n.shown().id() != it.id() {
-			n.scroll = 0
+		if f := n.first(); f != "" && f != it.id() {
+			// A decision is a point to move on at: something more urgent,
+			// such as a plan, comes first, in the order Next keeps.
+			n.cur, n.scroll, n.confirm, n.act, n.more = f, 0, "", 0, false
+			n.area = areaBody
 		}
 	}
 	return nextKey{cmd: cmd}

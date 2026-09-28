@@ -149,8 +149,8 @@ from the list of what can be done below it:
   set aside and a new round starts with your comment.
 - **`l`, Later**, puts it behind everything else waiting on you.
 
-On a planning goal's page, `a` opens its plan the same way, and after it any
-questions the goal still has.
+On a planning goal's page, `a` opens its plan the same way, and after it
+anything else the goal waits on you for.
 
 Some work needs you to do something by hand that agents mustn't, such as
 running `tofu apply` or setting a secret. The agent finishes what it can,
@@ -210,6 +210,12 @@ What needs you:
   - `r` rejects the hunk without a comment: the agent takes it out, or does it
     another way where the task needs it. To say how it should change,
     comment instead. `b` goes back through earlier decisions.
+  - `o` opens the hunk's file in nvim at the line under the cursor, from the
+    worktree of the workstream that made it, so it has the code as that work
+    does. nvim takes the terminal until you quit it, and the review is where
+    you left it; sessions keep running meanwhile. What you change there goes
+    into that workstream's next commit, so `editor = "nvim -R"` opens it
+    read-only. `editor` sets another command.
   - A comment or rejection becomes a revision task within seconds. The fix
     comes back as a `fixup!` commit, and `v` shows it folded into the original.
   - Review doesn't hold up the agents, but you have to review everything before
@@ -252,10 +258,12 @@ twice or its key twice:
   finish once that work is done and reviewed.
 - **`l`, Later**, puts it behind everything else waiting on you.
 
-Next doesn't change the item on screen while you look at it. A goal's own
-questions can also be answered on its page, with `a`: each answer moves on to
-the goal's next question, and the page comes back once none is left, or with
-`esc`.
+Next doesn't change the item on screen while you look at it, but each thing
+you do there, an answer or a hunk decided, moves on to the most urgent item
+left: a plan handed in while you review another goal comes up after the hunk
+you're on. From a goal's page, `a` goes through that goal's items alone, in
+the same order: its questions, its plan, its hunks and its landing. The page
+comes back once none is left, or with `esc`.
 
 First the goal catches up with `main`, fetched from origin. What `main` gained
 since the goal started is merged in. When that conflicts, landing stops there:

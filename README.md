@@ -172,6 +172,7 @@ maxBatch = 10                     # tasks per session, following chains of depen
 commitCheck = "project-standards commit-msg"   # lints a commit message file
 instructions = ["~/notes/go.md"] # more files for every agent's system prompt
 skills = ["grill-me", "grilling"] # skills every session may load: names in ~/.claude/skills, or paths
+editor = "nvim"                   # what the reviewer's o opens a hunk's file in, at its line
 land = "merge"                    # how goals land: "merge" into their base, "prs"; unset offers both
 
 [budget]                          # dollars; once one is spent, nothing new starts

@@ -5,6 +5,7 @@ gateTimeout = "2m"
 commandTimeout = "30s"
 maxSessions = 1
 maxBatch = 10
+editor = "nvim"
 
 [profiles.planning]
 model = "opus"

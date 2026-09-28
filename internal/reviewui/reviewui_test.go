@@ -8,6 +8,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -541,5 +542,37 @@ func TestCommentBoxGrowsAndTheFooterStays(t *testing.T) {
 	out := strings.Split(strings.TrimRight(ansi.Strip(m.render()), "\n"), "\n")
 	if len(out) > m.height || !strings.Contains(out[len(out)-1], "a approve") {
 		t.Errorf("%d lines in %d, last %q", len(out), m.height, out[len(out)-1])
+	}
+}
+
+// TestOpenInEditor pins that o opens the hunk's file at the line under the
+// cursor, from the worktree of the workstream that made it.
+func TestOpenInEditor(t *testing.T) {
+	f := newFixture(t)
+	f.write("ward.go", body("ward", "poison"))
+	sha := f.commit("feat: ward and poison")
+	f.task(&queue.Task{Title: "Add ward", Kind: queue.Planned, Workstream: "engine",
+		Commits: []string{sha}})
+	m := f.model()
+	if m.editCommand() != nil || strings.Contains(m.footer(), "o open") {
+		t.Error("o works with no editor set")
+	}
+	m.Editor = []string{"nvim", "-R"}
+	if !strings.Contains(m.footer(), "o open") {
+		t.Errorf("footer = %q", m.footer())
+	}
+	cmd := m.editCommand()
+	line := m.items[m.cur].NewLine(m.cursor)
+	if cmd == nil ||
+		!slices.Equal(cmd.Args, []string{"nvim", "-R", fmt.Sprintf("+%d", line), "ward.go"}) ||
+		cmd.Dir != f.repo.Dir {
+		t.Fatalf("without a worktree: %+v", cmd)
+	}
+	wt := f.store.WorktreeDir("set", "engine")
+	if err := os.MkdirAll(wt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if cmd := m.editCommand(); cmd.Dir != wt {
+		t.Errorf("opened in %s, want the workstream's worktree %s", cmd.Dir, wt)
 	}
 }

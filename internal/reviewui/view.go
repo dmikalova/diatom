@@ -279,6 +279,9 @@ func (m *Model) footer() string {
 			)
 	}
 	keys := "a approve · c comment · r reject · d defer · b back"
+	if len(m.Editor) > 0 {
+		keys += " · o open"
+	}
 	if m.cur >= 0 && m.items[m.cur].Revision != nil && m.items[m.cur].Revision.Revises != "" {
 		keys += " · v combined"
 	}

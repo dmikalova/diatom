@@ -172,7 +172,7 @@ func NewApp(ctx context.Context, env Env, sched Scheduler) *App {
 
 // openReview shows a goal's review in place of its page.
 func (a *App) openReview(goal string) {
-	rv, err := reviewui.New(a.ctx, a.env.Store, goal)
+	rv, err := a.env.reviewer(a.ctx, goal)
 	if err != nil {
 		a.status.err = err
 		return
@@ -283,6 +283,10 @@ func (a *App) handle(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		a.width, a.height = msg.Width, msg.Height
 		a.layout()
+	case reviewui.EditedMsg:
+		if msg.Err != nil {
+			a.status.flash = "the editor failed: " + msg.Err.Error()
+		}
 	case tea.ModeReportMsg:
 		if msg.Mode == ansi.ModeUnicodeCore {
 			// The terminal measures graphemes now, as the renderer does from
@@ -596,13 +600,13 @@ func (a *App) askKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return a, res.cmd
 }
 
-// askArea is where a goal's item opens on its page: a plan on the plan, to
-// read, and a question on its answer box.
+// askArea is where a goal's item opens on its page: a question on its
+// answer box, and anything else on itself, to read or review.
 func askArea(it *item) nextArea {
-	if it != nil && it.kind == itemPlan {
-		return areaBody
+	if it != nil && it.kind == itemQuestion {
+		return areaAnswer
 	}
-	return areaAnswer
+	return areaBody
 }
 
 // backToNext returns from a goal opened from Next.
@@ -918,8 +922,7 @@ func (a *App) View() tea.View {
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	v.ReportFocus = true
-	v.WindowTitle = fmt.Sprintf("diatom · %s · %s today", filepath.Base(a.env.Store.Repo()),
-		money(a.status.totals.Day))
+	v.WindowTitle = "diatom · " + filepath.Base(a.env.Store.Repo())
 	return v
 }
 

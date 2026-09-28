@@ -8,6 +8,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -59,6 +61,10 @@ type Model struct {
 	width, height int
 	flash         string
 	err           error
+
+	// Editor is the command o opens the hunk's file in, such as nvim, run in
+	// the worktree of the workstream that made it; empty turns o off.
+	Editor []string
 }
 
 // New loads a goal's review and puts the first hunk to review on screen.
@@ -257,6 +263,8 @@ func (m *Model) updateKey(msg tea.KeyPressMsg) (*Model, tea.Cmd) {
 		m.stepBack()
 	case "v":
 		m.toggleCombined()
+	case "o":
+		return m, m.edit()
 	case "R":
 		m.err = m.reload()
 	}
@@ -376,3 +384,49 @@ func (m *Model) move(step int) {
 // Editing reports whether a comment is being written, which a restart would
 // lose.
 func (m *Model) Editing() bool { return m.editing }
+
+// EditedMsg is sent once the editor o opened has exited, with why it
+// failed, if it did.
+type EditedMsg struct{ Err error }
+
+// edit opens the hunk's file in the editor, at the line under the cursor,
+// from the worktree of the workstream that made it, so the editor sees the
+// code as that work has it. The window gives the editor the terminal and
+// takes it back once the editor exits.
+func (m *Model) edit() tea.Cmd {
+	cmd := m.editCommand()
+	if cmd == nil {
+		return nil
+	}
+	return tea.ExecProcess(cmd, func(err error) tea.Msg { return EditedMsg{Err: err} })
+}
+
+// editCommand is the editor's command for the hunk on screen, nil for none.
+func (m *Model) editCommand() *exec.Cmd {
+	if m.cur < 0 || len(m.Editor) == 0 {
+		return nil
+	}
+	it := m.items[m.cur]
+	dir := m.store.Repo()
+	for _, t := range it.Tasks {
+		if wt := m.store.WorktreeDir(m.goal, t.Workstream); t.Workstream != "" && isDir(wt) {
+			dir = wt
+			break
+		}
+	}
+	args := slices.Clone(m.Editor[1:])
+	if !it.Deleted {
+		if line := it.NewLine(m.cursor); line > 0 {
+			args = append(args, fmt.Sprintf("+%d", line))
+		}
+		args = append(args, filepath.FromSlash(it.Path))
+	}
+	cmd := exec.CommandContext(m.ctx, m.Editor[0], args...)
+	cmd.Dir = dir
+	return cmd
+}
+
+func isDir(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.IsDir()
+}

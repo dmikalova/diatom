@@ -161,7 +161,7 @@ func openGoal(t *testing.T, a *App, name string) {
 func TestGoalPage(t *testing.T) {
 	f := newFixture(t)
 	a, _ := newApp(t, f)
-	if title := a.View().WindowTitle; title != "diatom · vex · $0.00 today" {
+	if title := a.View().WindowTitle; title != "diatom · vex" {
 		t.Errorf("titled %q", title)
 	}
 	openGoal(t, a, "set")
@@ -734,7 +734,7 @@ func TestShowsCosts(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, _ := newApp(t, f)
-	if title := a.View().WindowTitle; title != "diatom · vex · $5.00 today" ||
+	if title := a.View().WindowTitle; title != "diatom · vex" ||
 		!strings.Contains(plain(a.footer()), "D$5.00 · W$5.00 · M$5.00") {
 		t.Errorf("titled %q, footer %q", title, a.footer())
 	}

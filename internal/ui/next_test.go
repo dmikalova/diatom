@@ -530,6 +530,44 @@ func TestNextPutsAFinishOff(t *testing.T) {
 	}
 }
 
+// TestNextMovesToAPlanAfterAHunk pins that a hunk decided is a point to
+// move on at: a plan waiting comes before the rest of another goal's review.
+func TestNextMovesToAPlanAfterAHunk(t *testing.T) {
+	f := newFixture(t)
+	if err := f.store.Answer("set", "0001", "No.", f.env.Now()); err != nil {
+		t.Fatal(err)
+	}
+	// A second commit, so the review has hunks left after the first.
+	ctx, r := context.Background(), git.Repo{Dir: f.repo}
+	write(t, filepath.Join(f.repo, "stack.go"), "package ward\n")
+	if _, err := r.StageAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	sha, err := r.Commit(ctx, "feat: stack")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, _ := f.store.Task("set", "0001")
+	task.Commits = append(task.Commits, sha)
+	if err := f.store.SaveTask("set", task); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := newApp(t, f)
+	if it := a.next.shown(); it == nil || it.kind != itemReview || it.row.toReview < 2 {
+		t.Fatalf("Next shows %+v", it)
+	}
+	// A plan is handed in while the review is on screen, which keeps it.
+	newPlan(t, f, "grim")
+	a.Update(tickMsg{})
+	if it := a.next.shown(); it == nil || it.kind != itemReview {
+		t.Fatalf("the plan took the screen from the review: %+v", it)
+	}
+	key(a, "enter", "a")
+	if it := a.next.shown(); it == nil || it.id() != "grim 0" || a.next.area != areaBody {
+		t.Errorf("after a hunk, Next shows %+v, area %d", it, a.next.area)
+	}
+}
+
 func TestAnswerQuestionsFromTheGoal(t *testing.T) {
 	f := newFixture(t)
 	if err := f.store.AddQuestion(
@@ -567,14 +605,14 @@ func TestAnswerQuestionsFromTheGoal(t *testing.T) {
 	}
 	typeText(a, "no")
 	key(a, "enter")
-	if a.asking != "" || a.selected().kind != entryGoal || a.status.detail == nil ||
-		!strings.Contains(a.status.flash, "nothing left to answer") {
-		t.Errorf(
-			"after the last, asking %q on %+v, flash %q",
-			a.asking,
-			a.selected(),
-			a.status.flash,
-		)
+	// The goal's own items come next, in Next's order, never another goal's.
+	if it := a.next.shown(); a.asking != "set" || it == nil || it.kind == itemQuestion ||
+		it.row.goal.Name != "set" {
+		t.Fatalf("after the last question, asking %q on %+v", a.asking, it)
+	}
+	key(a, "esc")
+	if a.asking != "" || a.selected().kind != entryGoal || a.status.detail == nil {
+		t.Errorf("esc from the goal's items: asking %q on %+v", a.asking, a.selected())
 	}
 	// esc leaves the questions for the page, too.
 	if err := f.store.AddQuestion(
