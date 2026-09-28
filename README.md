@@ -165,6 +165,7 @@ maxSessions = 1                   # sessions at once in this repo
 maxBatch = 5                      # tasks per session, following chains of dependent tasks
 commitCheck = "project-standards commit-msg"   # lints a commit message file
 instructions = ["~/AGENTS.md"]    # appended to every agent's system prompt
+land = "merge"                    # how goals land: "merge" into their base, "prs"; unset offers both
 
 [budget]                          # dollars; once one is spent, nothing new starts
 day = 50                          # today

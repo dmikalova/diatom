@@ -53,6 +53,10 @@ func TestGoalRoundTrip(t *testing.T) {
 		!strings.Contains(err.Error(), "already exists") {
 		t.Errorf("CreateGoal of an existing goal: %v", err)
 	}
+	// A goal being created has its directory before its goal.yaml.
+	if err := os.MkdirAll(s.GoalDir("half-made"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	goals, err := s.Goals()
 	if err != nil || len(goals) != 1 {
 		t.Errorf("Goals = %v, %v", goals, err)

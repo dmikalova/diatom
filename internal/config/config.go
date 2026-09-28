@@ -72,6 +72,9 @@ type Repo struct {
 	MaxBatch int `toml:"maxBatch"`
 	// Budget caps what the repo's agent sessions cost.
 	Budget Budget `toml:"budget"`
+	// Land is how a goal ready to finish lands: LandMerge merges it into its
+	// base branch, LandPRs opens its stacked pull requests. Empty offers both.
+	Land string `toml:"land"`
 	// CommitCheck lints a commit message: it is run with `sh -c` and the path
 	// of a file holding the message appended, such as
 	// `project-standards commit-msg`. Empty checks only the Conventional
@@ -88,6 +91,12 @@ type Repo struct {
 	// mcpServers format. None of the user's own servers are loaded.
 	MCPServers map[string]any `toml:"mcpServers"`
 }
+
+// The ways a repo's goals land.
+const (
+	LandMerge = "merge"
+	LandPRs   = "prs"
+)
 
 // Budget caps what a repo's agent sessions cost, in US dollars: today, over
 // the last 7 days, and over the last 30. Once one is spent, no new session
@@ -400,6 +409,10 @@ func decode(m map[string]any) (*Config, error) {
 			return nil, fmt.Errorf("config: unknown setting %s: a typo, or a setting "+
 				"newer than this diatom, which updating it would fix", key)
 		}
+	}
+	if c.Land != "" && c.Land != LandMerge && c.Land != LandPRs {
+		return nil, fmt.Errorf("config: land is %q: it is %q, %q, or unset to offer both",
+			c.Land, LandMerge, LandPRs)
 	}
 	return &c, nil
 }

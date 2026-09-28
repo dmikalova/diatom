@@ -322,6 +322,13 @@ func (s *Store) Goals() ([]*Goal, error) {
 		if !e.IsDir() || e.Name() == IntakeGoal {
 			continue
 		}
+		if _, err := os.Stat(filepath.Join(s.GoalDir(e.Name()), "goal.yaml")); errors.Is(
+			err,
+			fs.ErrNotExist,
+		) {
+			// A goal being created: CreateGoal makes its directory first.
+			continue
+		}
 		g, err := s.Goal(e.Name())
 		if err != nil {
 			return nil, err

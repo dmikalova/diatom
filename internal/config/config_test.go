@@ -303,3 +303,15 @@ func TestCovers(t *testing.T) {
 		}
 	}
 }
+
+func TestLand(t *testing.T) {
+	root, paths := tree(t)
+	write(t, filepath.Join(root, DirName), "land = \"merge\"\n")
+	if cfg, err := Load(root, paths); err != nil || cfg.Land != LandMerge {
+		t.Errorf("land = %+v, %v", cfg, err)
+	}
+	write(t, filepath.Join(root, DirName), "land = \"push\"\n")
+	if _, err := Load(root, paths); err == nil || !strings.Contains(err.Error(), "land") {
+		t.Errorf("land = push loaded: %v", err)
+	}
+}

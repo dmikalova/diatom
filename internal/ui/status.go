@@ -93,6 +93,9 @@ type goalRow struct {
 	sentBack bool
 	// landing is a done goal's layout, nil when it has none.
 	landing *finish.Result
+	// land is how the repo's config says its goals land: config.LandMerge,
+	// config.LandPRs, or "" for either.
+	land string
 	// intake marks the row of the intake triage is sorting, which isn't a
 	// goal of the human's.
 	intake bool
@@ -179,8 +182,9 @@ func (s *Status) reload() {
 	s.health = health(store)
 	s.days = s.spent.Days(store, s.env.now())
 	s.totals = spend.Sum(s.days, s.env.now())
+	land := ""
 	if cfg, err := config.Load(store.Repo(), s.env.Paths); err == nil {
-		s.budget = cfg.Budget
+		s.budget, land = cfg.Budget, cfg.Land
 	}
 	goals, err := store.Goals()
 	if err != nil {
@@ -214,7 +218,7 @@ func (s *Status) reload() {
 			s.loadErr = err
 			continue
 		}
-		row.notes = notes[g.Name]
+		row.notes, row.land = notes[g.Name], land
 		rows = append(rows, row)
 	}
 	s.rows = rows
@@ -660,22 +664,44 @@ func actions(r *goalRow) []action {
 	case queue.GoalActive:
 		left := r.counts[queue.Pending] + r.counts[queue.Active] + r.counts[queue.Blocked]
 		if left == 0 && r.toReview == 0 {
-			a = append(a,
-				action{"P", "Merge it into " + g.Base},
-				action{"F", "Open its stacked pull requests"},
-				action{"d", "Mark it done, to land later"})
+			a = append(append(a, landActions(r)...), action{"d", "Mark it done, to land later"})
 		}
 		a = append(a, action{"p", "Park it: start nothing new"})
 	case queue.GoalParked:
 		a = append(a, action{"p", "Resume it"})
 	case queue.GoalDone:
 		if l := r.landing; l == nil || l.Landing == nil || l.Landing.How == "" {
-			a = append(a,
-				action{"P", "Merge it into " + g.Base},
-				action{"F", "Open its stacked pull requests"})
+			a = append(a, landActions(r)...)
 		}
 	}
 	return a
+}
+
+// landActions are the ways the goal may land, as its repo's config allows.
+func landActions(r *goalRow) []action {
+	var a []action
+	if r.land != config.LandPRs {
+		a = append(a, action{"P", "Merge it into " + r.goal.Base})
+	}
+	if r.land != config.LandMerge {
+		a = append(a, action{"F", "Open its stacked pull requests"})
+	}
+	return a
+}
+
+// landsBy reports whether the goal may land by key, P or F, and says why not
+// when it may not.
+func (s *Status) landsBy(row *goalRow, key string) bool {
+	switch {
+	case key == "P" && row.land == config.LandPRs:
+		s.flash = row.goal.Name + "'s repo lands goals as pull requests: F opens them"
+	case key == "F" && row.land == config.LandMerge:
+		s.flash = row.goal.Name + "'s repo merges goals straight in: P merges it into " + row.goal.Base
+	default:
+		return true
+	}
+	s.confirm = ""
+	return false
 }
 
 // signOff signs the selected goal's plan off on a second s (ADR 0010).
@@ -761,12 +787,19 @@ func (s *Status) finishKey(row *goalRow, key string) tea.Cmd {
 	switch key {
 	case "d":
 		if g.State == queue.GoalDone {
-			s.flash = g.Name + " is done already: P merges it, F opens its pull requests"
+			var how []string
+			for _, a := range landActions(row) {
+				how = append(how, a.key+" "+strings.ToLower(a.label[:1])+a.label[1:])
+			}
+			s.flash = g.Name + " is done already: " + strings.Join(how, ", ")
 			return nil
 		}
 		prompt = fmt.Sprintf("press d again to mark %s done, ready to land", g.Name)
 		what = "marking it done"
 	default:
+		if !s.landsBy(row, key) {
+			return nil
+		}
 		if g.State != queue.GoalDone && g.State != queue.GoalActive {
 			s.flash = fmt.Sprintf("%s is %s: only an active or done goal lands", g.Name, g.State)
 			return nil

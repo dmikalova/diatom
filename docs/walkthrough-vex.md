@@ -225,7 +225,9 @@ twice or its key twice:
   the one before. Use this when you want CI per PR. Merge them bottom-up. A
   repo that requires linear history, as vex does, can only squash or rebase
   them, which rewrites the lower PR's commits, so the next PR up shows them
-  all again: `P` suits such a repo better.
+  all again: `P` suits such a repo better. vex's `.diatom/config.toml` sets
+  `land = "merge"`, so its goals offer only `P`; `land = "prs"` offers only
+  `F`.
 - **`d`, Mark it done**, to land later with `P` or `F`.
 - **`m`, More work**: write what it still needs, and `enter` adds it as a task
   on the goal's last workstream. The goal is active again, and comes back to
