@@ -10,6 +10,10 @@ import (
 // copyFocused copies the text of what has the keyboard to the clipboard.
 func (a *App) copyFocused() tea.Cmd {
 	text, what := a.focusedText()
+	if a.selecting.on {
+		// What is selected, over what has the keyboard.
+		text, what = a.selectedText(), "the selection"
+	}
 	if strings.TrimSpace(text) == "" {
 		a.flash = "nothing to copy"
 		return nil

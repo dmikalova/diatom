@@ -133,6 +133,10 @@ type App struct {
 	// or rowNone, rowFooter or rowIntake; labelRow is the intake box's rule.
 	rowEntry []int
 	labelRow int
+	// selecting is text dragged over in the main pane, and mainLines the
+	// main pane's lines as last drawn, which it is read from.
+	selecting selection
+	mainLines []string
 	// spin is the wheel events waiting to scroll; frame is the window as last
 	// drawn, and dirty says it has changed since.
 	spin  spin
@@ -312,13 +316,19 @@ func (a *App) handle(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseClickMsg:
 		return a.click(msg.Mouse())
 	case tea.MouseMotionMsg:
-		if a.dragging {
+		switch {
+		case a.dragging:
 			a.drag(msg.Mouse().X)
+		case a.selecting.dragging:
+			a.extendSelect(msg.Mouse())
 		}
 	case tea.MouseReleaseMsg:
 		if a.dragging {
 			a.dragging = false
 			a.saveUI()
+		}
+		if a.selecting.dragging {
+			return a, a.endSelect()
 		}
 	case tea.PasteMsg:
 		return a.toFocused(msg)
@@ -379,6 +389,10 @@ func (a *App) typing() bool {
 func (a *App) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	a.clearNotices()
+	if key != "super+c" && key != "y" {
+		// Any key but a copy lets a selection go.
+		a.selecting = selection{}
+	}
 	switch key {
 	case "ctrl+c":
 		return a.quit(a.quitting)
@@ -740,6 +754,9 @@ func (a *App) click(m tea.Mouse) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 	if m.X > nw || nw == 0 {
+		// A press may start a selection, as well as giving the part the
+		// keyboard.
+		a.startSelect(m)
 		if a.inNext() {
 			return a, a.focusMain(int(a.next.areaAt(m.Y)))
 		}
@@ -806,6 +823,7 @@ func (a *App) gather(m tea.Mouse) tea.Cmd {
 		return nil
 	}
 	nav := m.X < a.nw()
+	a.selecting = selection{}
 	if a.spin.steps != 0 && a.spin.nav != nav {
 		// The pointer moved to the other part: what went before scrolls first.
 		a.spinOut()
@@ -870,9 +888,12 @@ func (a *App) render() string {
 	mw := a.mainWidth()
 	main := lipgloss.NewStyle().Width(mw).MaxWidth(mw).Height(a.height).MaxHeight(a.height).
 		Render(hangAll(a.renderMain(), mw))
+	// A selection is read from the pane as drawn, and shown over it.
+	a.mainLines = strings.Split(main, "\n")
+	lit := strings.Join(a.highlight(a.mainLines), "\n")
 	nw := a.nw()
 	if nw == 0 {
-		return main
+		return lit
 	}
 	nav := lipgloss.NewStyle().Width(nw).MaxWidth(nw).Height(a.height).
 		MaxHeight(a.height).Render(a.renderNav())
@@ -890,7 +911,7 @@ func (a *App) render() string {
 			border[y] = tui.Dim(ch)
 		}
 	}
-	return lipgloss.JoinHorizontal(lipgloss.Top, nav, strings.Join(border, "\n"), main)
+	return lipgloss.JoinHorizontal(lipgloss.Top, nav, strings.Join(border, "\n"), lit)
 }
 
 // junction is the border's character beside a rule ending on its left, one

@@ -90,8 +90,9 @@ the mouse clicks and scrolls. Outside a text box:
   it
 - `L` opens the scheduler's log, which is also in the menu at the nav's foot
   and opens from its footer
-- `y` copies what has the keyboard, as cmd+c does in Ghostty with
-  `keybind = performable:super+c=copy_to_clipboard`
+- dragging in the main pane selects text within it, and copies it on release
+- `y` copies the selection, or else what has the keyboard, as cmd+c does in
+  Ghostty with `keybind = performable:super+c=copy_to_clipboard`
 - `U` restarts on a new release or build, once the footer says one is installed
 
 With the terminal in the background, a notification says when something comes
