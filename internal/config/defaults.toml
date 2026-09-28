@@ -7,6 +7,9 @@ maxSessions = 1
 maxBatch = 5
 chainContext = 100000
 editor = "nvim"
+# The repo's own commit-msg hook, such as its commitlint, on each message
+# diatom writes; "$0" is the message file.
+commitCheck = "git hook run --ignore-missing commit-msg --"
 
 [profiles.planning]
 model = "opus"

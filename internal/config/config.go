@@ -94,8 +94,10 @@ type Repo struct {
 	Land string `toml:"land"`
 	// CommitCheck lints a commit message: it is run with `sh -c` and the path
 	// of a file holding the message appended, such as
-	// `project-standards commit-msg`. Empty checks only the Conventional
-	// Commits header.
+	// `project-standards commit-msg`. The default runs the repo's own
+	// commit-msg hook, which diatom's commits otherwise skip, and passes
+	// where there is none. Empty checks only the Conventional Commits
+	// header.
 	CommitCheck string `toml:"commitCheck"`
 	// ADR says where a goal's ADRs go and how they're written (ADR 0010).
 	ADR ADR `toml:"adr"`
