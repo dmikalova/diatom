@@ -77,8 +77,8 @@ each goal and session spent on it.
   the repo's goals: new goals, tasks on existing ones, feedback for a goal
   being planned, or questions back to you. What the main pane showed goes with
   it, as a clue. A new goal is grilled first: answer its questions in Next,
-  then sign off its plan there. Work the intake already decides skips grilling
-  and waits for your sign-off.
+  then approve its plan there, `a` twice, or comment on it with `c`. Work the
+  intake already decides skips grilling and waits for your approval.
 - **A goal's page** says where it stands and what it is for, then offers its
   actions, its review, its plan and its tasks, each task opening to its Claude
   sessions and their steps.

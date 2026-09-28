@@ -64,7 +64,7 @@ const (
 )
 
 // Next is everything waiting on the human across the repo, one item at a
-// time: plans to sign off, questions, goals ready to finish and the hunks
+// time: plans to approve, questions, goals ready to finish and the hunks
 // finishing them brought, then the other hunks to review, each level in the
 // nav's order of goals. Answering one moves on to
 // the first left; nothing else changes the item shown.
@@ -92,8 +92,8 @@ type Next struct {
 	// more is set while the human says what more a goal ready to finish
 	// needs, in the answer box.
 	more bool
-	// only is the goal whose questions are answered on its page, "" for all
-	// of Next: its items are the only ones shown.
+	// only is the goal whose plan and questions are seen to on its page, ""
+	// for all of Next: its items are the only ones shown.
 	only string
 	// stats is each finishing goal's diff stat, from the last reload, and
 	// statCache each stat by the commit it is of.
@@ -113,8 +113,8 @@ type Next struct {
 // The answer box's hints, for a question and for a plan.
 const (
 	answerHint = "Your answer. enter sends it, shift+enter adds a line, esc goes back."
-	planHint   = "enter with nothing typed signs the plan off. Or write what to change, and enter " +
-		"sends it back to grilling. esc goes back."
+	planHint   = "What to change in the plan. enter sends it back to grilling, shift+enter adds a " +
+		"line, esc goes back."
 	moreHint = "What more the goal needs before it lands. enter adds it as a task, shift+enter " +
 		"adds a line, esc goes back."
 )
@@ -145,7 +145,7 @@ func (n *Next) reload() {
 	n.earlier = map[string]int{}
 	for i := range n.status.rows {
 		r := &n.status.rows[i]
-		if r.goal.State == queue.GoalPlanning && r.plan != nil && !r.sentBack {
+		if planReady(r) {
 			tiers[itemPlan] = append(tiers[itemPlan], item{kind: itemPlan, row: r})
 		}
 		if r.questions > 0 {
@@ -188,10 +188,12 @@ func (n *Next) reload() {
 }
 
 // first is the item to show next: the first waiting, or, while a goal's
-// questions are answered on its page, its first question, "" for none.
+// plan and questions are seen to on its page, the first of those, "" for
+// none.
 func (n *Next) first() string {
 	for _, it := range n.items {
-		if n.only == "" || it.kind == itemQuestion && it.row.goal.Name == n.only {
+		if n.only == "" ||
+			(it.kind == itemQuestion || it.kind == itemPlan) && it.row.goal.Name == n.only {
 			return it.id()
 		}
 	}
@@ -297,7 +299,7 @@ func (n *Next) typing() bool {
 		return n.area == areaBody && rv != nil && rv.Editing()
 	}
 	return n.area == areaAnswer &&
-		(it.kind == itemQuestion || it.kind == itemPlan || it.kind == itemFinish && n.more)
+		(it.kind == itemQuestion || (it.kind == itemFinish || it.kind == itemPlan) && n.more)
 }
 
 // setArea moves the keyboard to an area, and the cursor with it.
@@ -310,7 +312,7 @@ func (n *Next) setArea(a nextArea) tea.Cmd {
 	return nil
 }
 
-// moveOn shows the first item left once one is answered or signed off.
+// moveOn shows the first item left once one is answered or approved.
 func (n *Next) moveOn() tea.Cmd {
 	n.status.reload()
 	n.cur = ""
@@ -337,7 +339,7 @@ func (n *Next) key(msg tea.KeyPressMsg) nextKey {
 	if it == nil {
 		return nextKey{back: k == "esc" || k == "left"}
 	}
-	if n.area != areaAnswer || k != "enter" {
+	if (n.area != areaAnswer || k != "enter") && (it.kind != itemPlan || k != approveKey) {
 		n.confirm = ""
 	}
 	switch n.area {
@@ -351,6 +353,10 @@ func (n *Next) key(msg tea.KeyPressMsg) nextKey {
 	case areaBody:
 		if it.kind == itemReview {
 			return n.reviewKey(*it, msg)
+		}
+		if it.kind == itemPlan && slices.Contains([]string{approveKey, commentKey, laterKey}, k) {
+			// A plan is decided on as a hunk is, while reading it.
+			return nextKey{cmd: n.planKey(*it, k)}
 		}
 		switch k {
 		case "esc", "left":
@@ -372,8 +378,14 @@ func (n *Next) key(msg tea.KeyPressMsg) nextKey {
 		if it.kind == itemFinish && n.more {
 			return n.moreKey(*it, msg)
 		}
+		if it.kind == itemPlan && n.more {
+			return n.commentKey(*it, msg)
+		}
 		if it.kind == itemFinish {
 			return nextKey{cmd: n.finishKey(*it, k)}
+		}
+		if it.kind == itemPlan {
+			return nextKey{cmd: n.planKey(*it, k)}
 		}
 		return n.answerKey(*it, msg)
 	}
@@ -413,9 +425,6 @@ func (n *Next) answerKey(it item, msg tea.KeyPressMsg) nextKey {
 		return nextKey{cmd: n.setArea(areaBody)}
 	case "enter":
 		text := strings.TrimSpace(n.answer.Value())
-		if it.kind == itemPlan {
-			return nextKey{cmd: n.decide(it, text)}
-		}
 		if text == "" {
 			return nextKey{}
 		}
@@ -431,35 +440,107 @@ func (n *Next) answerKey(it item, msg tea.KeyPressMsg) nextKey {
 	return nextKey{cmd: cmd}
 }
 
-// decide signs a plan off on a second enter with nothing typed, or sends
-// what was typed back to grilling as the changes wanted (ADR 0010).
-func (n *Next) decide(it item, text string) tea.Cmd {
-	g := it.row.goal
-	if text == "" {
-		if n.confirm != it.id() {
-			n.confirm = it.id()
-			n.flash = fmt.Sprintf("enter again to sign off %s: %d workstreams, %d tasks",
-				g.Name, len(it.row.plan.Workstreams), len(it.row.plan.Tasks))
-			return nil
-		}
-		cfg, err := config.Load(n.env.Store.Repo(), n.env.Paths)
-		if err == nil {
-			err = plan.Approve(n.ctx, n.env.Store, cfg, g.Name, n.env.Now())
-		}
-		if err != nil {
-			n.err = err
-			return nil
-		}
-		n.flash = g.Name + " is signed off and active"
-		return n.moveOn()
+// The keys of a plan, as the reviewer's: approve it, or comment on what to
+// change, which sends it back.
+const (
+	approveKey = "a"
+	commentKey = "c"
+)
+
+// planActions are what can be done with a plan handed in: approving it,
+// commenting on it, and putting it off.
+func planActions(it item) []action {
+	return []action{
+		{approveKey, fmt.Sprintf("Approve: %d workstreams, %d tasks",
+			len(it.row.plan.Workstreams), len(it.row.plan.Tasks))},
+		{commentKey, "Comment: say what to change, and grilling revises the plan"},
+		{laterKey, "Later: ask again once the rest are done"},
 	}
-	if _, err := intake.Write(plan.FeedbackDir(n.env.Store.GoalDir(g.Name)),
-		intake.Intake{Source: "questions", Created: n.env.Now(), Text: text}); err != nil {
+}
+
+// planKey moves through a plan's actions, and does one on a second enter,
+// or on its own key: a second a approves, c opens the comment box.
+func (n *Next) planKey(it item, k string) tea.Cmd {
+	acts := planActions(it)
+	pick := k == "enter" || k == "space" || k == " "
+	if pick && n.act < len(acts) {
+		k = acts[n.act].key
+	}
+	switch k {
+	case approveKey:
+		return n.approve(it, pick)
+	case commentKey:
+		n.more = true
+		n.answer.Reset()
+		n.area = areaAnswer
+		return n.answer.Focus()
+	case laterKey:
+		return n.putOff(it)
+	case "esc":
+		return n.setArea(areaBody)
+	case "j", "down":
+		n.act = min(n.act+1, len(acts)-1)
+	case "k", "up":
+		n.act = max(n.act-1, 0)
+	}
+	return nil
+}
+
+// approve signs a plan off once it is asked for twice (ADR 0010).
+func (n *Next) approve(it item, byEnter bool) tea.Cmd {
+	g := it.row.goal
+	if n.confirm != it.id() {
+		n.confirm = it.id()
+		again := approveKey
+		if byEnter {
+			again = "enter"
+		}
+		n.flash = fmt.Sprintf("%s again to approve %s: %d workstreams, %d tasks", again,
+			g.Name, len(it.row.plan.Workstreams), len(it.row.plan.Tasks))
+		return nil
+	}
+	cfg, err := config.Load(n.env.Store.Repo(), n.env.Paths)
+	if err == nil {
+		err = plan.Approve(n.ctx, n.env.Store, cfg, g.Name, n.env.Now())
+	}
+	if err != nil {
 		n.err = err
 		return nil
 	}
-	n.flash = "sent back to " + g.Name + "'s grilling with your changes"
+	n.flash = g.Name + " is approved and active"
 	return n.moveOn()
+}
+
+// commentKey types what to change in a plan, and sends it back to grilling
+// once enter sends it (ADR 0010).
+func (n *Next) commentKey(it item, msg tea.KeyPressMsg) nextKey {
+	if cmd, ok := tui.Cut(&n.answer, msg); ok {
+		return nextKey{cmd: cmd}
+	}
+	switch msg.String() {
+	case "esc":
+		n.more = false
+		n.answer.Reset()
+		n.answer.Blur()
+		return nextKey{}
+	case "enter":
+		text := strings.TrimSpace(n.answer.Value())
+		if text == "" {
+			n.flash = "say what to change, or esc goes back"
+			return nextKey{}
+		}
+		g := it.row.goal
+		if _, err := intake.Write(plan.FeedbackDir(n.env.Store.GoalDir(g.Name)),
+			intake.Intake{Source: "questions", Created: n.env.Now(), Text: text}); err != nil {
+			n.err = err
+			return nextKey{}
+		}
+		n.flash = "sent back to " + g.Name + "'s grilling with your comment"
+		return nextKey{cmd: n.moveOn()}
+	}
+	var cmd tea.Cmd
+	n.answer, cmd = n.answer.Update(msg)
+	return nextKey{cmd: cmd}
 }
 
 // finishKey moves through a finishing goal's actions, and does one on a
@@ -608,18 +689,18 @@ func (n *Next) render(focused bool, foot []string) string {
 	ctxLines := n.contextLines(*it, w)
 	var lower []string
 	switch it.kind {
-	case itemQuestion, itemPlan:
-		hint := answerHint
+	case itemQuestion:
+		lower = n.answerBox(answerHint, w)
+	case itemFinish, itemPlan:
+		acts, hint := finishActions(*it), moreHint
 		if it.kind == itemPlan {
-			hint = planHint
+			acts, hint = planActions(*it), planHint
 		}
-		lower = n.answerBox(hint, w)
-	case itemFinish:
 		if n.more {
-			lower = n.answerBox(moreHint, w)
+			lower = n.answerBox(hint, w)
 			break
 		}
-		for i, a := range finishActions(*it) {
+		for i, a := range acts {
 			mark := "  "
 			if i == n.act {
 				mark = tui.Color("› ", tui.Accent)

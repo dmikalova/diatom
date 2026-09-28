@@ -625,16 +625,13 @@ func (s *Status) act(row *goalRow, key string) (tea.Cmd, bool) {
 		s.openReview(row.goal.Name)
 		return nil, true
 	case "a":
-		if row.questions == 0 {
+		if row.questions == 0 && !planReady(row) {
 			return nil, false
 		}
 		s.answering = row.goal.Name
 		return nil, true
 	case "p":
 		s.toggleParked(row)
-	case "s":
-		s.signOff(row)
-		return nil, true
 	case "d", "F", "P":
 		return s.finishKey(row, key), true
 	default:
@@ -657,8 +654,8 @@ func actions(r *goalRow) []action {
 	var a []action
 	switch g.State {
 	case queue.GoalPlanning:
-		if r.plan != nil && !r.sentBack {
-			a = append(a, action{"s", fmt.Sprintf("Sign off the plan: %d workstreams, %d tasks",
+		if planReady(r) {
+			a = append(a, action{"a", fmt.Sprintf("Review the plan: %d workstreams, %d tasks",
 				len(r.plan.Workstreams), len(r.plan.Tasks))})
 		}
 	case queue.GoalActive:
@@ -704,35 +701,10 @@ func (s *Status) landsBy(row *goalRow, key string) bool {
 	return false
 }
 
-// signOff signs the selected goal's plan off on a second s (ADR 0010).
-func (s *Status) signOff(row *goalRow) {
-	name := row.repo + "/" + row.goal.Name
-	if row.plan == nil {
-		s.flash, s.confirm = row.goal.Name+" has no plan to sign off", ""
-		return
-	}
-	if row.sentBack {
-		s.flash, s.confirm = row.goal.Name+"'s plan went back with changes: grilling hands in the next", ""
-		return
-	}
-	if !s.confirmed("s", name, fmt.Sprintf(
-		"press s again to sign off %s: %d workstreams, %d tasks",
-		row.goal.Name,
-		len(row.plan.Workstreams),
-		len(row.plan.Tasks),
-	)) {
-		return
-	}
-	cfg, err := config.Load(row.repo, s.env.Paths)
-	if err == nil {
-		err = plan.Approve(s.ctx, queue.Open(row.repo), cfg, row.goal.Name, s.env.Now())
-	}
-	if err != nil {
-		s.err = err
-		return
-	}
-	s.flash = row.goal.Name + " is signed off and active"
-	s.reload()
+// planReady reports whether the goal's plan waits for the human to approve
+// or comment on it.
+func planReady(r *goalRow) bool {
+	return r.goal.State == queue.GoalPlanning && r.plan != nil && !r.sentBack
 }
 
 // confirmed reports whether this press of key confirms the one before it
@@ -1112,7 +1084,7 @@ func planningLine(r goalRow) string {
 	case r.sentBack:
 		return tui.Color("plan sent back with your changes: grilling takes them next", tui.Blue)
 	case r.plan != nil:
-		return tui.Color(fmt.Sprintf("plan ready to sign off: %d workstreams, %d tasks",
+		return tui.Color(fmt.Sprintf("plan ready to approve: %d workstreams, %d tasks",
 			len(r.plan.Workstreams), len(r.plan.Tasks)), tui.Green)
 	case r.grilling == queue.Blocked:
 		return tui.Color("grilling: waiting on your answers", tui.Magenta)

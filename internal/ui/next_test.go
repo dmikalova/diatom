@@ -164,23 +164,45 @@ func TestNextScrollsTheQuestion(t *testing.T) {
 	}
 }
 
-func TestNextSignsOffAPlan(t *testing.T) {
+func TestNextApprovesAPlan(t *testing.T) {
 	f := newFixture(t)
 	newPlan(t, f, "grim")
 	a, _ := newApp(t, f)
 	if it := a.next.shown(); it == nil || it.kind != itemPlan {
 		t.Fatalf("Next shows %+v first", it)
 	}
-	key(a, "enter", "tab", "enter")
-	if !strings.Contains(a.next.flash, "enter again to sign off grim") {
+	out := plain(a.render())
+	for _, want := range []string{"› a  Approve: 1 workstreams, 1 tasks",
+		"c  Comment: say what to change", "l  Later"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the plan lacks %q:\n%s", want, out)
+		}
+	}
+	// a, as on a hunk, while reading the plan.
+	key(a, "enter", "a")
+	if !strings.Contains(a.next.flash, "a again to approve grim") {
 		t.Fatalf("flash = %q", a.next.flash)
+	}
+	key(a, "a")
+	if g, _ := f.store.Goal("grim"); g.State != queue.GoalActive {
+		t.Errorf("grim is %s after two a", g.State)
+	}
+	if it := a.next.shown(); it == nil || it.kind != itemQuestion {
+		t.Errorf("after approving, Next shows %+v", it)
+	}
+}
+
+func TestNextApprovesAPlanFromItsActions(t *testing.T) {
+	f := newFixture(t)
+	newPlan(t, f, "grim")
+	a, _ := newApp(t, f)
+	key(a, "enter", "tab", "enter")
+	if a.typing() || !strings.Contains(a.next.flash, "enter again to approve grim") {
+		t.Fatalf("typing %v, flash = %q", a.typing(), a.next.flash)
 	}
 	key(a, "enter")
 	if g, _ := f.store.Goal("grim"); g.State != queue.GoalActive {
 		t.Errorf("grim is %s after two enters", g.State)
-	}
-	if it := a.next.shown(); it == nil || it.kind != itemQuestion {
-		t.Errorf("after signing off, Next shows %+v", it)
 	}
 }
 
@@ -285,7 +307,14 @@ func TestNextSendsAPlanBack(t *testing.T) {
 	f := newFixture(t)
 	newPlan(t, f, "hex")
 	a, _ := newApp(t, f)
-	key(a, "enter", "tab")
+	key(a, "enter", "c")
+	if !a.typing() {
+		t.Fatal("c opens no comment box")
+	}
+	key(a, "enter")
+	if !strings.Contains(a.next.flash, "say what to change") {
+		t.Errorf("an empty comment: %q", a.next.flash)
+	}
 	typeText(a, "Split the engine.")
 	key(a, "enter")
 	fb, err := intake.Pending(plan.FeedbackDir(f.store.GoalDir("hex")))
@@ -475,7 +504,7 @@ func TestAnswerQuestionsFromTheGoal(t *testing.T) {
 	typeText(a, "no")
 	key(a, "enter")
 	if a.asking != "" || a.selected().kind != entryGoal || a.status.detail == nil ||
-		!strings.Contains(a.status.flash, "no questions left") {
+		!strings.Contains(a.status.flash, "nothing left to answer") {
 		t.Errorf(
 			"after the last, asking %q on %+v, flash %q",
 			a.asking,

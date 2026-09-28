@@ -434,7 +434,7 @@ func TestPasteAndCut(t *testing.T) {
 	}
 }
 
-func TestGoalPageSignsOffAPlan(t *testing.T) {
+func TestGoalPageApprovesAPlan(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	g, err := plan.NewGoal(ctx, f.store, "grim", "Grim Reminders", "", "", queue.Origin{},
@@ -444,12 +444,9 @@ func TestGoalPageSignsOffAPlan(t *testing.T) {
 	}
 	a, _ := newApp(t, f)
 	openGoal(t, a, g.Name)
-	if out := plain(a.render()); !strings.Contains(out, "grilling: the next round is queued") {
+	if out := plain(a.render()); !strings.Contains(out, "grilling: the next round is queued") ||
+		strings.Contains(out, "Review the plan") {
 		t.Errorf("planning goal without a plan:\n%s", out)
-	}
-	key(a, "s")
-	if !strings.Contains(plain(a.render()), "no plan to sign off") {
-		t.Error("s signed off a goal without a plan")
 	}
 	p, _ := plan.Parse([]byte("summary: Do it.\nworkstreams: [{name: engine}]\n" +
 		"tasks: [{key: a, title: Add ward, workstream: engine}]\n"))
@@ -458,19 +455,26 @@ func TestGoalPageSignsOffAPlan(t *testing.T) {
 	}
 	a.Update(tickMsg{})
 	out := plain(a.render())
-	if !strings.Contains(out, "plan ready to sign off: 1 workstreams, 1 tasks") ||
-		!strings.Contains(out, "› s  Sign off the plan: 1 workstreams, 1 tasks") ||
+	if !strings.Contains(out, "plan ready to approve: 1 workstreams, 1 tasks") ||
+		!strings.Contains(out, "› a  Review the plan: 1 workstreams, 1 tasks") ||
 		!strings.Contains(out, "[engine] Add ward") {
 		t.Errorf("plan not shown:\n%s", out)
 	}
-	key(a, "s")
-	if got, _ := f.store.Goal(g.Name); got.State != queue.GoalPlanning ||
-		!strings.Contains(plain(a.render()), "press s again") {
-		t.Fatal("one s signed the plan off")
+	key(a, "a")
+	if it := a.next.shown(); a.asking != g.Name || it == nil || it.kind != itemPlan ||
+		a.next.area != areaBody {
+		t.Fatalf("a opened %+v, asking %q, area %d", it, a.asking, a.next.area)
 	}
-	key(a, "s")
+	key(a, "a")
+	if got, _ := f.store.Goal(g.Name); got.State != queue.GoalPlanning {
+		t.Fatal("one a approved the plan")
+	}
+	key(a, "a")
 	if got, _ := f.store.Goal(g.Name); got.State != queue.GoalActive {
-		t.Errorf("after two s, goal is %s: %v", got.State, a.status.err)
+		t.Errorf("after two a, goal is %s: %v", got.State, a.next.err)
+	}
+	if a.asking != "" || a.status.detail == nil || a.status.detail.goal != g.Name {
+		t.Errorf("after approving, asking %q, detail %+v", a.asking, a.status.detail)
 	}
 }
 

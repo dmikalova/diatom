@@ -538,9 +538,9 @@ func (a *App) openFromNext(goal string) tea.Cmd {
 // goal's questions answered on its page.
 func (a *App) inNext() bool { return a.selected().kind == entryNext || a.asking != "" }
 
-// answerFrom answers the goal's questions on its page, in Next's view, its
-// answer box in hand: each answer moves on to the goal's next question, and
-// the page comes back once none is left.
+// answerFrom sees to the goal's plan and questions on its page, in Next's
+// view: a plan to read first, a question with its answer box in hand. Each
+// moves on to the goal's next, and the page comes back once none is left.
 func (a *App) answerFrom(goal string) tea.Cmd {
 	a.next.only = goal
 	a.next.cur = ""
@@ -551,7 +551,7 @@ func (a *App) answerFrom(goal string) tea.Cmd {
 	}
 	a.asking = goal
 	a.next.scroll = 0
-	return a.focusMain(int(areaAnswer))
+	return a.focusMain(int(askArea(a.next.shown())))
 }
 
 // stopAsking goes back to the goal's page from answering its questions.
@@ -572,14 +572,23 @@ func (a *App) askKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	it := a.next.shown()
 	if it == nil || it.row.goal.Name != a.asking {
-		a.status.flash = a.asking + ": no questions left"
+		a.status.flash = a.asking + ": nothing left to answer"
 		return a, tea.Batch(res.cmd, a.stopAsking())
 	}
 	if it.id() != was {
-		// On to the goal's next question, the answer box still in hand.
-		return a, tea.Batch(res.cmd, a.next.setArea(areaAnswer))
+		// On to the goal's next, the answer box still in hand for a question.
+		return a, tea.Batch(res.cmd, a.next.setArea(askArea(it)))
 	}
 	return a, res.cmd
+}
+
+// askArea is where a goal's item opens on its page: a plan on the plan, to
+// read, and a question on its answer box.
+func askArea(it *item) nextArea {
+	if it != nil && it.kind == itemPlan {
+		return areaBody
+	}
+	return areaAnswer
 }
 
 // backToNext returns from a goal opened from Next.
@@ -1100,7 +1109,7 @@ func boldAll(s string) string {
 	return tui.SGR(1) + strings.ReplaceAll(s, tui.Reset, tui.Reset+tui.SGR(1)) + tui.Reset
 }
 
-// nextCounts sums up what waits across every goal: plans to sign off,
+// nextCounts sums up what waits across every goal: plans to approve,
 // questions, goals ready to finish, hunks to review, and goals blocked.
 func (a *App) nextCounts() string {
 	var plans, questions, finishing, hunks, blocked int
@@ -1157,8 +1166,8 @@ func relevant(r goalRow) string {
 	}
 	name, c := goalStatus(r)
 	switch {
-	case r.goal.State == queue.GoalPlanning && r.plan != nil && !r.sentBack:
-		return tui.Color("plan to sign off", tui.Green)
+	case planReady(&r):
+		return tui.Color("plan to approve", tui.Green)
 	case r.questions > 0:
 		return tui.Color(count(r.questions, "question"), tui.Magenta)
 	case name == "ready to finish":

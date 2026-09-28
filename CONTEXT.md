@@ -27,7 +27,7 @@ The agent's work of sorting an intake into the repo's goals: new goals, tasks on
 _Avoid_: classification, routing
 
 **Plan**:
-A goal broken into workstreams, tasks and the dependencies between them, signed off by the human before work starts.
+A goal broken into workstreams, tasks and the dependencies between them, approved by the human before work starts.
 _Avoid_: roadmap, breakdown
 
 **Workstream**:
@@ -85,7 +85,7 @@ The human's reply to a question. It makes the parked task ready again.
 _Avoid_: response, reply
 
 **Next**:
-Everything waiting on the human, across every goal, taken one item at a time: goals ready to finish and the hunks finishing them brought, plans to sign off, questions, then the other hunks to review.
+Everything waiting on the human, across every goal, taken one item at a time: goals ready to finish and the hunks finishing them brought, plans to approve, questions, then the other hunks to review.
 _Avoid_: inbox, notifications, to-do
 
 ### Branches

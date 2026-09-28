@@ -124,11 +124,11 @@ the goals it waits for. Its branch then starts from `main` with them landed,
 so it never overlaps them. A branch grilling made before they landed has
 `main` merged in once as the goal stops waiting.
 
-## 4. Next: answer questions, then sign off each plan
+## 4. Next: answer questions, then approve each plan
 
 Each planning goal gets grilling rounds: read-only planning sessions on Opus
 that ask questions and then hand in a plan. Everything they ask comes to Next,
-with plans to sign off before questions, each level in the nav's order of
+with plans to approve before questions, each level in the nav's order of
 goals. A goal ready to finish comes before both (step 6).
 
 An item of Next has three parts, and tab moves through them:
@@ -140,13 +140,17 @@ An item of Next has three parts, and tab moves through them:
    scrolls half a page down and `shift+space` half a page up.
 3. **The answer**: `enter` sends it and moves on to the first item left.
 
-For a plan:
+A plan is decided on the way a hunk is, with its keys while you read it or
+from the list of what can be done below it:
 
-- To correct it, write what to change and press `enter`. The plan is set aside
-  and a new round starts with your feedback.
-- To approve it, press `enter` twice with nothing typed, or `s` twice on the
-  goal's page. This queues the tasks and commits any ADR drafts from grilling,
-  which then come up for review like any other commit.
+- **`a` twice approves it.** This queues the tasks and commits any ADR drafts
+  from grilling, which then come up for review like any other commit.
+- **`c` comments on it**: write what to change and press `enter`. The plan is
+  set aside and a new round starts with your comment.
+- **`l`, Later**, puts it behind everything else waiting on you.
+
+On a planning goal's page, `a` opens its plan the same way, and after it any
+questions the goal still has.
 
 With the terminal in the background, a notification says when Next has
 something again after having nothing.
