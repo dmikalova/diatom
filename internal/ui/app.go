@@ -717,10 +717,17 @@ func (a *App) pageReviewKey(msg tea.KeyPressMsg, back bool) (tea.Model, tea.Cmd)
 // toFocused hands a message to the text box with the keyboard.
 func (a *App) toFocused(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
+	rv := a.review
+	if rv == nil && a.inNext() {
+		rv = a.next.shownReviewer()
+	}
 	switch {
 	case a.focus == partIntake:
 		a.intake.area, cmd = a.intake.area.Update(msg)
 		a.layout()
+	case rv != nil && rv.Editing():
+		// A reviewer's comment box, on a goal's page or in Next.
+		_, cmd = rv.Update(msg)
 	case a.typing() && a.review == nil:
 		a.next.answer, cmd = a.next.answer.Update(msg)
 	}

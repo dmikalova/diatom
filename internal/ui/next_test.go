@@ -568,6 +568,25 @@ func TestNextMovesToAPlanAfterAHunk(t *testing.T) {
 	}
 }
 
+// TestNextPastesIntoTheReviewersComment pins that the terminal's paste, as
+// cmd+v sends it, goes into the comment being written on a hunk.
+func TestNextPastesIntoTheReviewersComment(t *testing.T) {
+	f := newFixture(t)
+	if err := f.store.Answer("set", "0001", "No.", f.env.Now()); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := newApp(t, f)
+	key(a, "enter", "c")
+	if rv := a.next.shownReviewer(); rv == nil || !rv.Editing() {
+		t.Fatal("c opened no comment box")
+	}
+	a.Update(tea.PasteMsg{Content: "why ward?"})
+	if !strings.Contains(plain(a.render()), "why ward?") || a.next.answer.Value() != "" {
+		t.Errorf("the paste went to the answer box %q:\n%s", a.next.answer.Value(),
+			plain(a.render()))
+	}
+}
+
 func TestAnswerQuestionsFromTheGoal(t *testing.T) {
 	f := newFixture(t)
 	if err := f.store.AddQuestion(

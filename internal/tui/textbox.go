@@ -41,19 +41,20 @@ func PlainStyles() textarea.Styles {
 }
 
 // The keys the text boxes edit with, beside the text box's own. The shifted
-// ones need a terminal that tells them apart, as Ghostty does; the alt ones
-// work in any.
+// and cmd (super) ones need a terminal that tells them apart, as Ghostty
+// does, and cmd ones Ghostty passes on rather than keeping, such as cmd+c
+// bound performable; the alt ones work in any.
 var (
 	// newline adds a line to the text instead of sending it.
 	newline   = keybind.NewBinding(keybind.WithKeys("shift+enter", "alt+enter", "ctrl+j"))
-	selectAll = keybind.NewBinding(keybind.WithKeys("alt+a", "ctrl+shift+a"))
-	copyText  = keybind.NewBinding(keybind.WithKeys("ctrl+shift+c", "alt+c"))
-	cutText   = keybind.NewBinding(keybind.WithKeys("ctrl+x", "alt+x"))
+	selectAll = keybind.NewBinding(keybind.WithKeys("super+a", "alt+a", "ctrl+shift+a"))
+	copyText  = keybind.NewBinding(keybind.WithKeys("super+c", "ctrl+shift+c", "alt+c"))
+	cutText   = keybind.NewBinding(keybind.WithKeys("super+x", "ctrl+x", "alt+x"))
 )
 
 // EditKeys gives a text box the window's editing keys. Pasting, with the
-// terminal's paste or ctrl+v, and selecting with shift and the arrows are the
-// text box's own.
+// terminal's paste, such as cmd+v, or ctrl+v, and selecting with shift and
+// the arrows are the text box's own.
 func EditKeys(area *textarea.Model) {
 	area.KeyMap.InsertNewline = newline
 	area.KeyMap.SelectAll = selectAll

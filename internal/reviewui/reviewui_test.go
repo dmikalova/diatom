@@ -576,3 +576,24 @@ func TestOpenInEditor(t *testing.T) {
 		t.Errorf("opened in %s, want the workstream's worktree %s", cmd.Dir, wt)
 	}
 }
+
+// TestCommentBoxTakesCmdKeys pins that the comment box takes the
+// terminal's paste, as cmd+v sends it, and cmd+a and cmd+x.
+func TestCommentBoxTakesCmdKeys(t *testing.T) {
+	f := newFixture(t)
+	f.write("ward.go", body("ward", "poison"))
+	sha := f.commit("feat: ward and poison")
+	f.task(&queue.Task{Title: "Add ward", Kind: queue.Planned, Workstream: "engine",
+		Commits: []string{sha}})
+	m := f.model()
+	press(m, "c")
+	m.Update(tea.PasteMsg{Content: "why ward?"})
+	if m.input.Value() != "why ward?" {
+		t.Fatalf("after a paste, the box holds %q", m.input.Value())
+	}
+	m.Update(tea.KeyPressMsg{Code: 'a', Mod: tea.ModSuper})
+	m.Update(tea.KeyPressMsg{Code: 'x', Mod: tea.ModSuper})
+	if m.input.Value() != "" {
+		t.Errorf("after cmd+a, cmd+x, the box holds %q", m.input.Value())
+	}
+}

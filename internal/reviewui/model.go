@@ -176,6 +176,14 @@ func (m *Model) Update(msg tea.Msg) (*Model, tea.Cmd) {
 			return m.updateEditing(msg)
 		}
 		return m.updateKey(msg)
+	case tea.PasteMsg:
+		// The terminal's paste, such as cmd+v, goes into the comment box.
+		if m.editing {
+			var cmd tea.Cmd
+			m.input, cmd = m.input.Update(msg)
+			m.fitInput()
+			return m, cmd
+		}
 	}
 	return m, nil
 }
