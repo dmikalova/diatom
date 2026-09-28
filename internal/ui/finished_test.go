@@ -35,21 +35,22 @@ func TestFinishedGoalsListLatestFirst(t *testing.T) {
 	}
 	a, _ := newApp(t, f)
 	es := a.entries()
-	if es[len(es)-2].kind != entryFinished || es[len(es)-1].kind != entryLog {
-		t.Fatalf("the menu = %+v", es[len(es)-2:])
+	if es[len(es)-3].kind != entryFinished || es[len(es)-2].kind != entryLog ||
+		es[len(es)-1].kind != entrySpending {
+		t.Fatalf("the menu = %+v", es[len(es)-3:])
 	}
 	nav := plain(a.renderNav())
-	rule := strings.Index(nav, "────")
-	if at := strings.Index(nav, "☑ Finished (2)"); at < rule || at > strings.Index(nav, "📒") {
-		t.Errorf("Finished isn't in the menu above the log:\n%s", nav)
+	if at := strings.Index(nav, "☑ Finished (2)"); at < 0 || at > strings.Index(nav, "📒") ||
+		strings.Index(nav, "📒") > strings.Index(nav, "💰") {
+		t.Errorf("the menu isn't Finished, the log, then Spending:\n%s", nav)
 	}
 	if strings.Contains(nav, "Old set") {
 		t.Errorf("a finished goal is in the nav:\n%s", nav)
 	}
-	if !strings.Contains(plain(a.footer()), "$12D") {
+	if !strings.Contains(plain(a.footer()), "D$12") {
 		t.Errorf("the finished goal's cost is gone: %q", plain(a.footer()))
 	}
-	a.sel = len(es) - 2
+	a.sel = len(es) - 3
 	a.show()
 	key(a, "enter")
 	out := plain(a.render())
@@ -135,8 +136,8 @@ func TestSpendingShowsTheBudget(t *testing.T) {
 	}
 	a, _ := newApp(t, f)
 	foot := a.footer()
-	if !strings.Contains(foot, tui.Color("$2.00D", tui.Red)) ||
-		strings.Contains(foot, tui.Color("$2.00M", tui.Red)) ||
+	if !strings.Contains(foot, tui.Color("D$2.00", tui.Red)) ||
+		strings.Contains(foot, tui.Color("M$2.00", tui.Red)) ||
 		!strings.Contains(plain(foot), "today's budget is spent: nothing new starts") {
 		t.Errorf("footer = %q", foot)
 	}

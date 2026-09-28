@@ -92,6 +92,9 @@ type Next struct {
 	// more is set while the human says what more a goal ready to finish
 	// needs, in the answer box.
 	more bool
+	// only is the goal whose questions are answered on its page, "" for all
+	// of Next: its items are the only ones shown.
+	only string
 	// stats is each finishing goal's diff stat, from the last reload, and
 	// statCache each stat by the commit it is of.
 	stats, statCache map[string]string
@@ -171,7 +174,7 @@ func (n *Next) reload() {
 		// The item shown is gone, such as a goal just landed: the next one
 		// opens on itself, as moving on does, whichever area had the
 		// keyboard.
-		n.cur = n.items[0].id()
+		n.cur = n.first()
 		n.scroll, n.confirm, n.act, n.more = 0, "", 0, false
 		n.area = areaBody
 		n.answer.Blur()
@@ -182,6 +185,17 @@ func (n *Next) reload() {
 			rv.Refresh()
 		}
 	}
+}
+
+// first is the item to show next: the first waiting, or, while a goal's
+// questions are answered on its page, its first question, "" for none.
+func (n *Next) first() string {
+	for _, it := range n.items {
+		if n.only == "" || it.kind == itemQuestion && it.row.goal.Name == n.only {
+			return it.id()
+		}
+	}
+	return ""
 }
 
 // shownReviewer is the reviewer of the item shown, nil when it isn't a

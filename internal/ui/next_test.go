@@ -439,14 +439,65 @@ func TestNextPutsAFinishOff(t *testing.T) {
 
 func TestAnswerQuestionsFromTheGoal(t *testing.T) {
 	f := newFixture(t)
+	if err := f.store.AddQuestion(
+		"set",
+		&queue.Question{Task: "0001", Text: "And poison?"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	// Another goal's question, which answering on this page never reaches.
+	if err := f.store.CreateGoal(&queue.Goal{Name: "late", State: queue.GoalActive, Base: "main",
+		Created: time.Unix(2000, 0)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.AddQuestion(
+		"late",
+		&queue.Question{Task: "0001", Text: "Later?"},
+	); err != nil {
+		t.Fatal(err)
+	}
 	a, _ := newApp(t, f)
 	openGoal(t, a, "set")
 	key(a, "a")
-	if a.selected().kind != entryNext || a.focus != partMain || a.next.area != areaAnswer {
-		t.Fatalf("a opened %+v, focus %d, area %d", a.selected(), a.focus, a.next.area)
+	if a.selected().kind != entryGoal || a.asking != "set" || a.focus != partMain ||
+		a.next.area != areaAnswer || !a.typing() {
+		t.Fatalf("a: selected %+v, asking %q, focus %d, area %d", a.selected(), a.asking, a.focus,
+			a.next.area)
 	}
-	if it := a.next.shown(); it == nil || it.id() != "set question 0001" {
-		t.Errorf("shown %v", it)
+	if out := plain(a.render()); !strings.Contains(out, "Does ward stack?") {
+		t.Errorf("the page doesn't show its question:\n%s", out)
+	}
+	typeText(a, "yes")
+	key(a, "enter")
+	if a.asking != "set" || !strings.Contains(plain(a.render()), "And poison?") {
+		t.Fatalf("after one answer, asking %q:\n%s", a.asking, plain(a.render()))
+	}
+	typeText(a, "no")
+	key(a, "enter")
+	if a.asking != "" || a.selected().kind != entryGoal || a.status.detail == nil ||
+		!strings.Contains(a.status.flash, "no questions left") {
+		t.Errorf(
+			"after the last, asking %q on %+v, flash %q",
+			a.asking,
+			a.selected(),
+			a.status.flash,
+		)
+	}
+	// esc leaves the questions for the page, too.
+	if err := f.store.AddQuestion(
+		"set",
+		&queue.Question{Task: "0001", Text: "Once more?"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	a.reload()
+	key(a, "a")
+	if a.asking != "set" {
+		t.Fatalf("a again: asking %q", a.asking)
+	}
+	key(a, "esc", "esc")
+	if a.asking != "" || a.selected().kind != entryGoal {
+		t.Errorf("esc: asking %q on %+v", a.asking, a.selected())
 	}
 }
 

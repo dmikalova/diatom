@@ -708,7 +708,7 @@ func TestShowsCosts(t *testing.T) {
 	}
 	a, _ := newApp(t, f)
 	if title := a.View().WindowTitle; title != "diatom · vex · $5.00 today" ||
-		!strings.Contains(plain(a.footer()), "$5.00D · $5.00W · $5.00M") {
+		!strings.Contains(plain(a.footer()), "D$5.00 · W$5.00 · M$5.00") {
 		t.Errorf("titled %q, footer %q", title, a.footer())
 	}
 	openGoal(t, a, "set")

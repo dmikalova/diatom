@@ -74,12 +74,12 @@ ready. The nav down the left lists:
   `2 questions`, `48 hunks to review` or `blocked`. The glyph is 🤖 while an
   agent works on the goal, and 🔀 while diatom commits a session's work or
   lands the goal.
-- **A menu** at the foot: 💰 Spending shows what each of the last 30 days
-  cost against the budget, and `enter` on a day shows what each goal and
-  session spent on it. ☑️ Finished lists the finished goals, the latest first,
-  and 📒 the scheduler's log, which `L` opens too.
+- **A menu** at the foot: ☑️ Finished lists the finished goals, the latest
+  first; 📒 the scheduler's log, which `L` opens too; and 💰 Spending shows
+  what each of the last 30 days cost against the budget, with `enter` on a day
+  showing what each goal and session spent on it.
 - **The footer**: what the sessions cost today, over the last 7 days and over
-  the last 30, as `$22D · $80W · $200M`, and anything wrong with the
+  the last 30, as `D$22 · W$80 · M$200`, and anything wrong with the
   scheduler. Clicking the cost opens the spending, and the rest the
   scheduler's log.
 - **The intake box**, at the foot.
@@ -231,7 +231,9 @@ twice or its key twice:
 - **`l`, Later**, puts it behind everything else waiting on you.
 
 Next doesn't change the item on screen while you look at it. A goal's own
-questions can also be answered from its page, with `a`.
+questions can also be answered on its page, with `a`: each answer moves on to
+the goal's next question, and the page comes back once none is left, or with
+`esc`.
 
 First the goal catches up with `main`, fetched from origin. What `main` gained
 since the goal started is merged in. When that conflicts, landing stops there:

@@ -42,7 +42,7 @@ func TestAppNav(t *testing.T) {
 	a, _ := newApp(t, f)
 	out := plain(a.render())
 	for _, want := range []string{"⏩ Next", "➕ Intake", "⏳ Implement the next set", "    1 question",
-		"$0.00D · $0.00W · $0.00M", "─ intake ─"} {
+		"D$0.00 · W$0.00 · M$0.00", "─ intake ─"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("app lacks %q:\n%s", want, out)
 		}
@@ -217,7 +217,7 @@ func TestAppNavLooksAndWraps(t *testing.T) {
 	a, _ := newApp(t, f)
 	// Up from the top comes round to the bottom, and down from there back.
 	key(a, "k")
-	if a.selected().kind != entryLog {
+	if a.selected().kind != entrySpending {
 		t.Errorf("up from Next selected %+v", a.selected())
 	}
 	key(a, "j")
@@ -250,3 +250,30 @@ func TestAppNavLooksAndWraps(t *testing.T) {
 // plain is what s shows, without its colors, or the selector that asks for
 // an emoji's color form.
 func plain(s string) string { return strings.ReplaceAll(ansi.Strip(s), "️", "") }
+
+func TestRulesJoinTheBorder(t *testing.T) {
+	if junction(true, true) != "┼" || junction(true, false) != "┤" ||
+		junction(false, true) != "├" ||
+		junction(false, false) != "│" {
+		t.Error("junctions")
+	}
+	f := newFixture(t)
+	a, _ := newApp(t, f)
+	// Next's item has rules between its parts, which start at the border.
+	lines := strings.Split(plain(a.render()), "\n")
+	joined := 0
+	for _, l := range lines {
+		if strings.Contains(l, "├─") {
+			joined++
+		}
+	}
+	if joined == 0 || !strings.Contains(lines[a.labelRow], "─┤") {
+		t.Errorf("no rule joins the border:\n%s", strings.Join(lines, "\n"))
+	}
+	// The menu has no rule of its own above it.
+	for l := range strings.SplitSeq(plain(a.renderNav()), "\n") {
+		if l = strings.TrimSpace(l); l != "" && strings.Trim(l, "─") == "" {
+			t.Errorf("a rule above the menu:\n%s", plain(a.renderNav()))
+		}
+	}
+}

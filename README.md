@@ -59,10 +59,10 @@ diatom on the same repo only views, and answering and reviewing still work
 there.
 
 The nav down the left lists Next, the intake and the repo's goals, then a
-menu with the spending, the finished goals and the scheduler's log, and the
+menu with the finished goals, the scheduler's log and the spending, and the
 intake box at its foot. The main pane shows what the nav selects. The footer
 shows what sessions cost today, over the last 7 days and over the last 30, as
-`$22D · $80W · $200M`, red where it spends the repo's budget. Clicking it opens
+`D$22 · W$80 · M$200`, red where it spends the repo's budget. Clicking it opens
 the spending: what each of the last 30 days cost, each day opening to what
 each goal and session spent on it.
 

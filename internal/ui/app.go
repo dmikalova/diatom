@@ -100,8 +100,11 @@ type App struct {
 	shown       string
 	focus       part
 	// fromNext is set while a goal opened from Next's context is shown:
-	// going back from it returns to Next.
+	// going back from it returns to Next. asking is the goal whose questions
+	// are answered on its page, in Next's view, until they are all answered
+	// or the human leaves.
 	fromNext bool
+	asking   string
 	// finished are the goals landed upstream, the latest first, and
 	// finishedTop how far down their list is scrolled.
 	finished    []finishedGoal
@@ -209,11 +212,10 @@ func (a *App) entries() []entry {
 		}
 		es = append(es, entry{kind: entryGoal, row: r})
 	}
-	es = append(es, entry{kind: entrySpending})
 	if len(a.finished) > 0 {
 		es = append(es, entry{kind: entryFinished})
 	}
-	return append(es, entry{kind: entryLog})
+	return append(es, entry{kind: entryLog}, entry{kind: entrySpending})
 }
 
 func (a *App) selected() entry {
@@ -228,6 +230,7 @@ func (a *App) show() {
 		return
 	}
 	a.shown = e.key()
+	a.asking, a.next.only = "", ""
 	a.status.detail, a.review, a.logBack, a.finishedTop = nil, nil, 0, 0
 	a.spendSel, a.spendTop, a.spendOpen = 0, 0, false
 	a.clearNotices()
@@ -259,7 +262,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // the images to it, and View then shows that frame.
 func (a *App) images() string {
 	rv := a.review
-	if rv == nil && a.selected().kind == entryNext {
+	if rv == nil && a.inNext() {
 		rv = a.next.shownReviewer()
 	}
 	if rv == nil || a.quitting {
@@ -368,7 +371,7 @@ func (a *App) typing() bool {
 		if a.review != nil {
 			return a.review.Editing()
 		}
-		return a.selected().kind == entryNext && a.next.typing()
+		return a.inNext() && a.next.typing()
 	}
 	return false
 }
@@ -475,14 +478,14 @@ func (a *App) tab(step int) tea.Cmd {
 // mainAreas is how many areas of the main pane take the keyboard, and
 // mainArea the one that has it.
 func (a *App) mainAreas() int {
-	if a.selected().kind == entryNext {
+	if a.inNext() {
 		return a.next.areas()
 	}
 	return 1
 }
 
 func (a *App) mainArea() int {
-	if a.selected().kind == entryNext {
+	if a.inNext() {
 		return int(a.next.area)
 	}
 	return 0
@@ -497,7 +500,7 @@ func (a *App) focusMain(i int) tea.Cmd {
 	a.focus = partMain
 	a.intake.area.Blur()
 	var cmd tea.Cmd
-	if a.selected().kind == entryNext {
+	if a.inNext() {
 		cmd = a.next.setArea(nextArea(i))
 	}
 	a.layout()
@@ -517,19 +520,52 @@ func (a *App) openFromNext(goal string) tea.Cmd {
 	return nil
 }
 
-// answerFrom opens Next on the goal's first question, its answer box in
-// hand; answering moves on as Next does.
+// inNext reports whether the main pane shows Next's view: Next itself, or a
+// goal's questions answered on its page.
+func (a *App) inNext() bool { return a.selected().kind == entryNext || a.asking != "" }
+
+// answerFrom answers the goal's questions on its page, in Next's view, its
+// answer box in hand: each answer moves on to the goal's next question, and
+// the page comes back once none is left.
 func (a *App) answerFrom(goal string) tea.Cmd {
+	a.next.only = goal
+	a.next.cur = ""
 	a.next.reload()
-	for _, it := range a.next.items {
-		if it.kind == itemQuestion && it.row.goal.Name == goal {
-			a.next.cur, a.next.scroll = it.id(), 0
-			break
-		}
+	if a.next.shown() == nil {
+		a.next.only = ""
+		return nil
 	}
-	a.sel, a.fromNext = 0, false
-	a.show()
+	a.asking = goal
+	a.next.scroll = 0
 	return a.focusMain(int(areaAnswer))
+}
+
+// stopAsking goes back to the goal's page from answering its questions.
+func (a *App) stopAsking() tea.Cmd {
+	a.asking, a.next.only, a.next.cur = "", "", ""
+	a.status.reload()
+	a.next.reload()
+	return a.setFocus(partMain)
+}
+
+// askKey hands a key to the goal's questions, going back to its page once
+// the human leaves them or none is left.
+func (a *App) askKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	was := a.next.cur
+	res := a.next.key(msg)
+	if res.back || res.open != "" {
+		return a, a.stopAsking()
+	}
+	it := a.next.shown()
+	if it == nil || it.row.goal.Name != a.asking {
+		a.status.flash = a.asking + ": no questions left"
+		return a, tea.Batch(res.cmd, a.stopAsking())
+	}
+	if it.id() != was {
+		// On to the goal's next question, the answer box still in hand.
+		return a, tea.Batch(res.cmd, a.next.setArea(areaAnswer))
+	}
+	return a, res.cmd
 }
 
 // backToNext returns from a goal opened from Next.
@@ -561,15 +597,11 @@ func (a *App) mainKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 	}
-	if rv := a.review; rv != nil {
-		if back && !rv.Editing() {
-			// Back to the goal's page, its hunks counted again.
-			a.review = nil
-			a.status.reload()
-			a.next.reload()
-			return a, nil
-		}
-		return a, rv.Key(msg)
+	if a.asking != "" {
+		return a.askKey(msg)
+	}
+	if a.review != nil {
+		return a.pageReviewKey(msg, back)
 	}
 	e := a.selected()
 	switch e.kind {
@@ -611,6 +643,18 @@ func (a *App) mainKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return a, a.setFocus(partNav)
 	}
 	return a, nil
+}
+
+// pageReviewKey hands a key to the review opened from a goal's page, going
+// back to the page, its hunks counted again, on esc.
+func (a *App) pageReviewKey(msg tea.KeyPressMsg, back bool) (tea.Model, tea.Cmd) {
+	if back && !a.review.Editing() {
+		a.review = nil
+		a.status.reload()
+		a.next.reload()
+		return a, nil
+	}
+	return a, a.review.Key(msg)
 }
 
 // toFocused hands a message to the text box with the keyboard.
@@ -696,7 +740,7 @@ func (a *App) click(m tea.Mouse) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 	if m.X > nw || nw == 0 {
-		if a.selected().kind == entryNext {
+		if a.inNext() {
 			return a, a.focusMain(int(a.next.areaAt(m.Y)))
 		}
 		return a, a.setFocus(partMain)
@@ -798,7 +842,7 @@ func (a *App) spinOut() {
 		a.show()
 		return
 	}
-	if it := a.next.shown(); a.selected().kind == entryNext && it != nil &&
+	if it := a.next.shown(); a.inNext() && it != nil &&
 		it.kind != itemReview {
 		a.next.scrollBy(3 * steps)
 		return
@@ -832,14 +876,13 @@ func (a *App) render() string {
 	}
 	nav := lipgloss.NewStyle().Width(nw).MaxWidth(nw).Height(a.height).
 		MaxHeight(a.height).Render(a.renderNav())
-	// The border lights up beside what has the keyboard, and the intake box's
-	// rule joins it.
+	// The border lights up beside what has the keyboard, and a rule on either
+	// side of it joins it, as the intake box's does.
+	navRows, mainRows := strings.Split(nav, "\n"), strings.Split(main, "\n")
 	border := make([]string, a.height)
 	for y := range border {
-		ch := "│"
-		if y == a.labelRow {
-			ch = "┤"
-		}
+		ch := junction(y < len(navRows) && ruleEnd(navRows[y]),
+			y < len(mainRows) && ruleStart(mainRows[y]))
 		on := a.focus == partMain || a.dragging || a.focus == partIntake && y >= a.labelRow
 		if on {
 			border[y] = tui.Color(ch, tui.Accent)
@@ -849,6 +892,26 @@ func (a *App) render() string {
 	}
 	return lipgloss.JoinHorizontal(lipgloss.Top, nav, strings.Join(border, "\n"), main)
 }
+
+// junction is the border's character beside a rule ending on its left, one
+// starting on its right, both, or neither.
+func junction(left, right bool) string {
+	switch {
+	case left && right:
+		return "┼"
+	case left:
+		return "┤"
+	case right:
+		return "├"
+	}
+	return "│"
+}
+
+// ruleEnd reports whether a line of the nav ends in a rule, and ruleStart
+// whether one of the main pane starts with one.
+func ruleEnd(line string) bool { return strings.HasSuffix(ansi.Strip(line), "─") }
+
+func ruleStart(line string) bool { return strings.HasPrefix(ansi.Strip(line), "─") }
 
 // navLine is one line of the nav, and the entry it selects, or -1.
 type navLine struct {
@@ -873,7 +936,7 @@ type navLayout struct {
 
 // navLines lays the nav out.
 func (a *App) navLines() navLayout {
-	lay := navLayout{menu: []navLine{{text: tui.Dim(strings.Repeat("─", a.nw())), entry: rowNone}}}
+	var lay navLayout
 	es := a.entries()
 	for i, e := range es {
 		if e.kind == entrySpending || e.kind == entryFinished || e.kind == entryLog {
@@ -903,7 +966,7 @@ func (a *App) navLines() navLayout {
 	label := "─ intake "
 	label += strings.Repeat("─", max(a.nw()-ansi.StringWidth(label), 0))
 	if a.focus == partIntake {
-		label = tui.Color(label, tui.Accent)
+		label = tui.SGR(1) + tui.Color(label, tui.Accent)
 	} else {
 		label = tui.Dim(label)
 	}
@@ -1179,7 +1242,7 @@ func money(usd float64) string {
 func (a *App) spending() []string {
 	var scales []string
 	for _, sc := range a.status.totals.Scales(a.status.budget) {
-		t := money(sc.Spent) + sc.Letter
+		t := sc.Letter + money(sc.Spent)
 		if sc.Over() {
 			t = tui.Color(t, tui.Red)
 		}
@@ -1242,6 +1305,9 @@ func (a *App) renderMain() string {
 		}
 		return a.status.renderDetail()
 	case entryGoal:
+		if a.asking != "" {
+			return a.next.render(a.focus == partMain, a.status.foot())
+		}
 		if a.status.detail == nil {
 			return ""
 		}
