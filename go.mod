@@ -10,7 +10,7 @@ require (
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/bluekeyes/go-gitdiff v0.9.0
 	github.com/charmbracelet/x/ansi v0.11.7
-	github.com/dmikalova/project-standards v1.32.0
+	github.com/dmikalova/project-standards v1.33.1
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef
 	go.yaml.in/yaml/v3 v3.0.4
