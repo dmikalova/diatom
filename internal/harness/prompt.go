@@ -81,7 +81,8 @@ func Prompt(in PromptInput) string {
 	b.WriteString(
 		"  - `diatom task done <id> \"<summary>\"` once the task is finished. The summary is all the " +
 			"human reads about how the task went: two or three plain sentences on what changed and anything " +
-			"they should know, such as a choice you made or something you left out.\n",
+			"they should know, such as a choice you made or something you left out. When its output says to " +
+			"end the session, end it without starting another task: the rest go to fresh sessions.\n",
 	)
 	b.WriteString(
 		"  - `diatom task note <id> \"<text>\"` to record something a later task or the reviewer " +

@@ -137,6 +137,18 @@ func taskReport(ctx context.Context, typ string, args []string, stdout io.Writer
 	switch typ {
 	case session.EntryDone:
 		_, _ = fmt.Fprintf(stdout, "Task %s is marked done.\n", e.Task)
+		released, err := releaseRest(dir, spec)
+		if err != nil {
+			return err
+		}
+		if len(released) > 0 {
+			_, _ = fmt.Fprintf(
+				stdout,
+				"This session's context is large now, so its other tasks (%s) go "+
+					"to fresh sessions, which cost less per step. Don't start them: end the session now.\n",
+				strings.Join(released, ", "),
+			)
+		}
 	case session.EntryAsk:
 		_, _ = fmt.Fprintf(
 			stdout,
@@ -154,6 +166,39 @@ func taskReport(ctx context.Context, typ string, args []string, stdout io.Writer
 		_, _ = fmt.Fprintf(stdout, "Note added to task %s.\n", e.Task)
 	}
 	return nil
+}
+
+// releaseRest hands the session's tasks it hasn't reported on back to the
+// queue once its context passes the spec's ChainContext, returning them: a
+// fresh session reads its base once, where every step of a long one reads
+// the whole of it again (ADR 0004).
+func releaseRest(dir string, spec session.Spec) ([]string, error) {
+	if spec.ChainContext <= 0 || session.Context(dir) < spec.ChainContext {
+		return nil, nil
+	}
+	report, err := session.ReadReport(dir)
+	if err != nil {
+		return nil, err
+	}
+	reported := map[string]bool{}
+	for _, e := range slices.Concat(report.Finished, report.Questions) {
+		reported[e.Task] = true
+	}
+	var released []string
+	for _, id := range spec.Tasks {
+		if reported[id] || report.Released[id] {
+			continue
+		}
+		if err := session.Append(
+			dir,
+			spec,
+			session.Entry{Type: session.EntryRelease, Task: id},
+		); err != nil {
+			return released, err
+		}
+		released = append(released, id)
+	}
+	return released, nil
 }
 
 // hookScope is the part of diatom's state the session's file tools may reach:

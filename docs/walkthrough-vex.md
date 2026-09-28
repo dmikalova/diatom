@@ -182,10 +182,13 @@ command and output.
 
 A freed session goes to the most urgent kind of work first: fixes, then
 revisions, triage, grilling and planned work. Among work of the same kind it
-goes to the goal highest in the nav. A session takes up to 10 tasks of one
+goes to the goal highest in the nav. A session takes up to 5 tasks of one
 workstream at once, following a chain of tasks that depend on each other, so
 related work shares one agent's context. A chain that goes from a mechanical
 task to an implementation one runs all of it on the implementation profile.
+Once a session's context passes 100,000 tokens, marking a task done hands
+the rest of its tasks to fresh sessions: every step re-reads the whole
+context, so a long session's steps cost more than a new session's start.
 Every prompt lists the repo's other
 goals, so an agent knows what they cover and how far they have got.
 

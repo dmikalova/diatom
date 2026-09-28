@@ -55,6 +55,9 @@ type Spec struct {
 	GateAttempts int    `json:"gateAttempts"`
 	// GateTimeout is how long the gate may run before it counts as stuck.
 	GateTimeout time.Duration `json:"gateTimeout,omitempty"`
+	// ChainContext is the context, in tokens, past which marking a task
+	// done releases the session's other tasks to fresh sessions; 0 never.
+	ChainContext int `json:"chainContext,omitempty"`
 }
 
 // Create makes the session directory and writes its spec.
@@ -126,6 +129,9 @@ const (
 	EntryGoal = "goal"
 	// EntryPlan is the plan grilling hands in, as YAML in Text.
 	EntryPlan = "plan"
+	// EntryRelease hands a task the session hasn't started back to the
+	// queue, for a fresh session, once the session's context is large.
+	EntryRelease = "release"
 )
 
 // Append adds an entry to the session's report, after checking that it names
@@ -171,11 +177,29 @@ type Report struct {
 	// Adds, Feedback, Goals, Afters and Plans are what triage and grilling
 	// handed in, in order.
 	Adds, Feedback, Goals, Afters, Plans []Entry
+	// Released are the tasks handed back unstarted, for fresh sessions.
+	Released map[string]bool
+}
+
+// Context is the session's context in tokens as its last model call read
+// it, 0 when no call is logged.
+func Context(dir string) int {
+	events, err := ReadEvents(dir)
+	if err != nil {
+		return 0
+	}
+	for _, e := range slices.Backward(events) {
+		if e.Type == EventCall && e.Call != nil {
+			c := e.Call
+			return c.Input + c.CacheWrite + c.CacheWrite1h + c.CacheRead
+		}
+	}
+	return 0
 }
 
 // ReadReport reads the session's report.
 func ReadReport(dir string) (Report, error) {
-	r := Report{Done: map[string]bool{}}
+	r := Report{Done: map[string]bool{}, Released: map[string]bool{}}
 	f, err := os.Open(filepath.Join(dir, "report.jsonl"))
 	if errors.Is(err, fs.ErrNotExist) {
 		return r, nil
@@ -209,6 +233,8 @@ func ReadReport(dir string) (Report, error) {
 			r.Goals = append(r.Goals, e)
 		case EntryPlan:
 			r.Plans = append(r.Plans, e)
+		case EntryRelease:
+			r.Released[e.Task] = true
 		}
 	}
 	return r, sc.Err()

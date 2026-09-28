@@ -94,6 +94,48 @@ func TestTaskTool(t *testing.T) {
 	}
 }
 
+// TestTaskDoneReleasesTheRest pins that marking a task done in a session
+// whose context has passed its budget hands its unstarted tasks on, and
+// tells the agent to end the session; under the budget it does neither.
+func TestTaskDoneReleasesTheRest(t *testing.T) {
+	dir := t.TempDir()
+	spec := session.Spec{ID: "s", Tasks: []string{"0001", "0002", "0003"}, ChainContext: 1000}
+	if err := session.Create(dir, spec); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(session.EnvVar, dir)
+	call := func(read int) {
+		if err := session.AppendEvent(dir, session.Event{Type: session.EventCall, ID: "m",
+			Call: &session.Call{Input: 10, CacheRead: read}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	call(500)
+	if _, stdout, _ := diatom(
+		t,
+		"",
+		"task",
+		"done",
+		"0001",
+	); strings.Contains(
+		stdout,
+		"end the session",
+	) {
+		t.Errorf("under the budget: %q", stdout)
+	}
+	call(5000)
+	if _, stdout, _ := diatom(t, "", "task", "ask", "0002", "Which?"); stdout == "" {
+		t.Fatal("ask printed nothing")
+	}
+	_, stdout, _ := diatom(t, "", "task", "done", "0002")
+	if !strings.Contains(stdout, "other tasks (0003) go to fresh sessions") {
+		t.Errorf("over the budget: %q", stdout)
+	}
+	if r, _ := session.ReadReport(dir); !r.Released["0003"] || r.Released["0002"] {
+		t.Errorf("released = %v", r.Released)
+	}
+}
+
 func TestHookCommands(t *testing.T) {
 	code, stdout, _ := diatom(
 		t,

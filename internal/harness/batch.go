@@ -327,6 +327,7 @@ func (h *Harness) newSession(
 		ID: id, Repo: s.Repo(), Goal: g.Name, Workstream: b.Workstream, Worktree: wt.Dir,
 		Kind: b.Kind, Profile: b.Profile, Effort: b.Effort,
 		Gate: cfg.SessionGate(), GateAttempts: cfg.GateAttempts, GateTimeout: cfg.GateTimeout,
+		ChainContext: cfg.ChainContext,
 	}
 	if p, err := cfg.Profile(b.Profile); err == nil {
 		spec.Model, spec.Level = p.Model, cmp.Or(b.Effort, p.Effort)
@@ -670,19 +671,44 @@ func (h *Harness) finish(
 	if err != nil {
 		return h.requeue(s, g.Name, tasks, asked, err)
 	}
+	if err := h.settleTasks(repo, g.Name, dir, res, tasks, shas, report, asked); err != nil {
+		return err
+	}
+	h.settling(dir, "Merging it into the goal's integration branch")
+	return h.integrate(ctx, repo, g, b.Workstream)
+}
+
+// settleTasks moves each task of a session whose work is committed on: its
+// commit and usage recorded, done, blocked on a question, handed on
+// unstarted, or back to the queue unfinished.
+func (h *Harness) settleTasks(
+	repo Repo,
+	goal, dir string,
+	res runner.Result,
+	tasks []*queue.Task,
+	shas map[string]string,
+	report session.Report,
+	asked map[string]bool,
+) error {
 	share := usageShare(filepath.Base(dir), res.Usage, len(tasks))
 	for _, t := range tasks {
 		if sha := shas[t.ID]; sha != "" {
 			t.Commits = append(t.Commits, sha)
 		}
 		t.Usage = append(t.Usage, share)
-		if err := h.settle(repo, g.Name, t, report.Done[t.ID], asked[t.ID],
+		if report.Released[t.ID] && !report.Done[t.ID] && !asked[t.ID] {
+			// Handed on unstarted: no attempt of its was spent.
+			if err := repo.Store.Move(goal, t, queue.Pending); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := h.settle(repo, goal, t, report.Done[t.ID], asked[t.ID],
 			ended(filepath.Base(dir), res)); err != nil {
 			return err
 		}
 	}
-	h.settling(dir, "Merging it into the goal's integration branch")
-	return h.integrate(ctx, repo, g, b.Workstream)
+	return nil
 }
 
 // settling logs a step diatom takes after the agent, so the session shows

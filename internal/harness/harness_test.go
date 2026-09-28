@@ -413,6 +413,25 @@ func TestTurnLimitIsNamed(t *testing.T) {
 	}
 }
 
+// TestReleasedTaskGoesBackUnspent pins that a task the session handed on
+// unstarted goes back to the queue with no attempt counted.
+func TestReleasedTaskGoesBackUnspent(t *testing.T) {
+	f := newFixture(t)
+	first := f.add("engine", "Add ward")
+	second := f.add("engine", "Add poison", first.ID)
+	f.agent.act = func(_ *testing.T, _ string, s agentSession) {
+		s.report(session.EntryDone, first.ID, "")
+		s.report(session.EntryRelease, second.ID, "")
+	}
+	if got := f.step(); len(got) != 1 || len(got[0].Tasks) != 2 {
+		t.Fatalf("batches = %+v, want the chain in one", got)
+	}
+	got := f.task(second.ID)
+	if got.State != queue.Pending || got.Attempts != 0 || strings.Contains(got.Body, "Unfinished") {
+		t.Errorf("released task = %s, %d attempts, %q", got.State, got.Attempts, got.Body)
+	}
+}
+
 func TestManualStepsParkUntilDone(t *testing.T) {
 	f := newFixture(t)
 	task := f.add("engine", "Add the bucket")

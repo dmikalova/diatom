@@ -4,7 +4,8 @@ gateAttempts = 3
 gateTimeout = "5m"
 commandTimeout = "2m"
 maxSessions = 1
-maxBatch = 10
+maxBatch = 5
+chainContext = 100000
 editor = "nvim"
 
 [profiles.planning]

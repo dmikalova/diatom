@@ -78,6 +78,11 @@ type Repo struct {
 	MaxSessions int `toml:"maxSessions"`
 	// MaxBatch caps the tasks one session takes (ADR 0004).
 	MaxBatch int `toml:"maxBatch"`
+	// ChainContext is the most context, in tokens, a session may have and
+	// still go on to its next task: past it, marking a task done hands the
+	// rest to fresh sessions, as each turn of a long session costs more than
+	// a new one reading its base again (ADR 0004). 0 never hands them on.
+	ChainContext int `toml:"chainContext"`
 	// Budget caps what the repo's agent sessions cost.
 	Budget Budget `toml:"budget"`
 	// Editor is the command the reviewer's o opens a hunk's file in, at its
