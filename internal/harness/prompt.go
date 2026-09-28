@@ -72,6 +72,7 @@ func Prompt(in PromptInput) string {
 			"passing the gate.\n",
 	)
 	b.WriteString(askGuide)
+	b.WriteString(newGoalGuide)
 	b.WriteString(
 		"- A task you don't mark done goes back in the queue, and a later session continues from " +
 			"the files you leave.\n",
@@ -182,6 +183,15 @@ const askGuide = "    Ask only what changes what gets built, how it is shaped or
 	"concrete rather than abstract. End with your recommended answer and why. Write plain sentences, " +
 	"with no headings and no capitals for emphasis.\n"
 
+// newGoalGuide is how a session other than triage starts a goal: only when
+// the human asks for one.
+const newGoalGuide = "  - `diatom task new-goal <id> -title \"<title>\" -description \"<line>\" " +
+	"[-after <goals>] < brief` starts a new goal, grilled before any work starts. Use it only when the " +
+	"human asks for a new goal, such as in answering your question; an idea of your own goes in a note " +
+	"or a question instead. The description says in one plain sentence what the goal is for. The brief " +
+	"on stdin is everything its grilling starts from: what the human asked, and what you found. -after " +
+	"names the goals it must wait for, this one among them when it builds on this work.\n"
+
 // orderGuide is how planning orders work, which it never asks the human
 // about.
 const orderGuide = "Order the work yourself, and don't ask about it: dependencies first, so a shared " +
@@ -222,6 +232,9 @@ func (h *Harness) planningPrompt(repo Repo, g *queue.Goal, in PromptInput) (stri
 	b.WriteString(askGuide)
 	b.WriteString("  - `diatom task note <id> \"<text>\"` records something worth keeping.\n")
 	b.WriteString("  - `diatom task done <id>` marks the task done.\n")
+	if in.Batch.Kind != queue.Triage {
+		b.WriteString(newGoalGuide)
+	}
 	if in.Batch.Kind == queue.Triage {
 		if err := writeTriage(&b, repo, in.Goals); err != nil {
 			return "", err

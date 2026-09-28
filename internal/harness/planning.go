@@ -225,7 +225,11 @@ func (h *Harness) finishPlanning(
 	}
 	planned := map[string]bool{}
 	if runErr == nil {
-		if err := h.applyTriage(ctx, repo, report, ask); err != nil {
+		origin := queue.Origin{Type: "triage"}
+		if b.Kind != queue.Triage {
+			origin = queue.Origin{Type: "goal", Ref: g.Name}
+		}
+		if err := h.applyTriage(ctx, repo, report, origin, ask); err != nil {
 			return err
 		}
 		if planned, err = h.applyPlan(repo, g, report); err != nil {
@@ -273,6 +277,7 @@ func (h *Harness) applyTriage(
 	ctx context.Context,
 	repo Repo,
 	report session.Report,
+	origin queue.Origin,
 	ask func(task, text string) error,
 ) error {
 	s := repo.Store
@@ -286,11 +291,40 @@ func (h *Harness) applyTriage(
 			return err
 		}
 	}
-	// Goals first, so one can wait for another started beside it.
+	return h.startGoals(ctx, repo, report.Goals, report.Afters, origin, ask)
+}
+
+// startGoals starts the goals a session handed in, then makes goals wait
+// as it said: goals first, so one can wait for another started beside it.
+// Triage starts goals from intake; any other session only when the human
+// asked it to, such as in answering its question. A goal whose title is
+// taken already, as when a session that handed it in runs again, isn't
+// started twice.
+func (h *Harness) startGoals(
+	ctx context.Context,
+	repo Repo,
+	goals, afters []session.Entry,
+	origin queue.Origin,
+	ask func(task, text string) error,
+) error {
+	existing, err := repo.Store.Goals()
+	if err != nil {
+		return err
+	}
 	started := map[string]string{}
 	var waits []session.Entry
-	for _, e := range report.Goals {
-		g, err := h.startGoal(ctx, repo, e)
+	for _, e := range goals {
+		if i := slices.IndexFunc(existing, func(g *queue.Goal) bool {
+			return strings.EqualFold(g.Title, e.Title)
+		}); i >= 0 {
+			started[strings.ToLower(e.Title)] = existing[i].Name
+			continue
+		}
+		o := origin
+		if o.Ref == "" {
+			o.Ref = e.Task
+		}
+		g, err := h.startGoal(ctx, repo, e, o)
 		if err != nil {
 			return err
 		}
@@ -299,8 +333,8 @@ func (h *Harness) applyTriage(
 			waits = append(waits, session.Entry{Task: e.Task, Goal: g.Name, After: e.After})
 		}
 	}
-	for _, e := range append(waits, report.Afters...) {
-		if err := h.setAfter(s, e, started, ask); err != nil {
+	for _, e := range append(waits, afters...) {
+		if err := h.setAfter(repo.Store, e, started, ask); err != nil {
 			return err
 		}
 	}
@@ -421,21 +455,26 @@ func (h *Harness) applyAdd(repo Repo, e session.Entry, ask func(task, text strin
 	})
 }
 
-// startGoal starts a goal triage handed in. It is grilled first, unless
-// triage handed in its plan too because the work was already decided: then
-// the plan waits for the human's sign-off straight away.
-func (h *Harness) startGoal(ctx context.Context, repo Repo, e session.Entry) (*queue.Goal, error) {
+// startGoal starts a goal a session handed in. It is grilled first, unless
+// its plan was handed in too because the work was already decided: then the
+// plan waits for the human's sign-off straight away.
+func (h *Harness) startGoal(
+	ctx context.Context,
+	repo Repo,
+	e session.Entry,
+	origin queue.Origin,
+) (*queue.Goal, error) {
 	s := repo.Store
 	body := e.Text
 	if body == "" {
 		body = e.Title
 	}
-	g, err := plan.NewGoal(ctx, s, "", e.Title, e.Description, body,
-		queue.Origin{Type: "triage", Ref: e.Task}, h.now())
+	g, err := plan.NewGoal(ctx, s, "", e.Title, e.Description, body, origin, h.now())
 	if err != nil {
 		return nil, err
 	}
-	h.log().Info("new goal from triage", "repo", s.Repo(), "goal", g.Name, "planned", e.Plan != "")
+	h.log().Info("new goal", "repo", s.Repo(), "goal", g.Name, "from", origin.Type,
+		"planned", e.Plan != "")
 	if e.Plan == "" {
 		return g, nil
 	}

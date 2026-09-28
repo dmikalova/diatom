@@ -962,3 +962,57 @@ func TestAGoalThatWaitedTakesInWhatLanded(t *testing.T) {
 		t.Error("main was merged in again")
 	}
 }
+
+// TestAnImplementationSessionStartsAGoalItWasAskedFor pins that a session
+// other than triage can start the goal the human asked it for, once, with
+// where it came from.
+func TestAnImplementationSessionStartsAGoalItWasAskedFor(t *testing.T) {
+	f := newFixture(t)
+	task := f.add("engine", "Add ward")
+	f.agent.act = func(t *testing.T, wt string, s agentSession) {
+		writeFile(t, wt, "ward.txt", "ward\n")
+		s.entry(
+			session.Entry{Type: session.EntryGoal, Task: task.ID, Title: "Split the target kinds",
+				Description: "Decompose the searchable target kinds.", Text: "The brief.",
+				After: []string{"set"}},
+		)
+		s.report(session.EntryDone, task.ID, "")
+	}
+	f.step()
+	goals, _ := f.store.Goals()
+	var started []*queue.Goal
+	for _, g := range goals {
+		if g.Title == "Split the target kinds" {
+			started = append(started, g)
+		}
+	}
+	if len(started) != 1 || started[0].State != queue.GoalPlanning ||
+		!slices.Equal(started[0].After, []string{"set"}) {
+		t.Fatalf("started = %+v", started)
+	}
+	tasks, _ := f.store.Tasks(started[0].Name)
+	if len(tasks) != 1 || tasks[0].Origin != (queue.Origin{Type: "goal", Ref: "set"}) {
+		t.Errorf("its grilling = %+v", tasks)
+	}
+	// Handed in again, as by a session that runs again, it isn't doubled.
+	again := f.add("engine", "Add warden")
+	f.agent.act = func(t *testing.T, wt string, s agentSession) {
+		writeFile(t, wt, "warden.txt", "warden\n")
+		s.entry(
+			session.Entry{Type: session.EntryGoal, Task: again.ID, Title: "split the target kinds",
+				Description: "Again."},
+		)
+		s.report(session.EntryDone, again.ID, "")
+	}
+	f.step()
+	goals, _ = f.store.Goals()
+	n := 0
+	for _, g := range goals {
+		if strings.EqualFold(g.Title, "Split the target kinds") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("%d goals of that title", n)
+	}
+}

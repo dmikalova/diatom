@@ -13,7 +13,8 @@ import (
 	"github.com/dmikalova/diatom/internal/session"
 )
 
-// planningReport is the task tool of triage and grilling sessions:
+// planningReport is the task tool of triage and grilling sessions, and
+// new-goal of every session's:
 //
 //	diatom task add-task <id> -goal <goal> -ws <workstream> -title <title> [-after ids] [-profile p] < body
 //	diatom task feedback <id> -goal <goal> < text
@@ -48,7 +49,9 @@ func planningReport(sub string, args []string, stdin io.Reader, stdout io.Writer
 	e := session.Entry{Task: pos[0], Text: string(bytes.TrimSpace(body))}
 	switch sub {
 	case "add-task", "after", "feedback", "new-goal":
-		if spec.Kind != queue.Triage {
+		// Any session may start a goal the human asked for; sorting work
+		// into goals is triage's alone.
+		if spec.Kind != queue.Triage && sub != "new-goal" {
 			return fmt.Errorf("task %s is only for triage sessions", sub)
 		}
 		if err := triageEntry(&e, sub, entryFlags{

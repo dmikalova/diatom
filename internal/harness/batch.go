@@ -585,6 +585,18 @@ func (h *Harness) finish(
 		}
 		asked[q.Task] = true
 	}
+	if runErr == nil {
+		// A goal the human asked for, such as in answering a question, is
+		// started whether or not this work passes: it is work of its own.
+		ask := func(task, text string) error {
+			asked[task] = true
+			return s.AddQuestion(g.Name, &queue.Question{Task: task, Text: text, Created: h.now()})
+		}
+		if err := h.startGoals(ctx, repo, report.Goals, nil,
+			queue.Origin{Type: "goal", Ref: g.Name}, ask); err != nil {
+			return err
+		}
+	}
 	if err := errors.Join(runErr, gateErr); err != nil {
 		return h.requeue(s, g.Name, tasks, asked, err)
 	}

@@ -286,8 +286,25 @@ func TestPlanningToolCommands(t *testing.T) {
 		!strings.Contains(stdout, "accepted") {
 		t.Errorf("a valid plan = %d %q", code, stdout)
 	}
-	if code, _, _ := diatom(t, "", "task", "new-goal", "0002", "-title", "x"); code != 1 {
-		t.Error("new-goal was accepted in a grilling session")
+	// A goal the human asked for can be started from any session; sorting
+	// work into goals stays triage's.
+	if code, stdout, stderr := diatom(
+		t,
+		"the brief",
+		"task",
+		"new-goal",
+		"0002",
+		"-title",
+		"Split kinds",
+		"-description",
+		"Split the target kinds.",
+	); code != 0 ||
+		!strings.Contains(stdout, "Split kinds") {
+		t.Errorf("new-goal in grilling = %d %q %q", code, stdout, stderr)
+	}
+	if code, _, stderr := diatom(t, "", "task", "add-task", "0002", "-goal", "set", "-ws", "e",
+		"-title", "x"); code != 1 || !strings.Contains(stderr, "only for triage") {
+		t.Errorf("add-task in grilling = %d %q", code, stderr)
 	}
 }
 
