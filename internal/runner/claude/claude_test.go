@@ -123,8 +123,16 @@ func TestArgsResume(t *testing.T) {
 	args, err := Args(runner.Spec{Resume: "abc"}, "/scratch")
 	if err != nil ||
 		!strings.Contains(strings.Join(args, " "), "--verbose --permission-mode dontAsk "+
-			"--setting-sources project,local --strict-mcp-config --resume abc") {
+			"--setting-sources project,local --strict-mcp-config "+
+			"--exclude-dynamic-system-prompt-sections --resume abc") {
 		t.Errorf("args = %q, %v", args, err)
+	}
+	if strings.Contains(args[len(args)-1], "promptCacheTtl") {
+		t.Errorf("settings without a cache TTL = %s", args[len(args)-1])
+	}
+	args, _ = Args(runner.Spec{CacheTTL: "5m"}, "/scratch")
+	if !strings.Contains(args[len(args)-1], `"promptCacheTtl":"5m"`) {
+		t.Errorf("settings = %s", args[len(args)-1])
 	}
 }
 

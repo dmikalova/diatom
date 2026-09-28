@@ -203,5 +203,5 @@ func (h *Harness) resume(ctx context.Context, r Resumable) error {
 	if err := session.UpdateState(r.Dir, func(st *session.State) { st.Resumes++ }); err != nil {
 		return err
 	}
-	return h.runAgent(ctx, repo, g, b, wt, r.Dir, r.Spec, r.AgentSession)
+	return h.runAgent(ctx, repo, g, b, wt, r.Dir, r.Spec, r.AgentSession, resumeNote)
 }

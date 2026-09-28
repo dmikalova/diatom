@@ -99,11 +99,12 @@ func (h *Harness) runBatch(ctx context.Context, repo Repo, b schedule.Batch) err
 	if err != nil {
 		return h.requeue(s, g.Name, b.Tasks, nil, err)
 	}
-	return h.runAgent(ctx, repo, g, b, wt, dir, spec, "")
+	return h.runAgent(ctx, repo, g, b, wt, dir, spec, "", "")
 }
 
-// runAgent runs a session's agent, resuming its earlier session when resume
-// is set, then settles the session.
+// runAgent runs a session's agent, carrying on the agent session resume when
+// it is set, with prompt as the next message, or the session's prompt.md
+// when prompt is empty, then settles the session.
 func (h *Harness) runAgent(
 	ctx context.Context,
 	repo Repo,
@@ -112,9 +113,9 @@ func (h *Harness) runAgent(
 	wt git.Repo,
 	dir string,
 	spec session.Spec,
-	resume string,
+	resume, prompt string,
 ) error {
-	res, runErr := h.runSession(ctx, repo, g, b, wt, dir, spec, resume)
+	res, runErr := h.runSession(ctx, repo, g, b, wt, dir, spec, resume, prompt)
 	if ctx.Err() != nil {
 		// What the agent spent before the stop is spent, though the
 		// session carries on.
@@ -396,6 +397,17 @@ func (h *Harness) sessionDir(root, ws string) (id, dir string, err error) {
 	}
 }
 
+// cacheTTL is how long a session's prompt cache is kept (ADR 0011): an
+// hour for triage and grilling, whose next round carries the session on
+// once the human answers, and otherwise five minutes, which costs less to
+// write and outlasts the seconds between a session's steps.
+func cacheTTL(k queue.Kind) string {
+	if planningKind(k) {
+		return "1h"
+	}
+	return "5m"
+}
+
 // resumeNote is the message that resumes a session the scheduler stopped.
 const resumeNote = `diatom stopped this session midway and has now restarted it: carry on where you
 left off. Your files are exactly as you left them; nothing was committed, reverted or stashed. A
@@ -403,7 +415,8 @@ command that was running when the session stopped was killed, so run it again if
 its result. Report each task with ` + "`diatom task`" + ` as before.`
 
 // runSession runs the agent, logging its events to events.jsonl. With resume
-// set, it carries on that earlier agent session instead of starting one.
+// set, it carries on that earlier agent session instead of starting one. The
+// agent is sent prompt, or the session's prompt.md when prompt is empty.
 func (h *Harness) runSession(
 	ctx context.Context,
 	repo Repo,
@@ -412,7 +425,7 @@ func (h *Harness) runSession(
 	wt git.Repo,
 	dir string,
 	spec session.Spec,
-	resume string,
+	resume, prompt string,
 ) (runner.Result, error) {
 	profile, err := repo.Config.Profile(b.Profile)
 	if err != nil {
@@ -435,11 +448,12 @@ func (h *Harness) runSession(
 		// A skill is only of use with the tool that loads it.
 		profile.Tools = append(slices.Clone(profile.Tools), "Skill")
 	}
-	prompt := []byte(resumeNote)
-	if resume == "" {
-		if prompt, err = os.ReadFile(filepath.Join(dir, "prompt.md")); err != nil {
+	if prompt == "" {
+		data, err := os.ReadFile(filepath.Join(dir, "prompt.md"))
+		if err != nil {
 			return runner.Result{}, err
 		}
+		prompt = string(data)
 	}
 	events, err := os.OpenFile(
 		filepath.Join(dir, "events.jsonl"),
@@ -474,7 +488,7 @@ func (h *Harness) runSession(
 	res, err := h.Runner.Run(ctx, runner.Spec{
 		Dir:     wt.Dir,
 		AddDirs: addDirs,
-		Prompt:  string(prompt),
+		Prompt:  prompt,
 		Profile: profile,
 		Env: []string{
 			session.EnvVar + "=" + dir,
@@ -485,6 +499,7 @@ func (h *Harness) runSession(
 		Skills:         skills,
 		MCPServers:     repo.Config.MCPServers,
 		Resume:         resume,
+		CacheTTL:       cacheTTL(b.Kind),
 		CommandTimeout: repo.Config.CommandTimeout,
 		Started: func(id string) {
 			if err := session.UpdateState(

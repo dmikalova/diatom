@@ -14,6 +14,7 @@ import (
 	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/roster"
+	"github.com/dmikalova/diatom/internal/runner"
 	"github.com/dmikalova/diatom/internal/schedule"
 	"github.com/dmikalova/diatom/internal/session"
 )
@@ -64,7 +65,7 @@ func TestIntakeBecomesAGoalThatIsGrilledAndSignedOff(t *testing.T) {
 	ctx := context.Background()
 	f.queueIntake(t, "", "Implement the Grim Reminders set\n\nAll of its cards.")
 
-	round := 0
+	round, firstAgent := 0, ""
 	f.agent.act = func(t *testing.T, wt string, s agentSession) {
 		task := s.spec.Tasks[0]
 		if s.spec.Kind == queue.Triage {
@@ -91,6 +92,8 @@ func TestIntakeBecomesAGoalThatIsGrilledAndSignedOff(t *testing.T) {
 		round++
 		switch round {
 		case 1:
+			st, _ := session.LoadState(s.dir)
+			firstAgent = st.AgentSession
 			s.report(session.EntryAsk, task, "Which mechanics are new?")
 			s.report(session.EntryAsk, task, "Does the engine need a new keyword?")
 		case 2:
@@ -100,6 +103,14 @@ func TestIntakeBecomesAGoalThatIsGrilledAndSignedOff(t *testing.T) {
 			if !bytes.Contains(body, []byte("Only ward.")) ||
 				!bytes.Contains(body, []byte("Yes, ward.")) {
 				t.Errorf("round 2 lacks the answers:\n%s", body)
+			}
+			// Answered within the hour, the round carries the last one's
+			// agent session on, told what changed.
+			if s.run.Resume == "" || s.run.Resume != firstAgent ||
+				!strings.Contains(s.run.Prompt, "picked this session up again") ||
+				!strings.Contains(s.run.Prompt, "Yes, ward.") || s.run.CacheTTL != "1h" {
+				t.Errorf("round 2 resumed %q (round 1 was %q), ttl %q, with %q", s.run.Resume,
+					firstAgent, s.run.CacheTTL, s.run.Prompt)
 			}
 			s.entry(session.Entry{Type: session.EntryPlan, Task: task, Text: goodPlan})
 			s.report(session.EntryDone, task, "")
@@ -463,5 +474,39 @@ func TestPlanningPromptsSayOnlyTheToolReachesTheHuman(t *testing.T) {
 		strings.Contains(work, "- `set`: ") ||
 		!strings.Contains(work, "diatom task goals <name>") {
 		t.Errorf("the work prompt doesn't list the other goals:\n%s", work)
+	}
+}
+
+// TestRoundsContinueOnlyWithinTheHour pins that a planning task's next round
+// carries its last session on only while that session's cache is warm, and
+// only one that ended cleanly on the task alone.
+func TestRoundsContinueOnlyWithinTheHour(t *testing.T) {
+	f := newFixture(t)
+	task := &queue.Task{ID: "0007", Title: "Grill it", Body: "Answer: yes."}
+	b := schedule.Batch{Kind: queue.Grilling, Tasks: []*queue.Task{task}}
+	dir := filepath.Join(f.store.SessionsDir("set"), "20260101T000000Z-planning")
+	if err := session.Create(dir, session.Spec{ID: "old", Tasks: []string{"0007"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.UpdateState(dir, func(st *session.State) {
+		st.AgentSession, st.Settled = "agent-old", true
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.WriteResult(dir, runner.Result{Outcome: runner.Completed}); err != nil {
+		t.Fatal(err)
+	}
+	if resume, prompt := f.h.continueRound(f.store, "set", "new", b); resume != "agent-old" ||
+		!strings.Contains(prompt, "Answer: yes.") {
+		t.Errorf("within the hour: %q, %q", resume, prompt)
+	}
+	f.h.Now = func() time.Time { return time.Now().Add(2 * time.Hour) }
+	if resume, _ := f.h.continueRound(f.store, "set", "new", b); resume != "" {
+		t.Errorf("after the cache is gone, it carries on %q", resume)
+	}
+	f.h.Now = nil
+	two := schedule.Batch{Kind: queue.Grilling, Tasks: []*queue.Task{task, {ID: "0008"}}}
+	if resume, _ := f.h.continueRound(f.store, "set", "new", two); resume != "" {
+		t.Errorf("a batch of two carries on %q", resume)
 	}
 }

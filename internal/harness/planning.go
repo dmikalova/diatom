@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/intake"
@@ -190,8 +191,66 @@ func (h *Harness) runPlanning(
 	if err != nil {
 		return h.requeue(s, g.Name, b.Tasks, nil, err)
 	}
-	return h.runAgent(ctx, repo, g, b, wt, dir, spec, "")
+	resume, prompt := h.continueRound(s, g.Name, spec.ID, b)
+	if resume != "" {
+		h.log().
+			Info("continuing the last round's agent session", "session", spec.ID, "goal", g.Name,
+				"agentSession", resume)
+	}
+	return h.runAgent(ctx, repo, g, b, wt, dir, spec, resume, prompt)
 }
+
+// roundCache is how long after a planning session ends its agent session is
+// carried on rather than started again: within the hour its prompt cache
+// lasts, a few minutes short of it (ADR 0011).
+const roundCache = 55 * time.Minute
+
+// continueRound is the agent session to carry on for a planning task's next
+// round, with the message that carries it on: the last session that worked
+// on the task alone, when it ended cleanly within roundCache. Its
+// conversation holds what it read and asked, and its cache is still warm, so
+// carrying it on reads that back for a tenth of what a new session spends
+// finding it all again. Past the hour, the cache is gone and a new session
+// costs less.
+func (h *Harness) continueRound(
+	s *queue.Store,
+	goal, current string,
+	b schedule.Batch,
+) (string, string) {
+	if len(b.Tasks) != 1 {
+		return "", ""
+	}
+	t := b.Tasks[0]
+	dirs, _ := filepath.Glob(filepath.Join(s.SessionsDir(goal), "*"))
+	slices.Sort(dirs)
+	for _, dir := range slices.Backward(dirs) {
+		spec, err := session.Load(dir)
+		if err != nil || spec.ID == current || !slices.Contains(spec.Tasks, t.ID) {
+			continue
+		}
+		at, ended := session.Ended(dir)
+		st, err := session.LoadState(dir)
+		var res runner.Result
+		ok, rerr := session.ReadResult(dir, &res)
+		if !ended || err != nil || rerr != nil || !ok || !st.Settled || st.AgentSession == "" ||
+			len(
+				spec.Tasks,
+			) != 1 || res.Outcome != runner.Completed || h.now().Sub(at) > roundCache {
+			return "", ""
+		}
+		return st.AgentSession, fmt.Sprintf(roundNote, t.ID, t.Title, strings.TrimSpace(t.Body))
+	}
+	return "", ""
+}
+
+// roundNote carries a planning session on into its task's next round.
+const roundNote = `diatom has picked this session up again for task %s (%q): what the human
+answered, or sent back, is now in the task's text, below, after what you read before. Carry on from
+where you left off, with what you already know: the next round of questions, the plan, or the triage,
+reported through the task tool as before. Your working directory is as you left it, up to date with
+any work merged since.
+
+%s`
 
 // finishPlanning applies what a triage or grilling session handed in.
 func (h *Harness) finishPlanning(

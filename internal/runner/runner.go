@@ -57,6 +57,9 @@ type Spec struct {
 	// Resume is the ID of an earlier session to carry on, with Prompt as the
 	// next message in it; empty starts a new session.
 	Resume string
+	// CacheTTL is how long the backend keeps the session's prompt cache,
+	// such as 5m or 1h; empty leaves it the backend's own.
+	CacheTTL string
 	// Started, when set, is called with the session's ID as soon as the
 	// backend knows it, so a session stopped midway can be resumed.
 	Started func(sessionID string)

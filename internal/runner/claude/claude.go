@@ -156,6 +156,10 @@ func Args(spec runner.Spec, scratch string) ([]string, error) {
 		"--permission-mode", "dontAsk",
 		"--setting-sources", "project,local",
 		"--strict-mcp-config",
+		// The cwd, environment and git status go in the first message
+		// rather than the system prompt, which is then the same for every
+		// session of the repo, and read from the prompt cache.
+		"--exclude-dynamic-system-prompt-sections",
 	}
 	if spec.Resume != "" {
 		args = append(args, "--resume", spec.Resume)
@@ -203,6 +207,9 @@ func Args(spec runner.Spec, scratch string) ([]string, error) {
 		args = append(args, "--mcp-config", string(b))
 	}
 	settings := map[string]any{"disableBundledSkills": true}
+	if spec.CacheTTL != "" {
+		settings["promptCacheTtl"] = spec.CacheTTL
+	}
 	if hooks := hookSettings(spec.Hooks); hooks != nil {
 		settings["hooks"] = hooks
 	}
