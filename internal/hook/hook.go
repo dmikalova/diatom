@@ -51,6 +51,8 @@ func PreToolUse(in io.Reader, out io.Writer, scope Scope) error {
 		reason = fmt.Sprintf(
 			"diatom runs every git operation that changes the repository, so `%s` is blocked. "+
 				"Only edit files: when you finish, the harness runs the gate and commits your work. "+
+				"Never merge or pull the base branch yourself: diatom merges what lands on it into the goal "+
+				"as soon as it does, and into your worktree before each session. "+
 				"Read-only git commands such as status, diff, log and show are allowed, and so are the ones "+
 				"that only change files: `git restore <file>` or `git checkout -- <file>` to undo your edits, "+
 				"`git show <rev>:<file> > <file>` for a file as a commit had it, and `git rm` and `git mv`.",

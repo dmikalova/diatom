@@ -212,19 +212,36 @@ const (
 // MergeNoCommit merges ref into the checked-out branch and stops before
 // committing, so the harness can run the gate on the result first. On
 // Merged or Conflicted a merge is in progress; commit it with CommitAll or
-// undo it with AbortMerge.
+// undo it with AbortMerge. A merge whose every conflict git settled with a
+// resolution it recorded, as a reviewed one was, is Merged.
 func (r Repo) MergeNoCommit(ctx context.Context, ref string) (MergeResult, error) {
 	if up, err := r.IsAncestor(ctx, ref, "HEAD"); err != nil || up {
 		return UpToDate, err
 	}
-	_, err := r.Run(ctx, "merge", "--no-ff", "--no-commit", "--no-edit", ref)
+	_, err := r.Run(ctx, Rerere("merge", "--no-ff", "--no-commit", "--no-edit", ref)...)
 	if err == nil {
 		return Merged, nil
 	}
-	if r.MergeInProgress(ctx) {
-		return Conflicted, nil
+	if !r.MergeInProgress(ctx) {
+		return UpToDate, err
 	}
-	return UpToDate, err
+	if unmerged, err := r.Run(ctx, "diff", "--name-only", "--diff-filter=U"); err != nil ||
+		unmerged != "" {
+		return Conflicted, err
+	}
+	if markers, err := r.ConflictMarkers(ctx); err != nil || len(markers) > 0 {
+		return Conflicted, err
+	}
+	return Merged, nil
+}
+
+// Rerere is the git command args with rerere on: a merge records the
+// conflicts it leaves, committing it records how they were resolved, and a
+// later merge or pick meeting the same conflict is settled, and staged, the
+// same way. A repo's own setting doesn't count, so diatom's merges always
+// record, and its replays reuse, what was reviewed.
+func Rerere(args ...string) []string {
+	return append([]string{"-c", "rerere.enabled=true", "-c", "rerere.autoUpdate=true"}, args...)
 }
 
 // MergeInProgress reports whether a merge is waiting to be committed.
@@ -431,12 +448,13 @@ func (r Repo) Amend(ctx context.Context, message string) error {
 }
 
 // CommitMerge stages everything and commits the merge in progress with git's
-// default message.
+// default message. Git records how its conflicts were resolved, for a
+// landing's replay of the same changes.
 func (r Repo) CommitMerge(ctx context.Context) (string, error) {
 	if _, err := r.Run(ctx, "add", "--all"); err != nil {
 		return "", err
 	}
-	if _, err := r.Run(ctx, "commit", "--no-verify", "--no-edit"); err != nil {
+	if _, err := r.Run(ctx, Rerere("commit", "--no-verify", "--no-edit")...); err != nil {
 		return "", err
 	}
 	return r.RevParse(ctx, "HEAD")

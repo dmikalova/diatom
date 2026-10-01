@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,7 +11,7 @@ import (
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/runner"
-	"github.com/dmikalova/diatom/internal/spend"
+	"github.com/dmikalova/diatom/internal/session"
 	"github.com/dmikalova/diatom/internal/tui"
 )
 
@@ -105,7 +106,8 @@ func TestLandingReviewRanksWithFinishing(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// A settlement of a landing's rebase, and a catch-up with the base.
+	// A settlement of a landing's rebase, as an older diatom had an agent
+	// make, is reviewed no more; a catch-up with the base holds landing up.
 	if err := f.store.AddDone("late", &queue.Task{Title: "Settle", Kind: queue.Conflict,
 		Origin: queue.Origin{Type: "landing"}, Commits: []string{sha}}); err != nil {
 		t.Fatal(err)
@@ -119,7 +121,7 @@ func TestLandingReviewRanksWithFinishing(t *testing.T) {
 	for _, it := range a.next.items {
 		got = append(got, it.id())
 	}
-	want := []string{"late 3", "later 3", "set question 0001", "set 3"}
+	want := []string{"later 3", "set question 0001", "set 3"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("items = %v, want %v", got, want)
 	}
@@ -146,21 +148,22 @@ func TestSpendingShowsTheBudget(t *testing.T) {
 	}
 }
 
-func TestRecordSessionTwiceInASecond(t *testing.T) {
-	f := newFixture(t)
-	at := time.Now()
-	for range 2 {
-		if err := recordSession(f.store.SessionsDir("set"), at, "mechanical",
-			runner.Result{Usage: runner.Usage{CostUSD: 0.25}}); err != nil {
-			t.Fatal(err)
-		}
+// recordSession keeps what an agent run outside the scheduler cost, as a
+// settled session of the goal's in root, as a landing's agent once did.
+func recordSession(root string, at time.Time, profile string, res runner.Result) error {
+	dir := filepath.Join(root, at.UTC().Format("20060102T150405Z")+"-landing")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
 	}
-	got := spend.New().Goal(f.store, "set")
-	if len(got) != 2 || got[0].USD+got[1].USD != 0.5 {
-		t.Errorf("recorded = %+v", got)
+	if err := session.Create(dir, session.Spec{ID: filepath.Base(dir), Kind: queue.Conflict,
+		Profile: profile}); err != nil {
+		return err
 	}
-	if err := recordSession(filepath.Join(f.repo, ".git", "HEAD", "x"), at, "m",
-		runner.Result{}); err == nil {
-		t.Error("recording under a file worked")
+	if err := session.UpdateState(
+		dir,
+		func(st *session.State) { st.Settled = true },
+	); err != nil {
+		return err
 	}
+	return session.WriteResult(dir, res)
 }

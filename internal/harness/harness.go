@@ -62,6 +62,8 @@ type Harness struct {
 	// spentNote is the budget last found spent, "" for none.
 	spent     *spend.Tally
 	spentNote string
+	// fetched is when followBases last fetched the goals' base branches.
+	fetched time.Time
 }
 
 // lockRepo takes the repo's git lock and returns its unlock.
@@ -272,6 +274,7 @@ func (h *Harness) load(ctx context.Context, path string) (Repo, []*schedule.Goal
 		return repo, nil, err
 	}
 	h.watchDone(ctx, repo.Store, all)
+	h.followBases(ctx, repo.Store, all)
 	// Triage runs beside the goals, in the goal that holds it.
 	if g, err := repo.Store.Goal(queue.IntakeGoal); err == nil {
 		all = append([]*queue.Goal{g}, all...)

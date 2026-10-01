@@ -112,19 +112,21 @@ agent's fix lands as a `fixup!` commit that comes back for review.
 A goal ready to finish comes up in Next. `P` merges it into the base branch,
 and `F` opens it as a stack of pull requests instead, one per workstream on
 `diatom/<goal>/pr/<ws>`, each stacked on the one before; `d` only marks it
-done, to land later. Either way, the goal first catches up with the base branch,
-fetched from the remote: what the base gained is merged in, and when that
-conflicts, an agent resolves it and the resolution comes back for review before
-the goal can land. The goal's commits are then replayed onto the base branch's
+done, to land later. Goals follow their base branch as it moves: whenever
+something lands on it, whether diatom pushed it or it was fetched from the
+remote, the scheduler merges it into each goal's integration branch, and each
+workstream takes that in before its next session. When that conflicts, an
+agent resolves it and the resolution comes back for review before the goal can
+land. Landing catches up with the base once more first. The goal's commits are then replayed onto the base branch's
 tip on `diatom/<goal>/final`, without the merges and with fixups squashed into
 the commits they revise. When the base changed the goal's own code, so the
-commits no longer apply on its tip as they are, they're rebased onto it: git
-merges what it can, and an agent on the mechanical profile settles each
-conflict git leaves, keeping both the base's change and the commit's. Before the goal
-lands, what the agent changed comes to Next for review, just its change from
-the files as git left them; rejecting a hunk settles that commit again with
-your comments. If the result differs from the merge you reviewed, a last commit
-brings it to that merge. `P` merges into the remote's base branch, then
+commits no longer apply on its tip as they are, landing is still mechanical:
+the conflict was resolved once, by the catch-up's agent, and reviewed. Git
+records that resolution (rerere) and settles the same conflict with it when a
+commit meets it again. A commit git still can't replay is squashed, with
+every commit after it, into one commit of the merge you reviewed. No agent
+runs and nothing new comes to review. If the result differs from the merge you
+reviewed, a last commit brings it to that merge. `P` merges into the remote's base branch, then
 fast-forwards your local one when that can't lose anything: never over commits
 of your own, and never over uncommitted changes to the files that landed.
 Nothing is stashed; otherwise you pull when ready. The base's history stays linear. A saved

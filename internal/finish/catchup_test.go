@@ -9,10 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"go.yaml.in/yaml/v3"
+
 	"github.com/dmikalova/diatom/internal/gate"
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/queue"
-	"github.com/dmikalova/diatom/internal/review"
 )
 
 func TestCatchUp(t *testing.T) {
@@ -79,126 +80,88 @@ func TestBaseTipFollowsUpstreamWhenAhead(t *testing.T) {
 	}
 }
 
-func TestBuildRebasesOntoAConflictingBase(t *testing.T) {
-	f := newFixture(t)
+// conflictingBase has main change the goal's own file, and merges it into
+// the integration branch with the catch-up's resolution, as a conflict task's
+// agent would: merge commits it through diatom, recording the resolution.
+func (f *fixture) conflictingBase(merge func()) {
+	f.t.Helper()
 	f.task("engine", f.work("engine", "engine.txt", "ward\n", "feat: add ward"))
 	f.task("cards", f.work("cards", "cards.txt", "warden\n", "feat: add warden"))
-	// main changes the goal's own file, and the catch-up's resolution lands
-	// on the integration branch, as an agent's would.
 	f.git("checkout", "--quiet", "main")
 	f.write("engine.txt", "not ward\n")
 	f.commitAll("feat: something else")
 	f.on("")
-	if _, err := f.repo.Run(f.ctx, "merge", "--no-edit", "main"); err == nil {
-		t.Fatal("the merge didn't conflict")
-	}
-	f.write("engine.txt", "ward, not ward\n")
-	f.git("add", "-A")
-	f.git("commit", "--quiet", "--no-edit")
+	merge()
 	f.git("checkout", "--quiet", "main")
+}
 
-	// Git alone can't put the commits on main's tip.
-	if _, err := Build(f.ctx, f.store, f.goal, Options{}); !errors.As(err, new(*ConflictError)) {
-		t.Fatalf("without a resolver, Build = %v", err)
-	}
-	// With one, it settles each conflict git leaves, in the replay.
+func TestBuildSquashesWhatTheBaseConflictsWith(t *testing.T) {
+	f := newFixture(t)
+	f.conflictingBase(func() {
+		if _, err := f.repo.Run(f.ctx, "merge", "--no-edit", "main"); err == nil {
+			t.Fatal("the merge didn't conflict")
+		}
+		f.write("engine.txt", "ward, not ward\n")
+		f.git("add", "-A")
+		f.git("commit", "--quiet", "--no-edit")
+	})
+
+	// Nothing recorded how the conflict was resolved, so git can't replay
+	// the first commit: it and the one after are squashed into one commit of
+	// the reviewed merge, with no agent.
 	var progress strings.Builder
-	var settled []Conflict
-	res := f.build(
-		Options{
-			Progress: &progress,
-			Resolve: func(_ context.Context, dir string, c Conflict) error {
-				settled = append(settled, c)
-				if head, _ := (git.Repo{Dir: dir}).Run(
-					f.ctx,
-					"rev-parse",
-					"CHERRY_PICK_HEAD",
-				); head != c.Commit {
-					t.Errorf("settling %s with %q picked", c.Commit, head)
-				}
-				return os.WriteFile(
-					filepath.Join(dir, "engine.txt"),
-					[]byte("ward, not ward\n"),
-					0o644,
-				)
-			},
-		},
-	)
-	if !res.Rebased || len(settled) != 1 || settled[0].Subject != "feat: add ward" ||
-		strings.Join(settled[0].Files, ",") != "engine.txt" ||
-		settled[0].Integration != f.goal.IntegrationBranch() {
-		t.Fatalf("laid out as %+v, settling %+v", res, settled)
+	res := f.build(Options{Progress: &progress})
+	if strings.Join(res.Squashed, "|") != "feat: add ward|feat: add warden" || res.Carried ||
+		len(res.Stack) != 1 {
+		t.Fatalf("laid out as %+v", res)
 	}
 	tip := res.Tip()
 	if merges := f.git("rev-list", "--merges", "main.."+tip); merges != "" {
 		t.Errorf("merges on the way: %s", merges)
 	}
-	if ok, _ := f.repo.IsAncestor(f.ctx, "main", tip); !ok {
-		t.Error("the commits aren't on main's tip")
-	}
-	// The agent settled it as the reviewed merge did, so nothing is carried.
-	if got := f.subjects(
-		tip,
-	); strings.Join(
-		got[len(got)-2:],
-		"|",
-	) != "feat: add ward|feat: add warden" ||
-		res.Carried {
-		t.Errorf("subjects = %v, carried %v", got, res.Carried)
+	if got := f.subjects(tip); strings.Join(got, "|") != "feat: add ward" {
+		t.Errorf("subjects = %v", got)
 	}
 	if !f.sameTree(tip, f.goal.IntegrationBranch()) {
 		t.Error("the tip isn't the reviewed merge")
 	}
-	if !strings.Contains(progress.String(), "an agent settling each conflict") ||
-		!strings.Contains(progress.String(), "Settling") {
+	msg := f.git("log", "-1", "--format=%B", tip)
+	if !strings.Contains(msg, "reviewed merge of main") ||
+		!strings.Contains(msg, "feat: add warden") {
+		t.Errorf("the squash's message:\n%s", msg)
+	}
+	if !strings.Contains(progress.String(), "squashing that commit and the ones after it") {
 		t.Errorf("progress:\n%s", progress.String())
 	}
 }
 
-func TestBuildRebaseNeedsItsConflictsSettled(t *testing.T) {
+func TestBuildReplaysTheReviewedResolution(t *testing.T) {
 	f := newFixture(t)
-	f.task("engine", f.work("engine", "engine.txt", "ward\n", "feat: add ward"))
-	f.task("cards", f.work("cards", "cards.txt", "warden\n", "feat: add warden"))
-	// main changes the goal's own file, and the catch-up's resolution lands
-	// on the integration branch, as an agent's would.
-	f.git("checkout", "--quiet", "main")
-	f.write("engine.txt", "not ward\n")
-	f.commitAll("feat: something else")
-	f.on("")
-	if _, err := f.repo.Run(f.ctx, "merge", "--no-edit", "main"); err == nil {
-		t.Fatal("the merge didn't conflict")
-	}
-	f.write("engine.txt", "ward, not ward\n")
-	f.git("add", "-A")
-	f.git("commit", "--quiet", "--no-edit")
-	f.git("checkout", "--quiet", "main")
+	f.conflictingBase(func() {
+		if res, err := f.repo.MergeNoCommit(f.ctx, "main"); err != nil || res != git.Conflicted {
+			t.Fatalf("the merge = %v, %v", res, err)
+		}
+		f.write("engine.txt", "ward, not ward\n")
+		if _, err := f.repo.CommitMerge(f.ctx); err != nil {
+			t.Fatal(err)
+		}
+	})
 
-	// An agent leaving a conflict marker fails the landing.
-	_, err := Build(
-		f.ctx,
-		f.store,
-		f.goal,
-		Options{Resolve: func(context.Context, string, Conflict) error {
-			return nil
-		}},
-	)
-	if err == nil || !strings.Contains(err.Error(), "conflict markers are left") {
-		t.Errorf("an unsettled conflict = %v", err)
-	}
-	// One settling it differently from the reviewed merge gets a last commit
-	// matching the merge.
-	res := f.build(Options{Resolve: func(_ context.Context, dir string, _ Conflict) error {
-		return os.WriteFile(filepath.Join(dir, "engine.txt"), []byte("ward\n"), 0o644)
-	}})
-	if !res.Rebased || !res.Carried {
+	// The catch-up's resolution was recorded as it was committed, so git
+	// settles the replay's conflict the same way, and each commit lands as
+	// it was made.
+	res := f.build(Options{})
+	if len(res.Squashed) > 0 || res.Carried || res.Unstacked != "" {
 		t.Fatalf("laid out as %+v", res)
 	}
-	if got := f.subjects(
-		res.Tip(),
-	); got[len(got)-1] != "fix: match the reviewed merge of main's changes" {
+	tip := res.Tip()
+	if got := f.subjects(tip); strings.Join(got, "|") != "feat: add ward|feat: add warden" {
 		t.Errorf("subjects = %v", got)
 	}
-	if !f.sameTree(res.Tip(), f.goal.IntegrationBranch()) {
+	if got := f.git("show", tip+"~1:engine.txt"); got != "ward, not ward" {
+		t.Errorf("the replayed commit's engine.txt = %q", got)
+	}
+	if !f.sameTree(tip, f.goal.IntegrationBranch()) {
 		t.Error("the tip isn't the reviewed merge")
 	}
 }
@@ -272,89 +235,13 @@ func TestALayoutThatCantLandIsMadeAgain(t *testing.T) {
 	if Current(f.ctx, f.store, f.goal, res) {
 		t.Error("a layout with a merge is current")
 	}
-}
-
-func TestSettlementsWaitForReview(t *testing.T) {
-	f := newFixture(t)
-	f.task("engine", f.work("engine", "engine.txt", "ward\n", "feat: add ward"))
-	f.git("checkout", "--quiet", "main")
-	f.write("engine.txt", "not ward\n")
-	f.commitAll("feat: something else")
-	f.on("")
-	if _, err := f.repo.Run(f.ctx, "merge", "--no-edit", "main"); err == nil {
-		t.Fatal("the merge didn't conflict")
-	}
-	f.write("engine.txt", "ward, not ward\n")
-	f.git("add", "-A")
-	f.git("commit", "--quiet", "--no-edit")
-	f.git("checkout", "--quiet", "main")
-
-	var feedback string
-	res := f.build(
-		Options{
-			Feedback: map[string]string{},
-			Resolve: func(_ context.Context, dir string, c Conflict) error {
-				feedback = c.Feedback
-				return os.WriteFile(
-					filepath.Join(dir, "engine.txt"),
-					[]byte("ward, not ward\n"),
-					0o644,
-				)
-			},
-		},
-	)
-	if len(res.Settlements) != 1 || feedback != "" {
-		t.Fatalf("settlements = %+v", res.Settlements)
-	}
-	// The settlement's commit holds just the agent's change: the conflict
-	// markers git left, gone.
-	st := res.Settlements[0]
-	hunks, err := review.Hunks(f.ctx, f.repo, st.Review)
-	if err != nil || len(hunks) != 1 || hunks[0].Path != "engine.txt" {
-		t.Fatalf("hunks = %+v, %v", hunks, err)
-	}
-	diff := f.git("show", "--format=", st.Review)
-	if !strings.Contains(diff, "-<<<<<<<") || !strings.Contains(diff, "+ward, not ward") {
-		t.Errorf("the settlement's change:\n%s", diff)
-	}
-	// It is up for review, on a task nothing will pick up.
-	tasks, _ := f.store.Tasks("set")
-	var landing *queue.Task
-	for _, task := range tasks {
-		if IsLanding(task) {
-			landing = task
-		}
-	}
-	if landing == nil || landing.State != queue.Done || landing.Commits[0] != st.Review {
-		t.Fatalf("the landing's task = %+v", landing)
-	}
-	if waiting, _, _ := Settled(f.ctx, f.store, f.goal, res); !waiting {
-		t.Error("an unreviewed settlement doesn't wait")
-	}
-	store := review.Store{Dir: f.store.GoalDir("set")}
-	if _, err := store.Decide(
-		hunks[0],
-		review.Reject,
-		[]review.Comment{{Text: "keep main's wording"}},
-		time.Unix(1, 0),
-	); err != nil {
+	// So is one with conflicts an agent settled, as an older diatom made.
+	res = f.build(Options{})
+	if err := yaml.Unmarshal([]byte("settlements:\n  - commit: abc\n"), res); err != nil {
 		t.Fatal(err)
 	}
-	waiting, said, _ := Settled(f.ctx, f.store, f.goal, res)
-	if waiting || !strings.Contains(said[st.Commit], "keep main's wording") {
-		t.Errorf("after rejecting: waiting %v, feedback %v", waiting, said)
-	}
-	if err := SaveFeedback(f.store.GoalDir("set"), said); err != nil {
-		t.Fatal(err)
-	}
-	if got, _ := LoadFeedback(f.store.GoalDir("set")); got[st.Commit] != said[st.Commit] {
-		t.Errorf("feedback kept = %v", got)
-	}
-	if err := SaveFeedback(f.store.GoalDir("set"), nil); err != nil {
-		t.Fatal(err)
-	}
-	if got, _ := LoadFeedback(f.store.GoalDir("set")); got != nil {
-		t.Errorf("feedback left after landing = %v", got)
+	if Current(f.ctx, f.store, f.goal, res) {
+		t.Error("a layout with settlements is current")
 	}
 }
 

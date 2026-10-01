@@ -31,20 +31,20 @@ const fileName = "finish.yaml"
 
 // carryMessage is the message of the commit that carries what the goal's
 // merges changed, which replaying the commits alone leaves out.
-// rebasedMessage is the last commit's of a goal rebased onto a base that
-// changed its code, when the rebased files differ from the reviewed merge.
-const rebasedMessage = `fix: match the reviewed merge of %s's changes
-
-%s changed the goal's own code while it ran, and the goal's commits were
-rebased onto it, an agent settling each conflict. This commit brings the files
-to the merge of %s into the goal that was reviewed and passed the gate.
-`
-
 const carryMessage = `fix: keep what resolving the goal's merges changed
 
 The goal's workstreams were merged into each other as the work went on, and
 conflict and gate-repair tasks fixed those merges. Replayed one after
 another, the commits leave those fixes out, so this commit carries them.
+`
+
+// squashMessage opens the message of the commit that a commit git can't
+// replay on the base, and every commit after it, are squashed into.
+const squashMessage = `%s
+
+%s changed the same code as the goal while it ran, so git couldn't replay
+these commits onto its tip one at a time. They are squashed into one commit
+holding the files of the reviewed merge of %s into the goal.
 `
 
 // PR is one pull request of the stack: one workstream's commits, on top of
@@ -79,14 +79,17 @@ type Result struct {
 	// Unstacked says why the workstreams couldn't be put one after another,
 	// leaving the goal as one pull request in the order its commits were made.
 	Unstacked string `yaml:"unstacked,omitempty"`
-	// Settlements are how an agent settled the rebase's conflicts, each to
-	// be reviewed before the goal lands.
-	Settlements []Settlement `yaml:"settlements,omitempty"`
+	// Squashed are the subjects of the commits squashed into the last one,
+	// because the base moved on in the goal's own code and git couldn't
+	// replay them onto it one at a time.
+	Squashed []string `yaml:"squashed,omitempty"`
+	// Settled is how an older diatom had an agent settle the conflicts of a
+	// rebase, unreviewed now that landing is mechanical: such a layout is
+	// made again.
+	Settled []yaml.Node `yaml:"settlements,omitempty"`
 	// Carried is set when the last commit carries what the goal's merges
-	// changed, and Rebased when the base moved on in the goal's own code, so
-	// the commits were rebased onto it with an agent settling each conflict.
+	// changed.
 	Carried bool      `yaml:"carried,omitempty"`
-	Rebased bool      `yaml:"rebased,omitempty"`
 	Built   time.Time `yaml:"built"`
 	// Landing is how far the goal is on its way upstream.
 	Landing *Landing `yaml:"landing,omitempty"`
@@ -108,40 +111,6 @@ type Options struct {
 	// Progress, when set, is told each step as it happens, and the gate's
 	// output as it comes.
 	Progress io.Writer
-	// Feedback is the human's comments on the last settlements they
-	// rejected, by the commit settled.
-	Feedback map[string]string
-	// Resolve settles a commit's conflicts that git leaves, when the base
-	// changed the goal's own code: it edits the files in dir, a replay with
-	// the commit's pick in progress, so each keeps both the base's change and
-	// the commit's. Nil leaves such a goal unlandable.
-	Resolve Resolver
-}
-
-// Resolver settles the conflicts a commit's pick left in dir.
-type Resolver func(ctx context.Context, dir string, c Conflict) error
-
-// Conflict is a commit whose pick git couldn't finish.
-type Conflict struct {
-	Commit, Subject string
-	// Files are the ones left conflicted.
-	Files []string
-	// Integration is the goal's integration branch, which holds how the
-	// catch-up merged the base in, as reviewed: a guide to the resolution.
-	Integration string
-	// Feedback is what the human said, rejecting how the commit was settled
-	// last time.
-	Feedback string
-}
-
-// Settlement is how an agent settled one commit's conflicts in a landing's
-// rebase: Review is a commit whose only change is the agent's, from the files
-// as git left them to the files as it settled them, for the human to review
-// before the goal lands.
-type Settlement struct {
-	Commit  string `yaml:"commit"`
-	Subject string `yaml:"subject"`
-	Review  string `yaml:"review"`
 }
 
 // step tells opts' progress what is happening.
@@ -213,27 +182,23 @@ func Build(ctx context.Context, s *queue.Store, g *queue.Goal, opts Options) (*R
 
 	res := &Result{Base: base, Integration: integration, Final: FinalBranch(g)}
 	opts.step("Putting the goal's %d commits onto %s's tip", len(commits), g.Base)
-	stack, err := replayOnto(ctx, wt, base, commits, owner, g, res, nil)
-	if conflict := (*ConflictError)(nil); errors.As(err, &conflict) && opts.Resolve != nil {
-		// The base moved on in the goal's own code, so git can't put every
-		// commit on its tip by itself. The commits go in the order they were
-		// made, and an agent settles each conflict git leaves.
-		opts.step("%s changed the same code (%s): rebasing them onto it, with an agent settling "+
-			"each conflict git leaves", g.Base, conflict)
+	stack, err := replayOnto(ctx, wt, base, commits, owner, g, res)
+	if conflict := (*ConflictError)(nil); errors.As(err, &conflict) {
+		// The base moved on in the goal's own code, and the catch-up's
+		// reviewed resolution doesn't settle every commit git replays. The
+		// files the goal lands with are known, the reviewed merge's, so
+		// the commits from the first git can't replay on are squashed into
+		// one commit of them, rather than settled again.
+		opts.step("%s changed the same code (%s): squashing that commit and the ones after it "+
+			"into the reviewed merge", g.Base, conflict)
 		res.Unstacked = conflict.Error()
-		resolve := func(ctx context.Context, dir string, c Conflict) error {
-			c.Integration, c.Feedback = g.IntegrationBranch(), opts.Feedback[c.Commit]
-			opts.step("Settling %s %q: %s", short(c.Commit), c.Subject, strings.Join(c.Files, ", "))
-			st, err := settlement(ctx, git.Repo{Dir: dir}, c, g.Base, func() error {
-				return opts.Resolve(ctx, dir, c)
-			})
-			if err == nil {
-				res.Settlements = append(res.Settlements, st)
-			}
-			return err
+		var pr PR
+		pr, res.Squashed, err = replaySquashing(ctx, wt, base,
+			arrange(commits, nil, []string{""})[0].steps, want, g.Base)
+		stack = nil
+		if err == nil && pr.Tip != base {
+			stack = []PR{pr}
 		}
-		stack, err = replay(ctx, wt, base, arrange(commits, nil, []string{""}), resolve)
-		res.Rebased = err == nil
 	}
 	if err != nil {
 		return nil, err
@@ -245,16 +210,12 @@ func Build(ctx context.Context, s *queue.Store, g *queue.Goal, opts Options) (*R
 	if tree, err := repo.Run(ctx, "rev-parse", last.Tip+"^{tree}"); err != nil {
 		return nil, err
 	} else if tree != want {
-		msg := carryMessage
-		if res.Rebased {
-			msg = fmt.Sprintf(rebasedMessage, g.Base, g.Base, g.Base)
-		}
-		sha, err := wt.CommitTree(ctx, want, msg)
+		sha, err := wt.CommitTree(ctx, want, carryMessage)
 		if err != nil {
 			return nil, err
 		}
 		last.Tip = sha
-		last.Commits = append(last.Commits, firstLine(msg))
+		last.Commits = append(last.Commits, firstLine(carryMessage))
 		res.Carried = true
 	}
 	if len(stack) == 1 {
@@ -273,9 +234,6 @@ func Build(ctx context.Context, s *queue.Store, g *queue.Goal, opts Options) (*R
 		}
 	}
 	if err := updateBranches(ctx, repo, g, res); err != nil {
-		return nil, err
-	}
-	if err := recordSettlements(s, g, res, now(opts)); err != nil {
 		return nil, err
 	}
 	res.Built = now(opts)
@@ -316,43 +274,6 @@ func expectedTree(
 	return tree, err
 }
 
-// settlement runs resolve on a conflicted pick in wt, and makes the commit
-// that holds just what it changed, for review.
-func settlement(ctx context.Context, wt git.Repo, c Conflict, base string,
-	resolve func() error,
-) (Settlement, error) {
-	st := Settlement{Commit: c.Commit, Subject: c.Subject}
-	before, err := wt.Snapshot(ctx)
-	if err != nil {
-		return st, err
-	}
-	if err := resolve(); err != nil {
-		return st, err
-	}
-	after, err := wt.Snapshot(ctx)
-	if err != nil {
-		return st, err
-	}
-	head, err := wt.RevParse(ctx, "HEAD")
-	if err != nil {
-		return st, err
-	}
-	left, err := wt.NewCommit(
-		ctx,
-		before,
-		fmt.Sprintf("%s as git left it, rebased onto %s\n", c.Subject,
-			base),
-		head,
-	)
-	if err != nil {
-		return st, err
-	}
-	st.Review, err = wt.NewCommit(ctx, after, fmt.Sprintf("settle %s's conflicts with %s\n\n"+
-		"How an agent settled the conflicts git left in rebasing %s onto %s.\n", c.Subject, base,
-		short(c.Commit), base), left)
-	return st, err
-}
-
 // replayOnto replays the goal's commits onto base, one pull request per
 // workstream, or when a workstream's commits don't apply on the ones before,
 // as one pull request in the order they were made, saying why in res.
@@ -364,12 +285,11 @@ func replayOnto(
 	owner map[string]string,
 	g *queue.Goal,
 	res *Result,
-	resolve Resolver,
 ) ([]PR, error) {
-	stack, err := replay(ctx, wt, base, arrange(commits, owner, workstreamOrder(g)), resolve)
+	stack, err := replay(ctx, wt, base, arrange(commits, owner, workstreamOrder(g)))
 	if conflict := (*ConflictError)(nil); errors.As(err, &conflict) {
 		res.Unstacked = conflict.Error()
-		stack, err = replay(ctx, wt, base, arrange(commits, nil, []string{""}), resolve)
+		stack, err = replay(ctx, wt, base, arrange(commits, nil, []string{""}))
 	}
 	return stack, err
 }
@@ -560,10 +480,8 @@ func fixupTarget(picked []*step, subject string) *step {
 }
 
 // replay puts the groups' commits onto base, one pull request a group. A
-// pick git can't finish is a ConflictError, or with resolve, settled by it.
-func replay(ctx context.Context, wt git.Repo, base string, groups []group, resolve Resolver) ([]PR,
-	error,
-) {
+// pick git can't finish is a ConflictError.
+func replay(ctx context.Context, wt git.Repo, base string, groups []group) ([]PR, error) {
 	if _, err := wt.Run(ctx, "checkout", "--detach", "--force", base); err != nil {
 		return nil, err
 	}
@@ -575,7 +493,7 @@ func replay(ctx context.Context, wt git.Repo, base string, groups []group, resol
 		}
 		pr := PR{Workstream: gr.ws}
 		for _, st := range gr.steps {
-			applied, err := apply(ctx, wt, st, resolve)
+			applied, err := apply(ctx, wt, st)
 			if err != nil {
 				return nil, err
 			}
@@ -591,14 +509,85 @@ func replay(ctx context.Context, wt git.Repo, base string, groups []group, resol
 	return stack, nil
 }
 
+// replaySquashing replays steps onto base in order, as one pull request, up
+// to the first git can't replay: it and every step after it are squashed into
+// one commit of the files want. It returns the subjects of the commits
+// squashed.
+func replaySquashing(
+	ctx context.Context,
+	wt git.Repo,
+	base string,
+	steps []*step,
+	want, baseName string,
+) (PR, []string, error) {
+	if _, err := wt.Run(ctx, "checkout", "--detach", "--force", base); err != nil {
+		return PR{}, nil, err
+	}
+	var pr PR
+	var squashed []string
+	for i, st := range steps {
+		before, err := wt.RevParse(ctx, "HEAD")
+		if err != nil {
+			return PR{}, nil, err
+		}
+		applied, err := apply(ctx, wt, st)
+		if errors.As(err, new(*ConflictError)) {
+			if _, err := wt.Run(ctx, "reset", "--quiet", "--hard", before); err != nil {
+				return PR{}, nil, err
+			}
+			if squashed, err = squash(ctx, wt, steps[i:], want, baseName); err != nil {
+				return PR{}, nil, err
+			}
+			if len(squashed) > 0 {
+				pr.Commits = append(pr.Commits, st.subject)
+			}
+			break
+		}
+		if err != nil {
+			return PR{}, nil, err
+		}
+		pr.Commits = append(pr.Commits, applied...)
+	}
+	tip, err := wt.RevParse(ctx, "HEAD")
+	pr.Tip = tip
+	return pr, squashed, err
+}
+
+// squash makes one commit of the files want on HEAD for steps, keeping each
+// one's message as autosquash would, and returns their subjects. With HEAD
+// already holding want, it makes nothing.
+func squash(ctx context.Context, wt git.Repo, steps []*step, want, base string) ([]string,
+	error,
+) {
+	if tree, err := wt.HeadTree(ctx); err != nil || tree == want {
+		return nil, err
+	}
+	subjects := make([]string, 0, len(steps))
+	msgs := make([]string, 0, len(steps))
+	for _, st := range steps {
+		subjects = append(subjects, st.subject)
+		msg, err := wt.Output(ctx, "log", "-1", "--format=%B", st.sha)
+		if err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, strings.TrimSpace(msg))
+	}
+	msg := fmt.Sprintf(squashMessage, steps[0].subject, base, base) + "\n" +
+		strings.Join(msgs, "\n\n") + "\n"
+	if _, err := wt.CommitTree(ctx, want, commitmsg.Wrap(msg)); err != nil {
+		return nil, err
+	}
+	return subjects, nil
+}
+
 // apply replays one commit and squashes its fixups into it, and returns the
 // subjects of the commits it made.
-func apply(ctx context.Context, wt git.Repo, st *step, resolve Resolver) ([]string, error) {
+func apply(ctx context.Context, wt git.Repo, st *step) ([]string, error) {
 	before, err := wt.RevParse(ctx, "HEAD")
 	if err != nil {
 		return nil, err
 	}
-	if err := pick(ctx, wt, st.commit, resolve); err != nil {
+	if err := pick(ctx, wt, st.commit); err != nil {
 		return nil, err
 	}
 	after, err := wt.RevParse(ctx, "HEAD")
@@ -609,7 +598,7 @@ func apply(ctx context.Context, wt git.Repo, st *step, resolve Resolver) ([]stri
 		// The base already has the change; each fixup goes on its own.
 		var subjects []string
 		for _, f := range st.fixups {
-			if err := pick(ctx, wt, f, resolve); err != nil {
+			if err := pick(ctx, wt, f); err != nil {
 				return nil, err
 			}
 			subjects = append(subjects, f.subject)
@@ -617,9 +606,9 @@ func apply(ctx context.Context, wt git.Repo, st *step, resolve Resolver) ([]stri
 		return subjects, nil
 	}
 	for _, f := range st.fixups {
-		if _, err := wt.Run(ctx, "cherry-pick", "--no-commit", f.sha); err != nil {
-			if serr := settle(ctx, wt, f, resolve); serr != nil {
-				return nil, unsettled(ctx, wt, f, err, serr, resolve, "reset", "--hard", "HEAD")
+		if _, err := wt.Run(ctx, git.Rerere("cherry-pick", "--no-commit", f.sha)...); err != nil {
+			if err := settled(ctx, wt, f, err, "reset", "--hard", "HEAD"); err != nil {
+				return nil, err
 			}
 			if _, err := wt.Run(ctx, "cherry-pick", "--quit"); err != nil {
 				return nil, err
@@ -640,12 +629,12 @@ func apply(ctx context.Context, wt git.Repo, st *step, resolve Resolver) ([]stri
 }
 
 // pick replays one commit, dropping it if the base already has it.
-func pick(ctx context.Context, wt git.Repo, c commit, resolve Resolver) error {
+func pick(ctx context.Context, wt git.Repo, c commit) error {
 	before, err := wt.RevParse(ctx, "HEAD")
 	if err != nil {
 		return err
 	}
-	if err := replayOne(ctx, wt, c, resolve); err != nil {
+	if err := replayOne(ctx, wt, c); err != nil {
 		return err
 	}
 	return rewrap(ctx, wt, before)
@@ -671,18 +660,19 @@ func rewrap(ctx context.Context, wt git.Repo, before string) error {
 	return nil
 }
 
-// replayOne cherry-picks one commit, settling what conflicts.
-func replayOne(ctx context.Context, wt git.Repo, c commit, resolve Resolver) error {
-	_, err := wt.Run(ctx, "cherry-pick", "--allow-empty", "--empty=drop", c.sha)
+// replayOne cherry-picks one commit. Git settles a conflict the catch-up
+// merge already resolved, as reviewed, with the resolution it recorded.
+func replayOne(ctx context.Context, wt git.Repo, c commit) error {
+	_, err := wt.Run(ctx, git.Rerere("cherry-pick", "--allow-empty", "--empty=drop", c.sha)...)
 	if err == nil {
 		return nil
 	}
-	if serr := settle(ctx, wt, c, resolve); serr != nil {
-		return unsettled(ctx, wt, c, err, serr, resolve, "cherry-pick", "--abort")
+	if err := settled(ctx, wt, c, err, "cherry-pick", "--abort"); err != nil {
+		return err
 	}
-	// Settled: the commit goes on with its own message, or not at all when
-	// nothing of it is left. It is committed without the repo's hooks, as
-	// every commit of the layout is: the gate runs on the result.
+	// The commit goes on with its own message, or not at all when nothing
+	// of it is left. It is committed without the repo's hooks, as every
+	// commit of the layout is: the gate runs on the result.
 	if _, err := wt.Run(ctx, "diff", "--cached", "--quiet", "HEAD"); err == nil {
 		_, err = wt.Run(ctx, "cherry-pick", "--skip")
 		return err
@@ -691,55 +681,34 @@ func replayOne(ctx context.Context, wt git.Repo, c commit, resolve Resolver) err
 	return err
 }
 
-// settle has resolve settle the conflicts a pick of c left, and stages what
-// it made of them. It fails when there is no resolver, when nothing was
-// conflicted, since then the pick failed for another reason, or when a
-// conflict marker is left.
-func settle(ctx context.Context, wt git.Repo, c commit, resolve Resolver) error {
-	if resolve == nil {
-		return errors.New("no one to settle the conflict")
+// settled checks a pick of c that failed with err: nil when git settled
+// every conflict it left with resolutions it recorded, such as the catch-up
+// merge's as reviewed, so no path is left unmerged nor any conflict marker.
+// Otherwise it undoes the pick, and a pick that left conflicts, which git
+// marks with AUTO_MERGE, or a pick in progress with CHERRY_PICK_HEAD, is a
+// ConflictError.
+func settled(ctx context.Context, wt git.Repo, c commit, err error, undo ...string) error {
+	_, aerr := wt.Run(ctx, "rev-parse", "--quiet", "--verify", "AUTO_MERGE")
+	_, cerr := wt.Run(ctx, "rev-parse", "--quiet", "--verify", "CHERRY_PICK_HEAD")
+	conflicted := aerr == nil || cerr == nil
+	unmerged, uerr := wt.Run(ctx, "diff", "--name-only", "--diff-filter=U")
+	if uerr != nil {
+		return errors.Join(err, uerr)
 	}
-	out, err := wt.Run(ctx, "diff", "--name-only", "--diff-filter=U")
-	if err != nil || out == "" {
-		return errors.Join(err, errors.New("nothing to settle"))
+	if conflicted && unmerged == "" {
+		markers, merr := wt.ConflictMarkers(ctx)
+		if merr != nil || len(markers) == 0 {
+			return merr
+		}
+		unmerged, _ = wt.Run(ctx, "diff", "--name-only", "HEAD")
 	}
-	if err := resolve(ctx, wt.Dir, Conflict{Commit: c.sha, Subject: c.subject,
-		Files: strings.Split(out, "\n")}); err != nil {
-		return err
-	}
-	markers, err := wt.ConflictMarkers(ctx)
-	if err != nil {
-		return err
-	}
-	if len(markers) > 0 {
-		return fmt.Errorf("conflict markers are left:\n%s", strings.Join(markers, "\n"))
-	}
-	_, err = wt.Run(ctx, "add", "--all")
-	return err
-}
-
-// unsettled undoes a pick of c that failed with err and wasn't settled:
-// without a resolver it is a ConflictError, and with one, why settling it
-// failed.
-func unsettled(ctx context.Context, wt git.Repo, c commit, err, serr error, resolve Resolver,
-	undo ...string,
-) error {
-	if resolve == nil {
-		return conflictOr(ctx, wt, c, err, undo...)
-	}
-	_, uerr := wt.Run(ctx, undo...)
-	return errors.Join(fmt.Errorf("settling %s %q: %w", short(c.sha), c.subject, serr), uerr)
-}
-
-func conflictOr(ctx context.Context, wt git.Repo, c commit, err error, undo ...string) error {
-	files, _ := wt.Run(ctx, "diff", "--name-only", "--diff-filter=U")
 	if _, undoErr := wt.Run(ctx, undo...); undoErr != nil {
 		return errors.Join(err, undoErr)
 	}
-	if files == "" {
+	if !conflicted && unmerged == "" {
 		return err
 	}
-	return &ConflictError{Commit: c.sha, Subject: c.subject, Files: strings.Split(files, "\n")}
+	return &ConflictError{Commit: c.sha, Subject: c.subject, Files: strings.Split(unmerged, "\n")}
 }
 
 // runGates runs the gate on each pull request's tip, so a pull request that
@@ -815,7 +784,7 @@ func Current(ctx context.Context, s *queue.Store, g *queue.Goal, res *Result) bo
 		return false
 	}
 	integration, err := repo.RevParse(ctx, g.IntegrationBranch())
-	if err != nil || base != res.Base || integration != res.Integration {
+	if err != nil || base != res.Base || integration != res.Integration || len(res.Settled) > 0 {
 		return false
 	}
 	return landable(ctx, repo, res)

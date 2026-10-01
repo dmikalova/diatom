@@ -192,6 +192,23 @@ func TestMergeNoCommit(t *testing.T) {
 	if markers, _ := r.ConflictMarkers(ctx); len(markers) != 0 {
 		t.Errorf("ConflictMarkers after resolving = %v", markers)
 	}
+	if _, err := r.CommitMerge(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// The same conflict again is settled as it was resolved, with the repo's
+	// own rerere off.
+	mustRun(t, r, "config", "rerere.enabled", "false")
+	mustRun(t, r, "checkout", "-q", "-b", "again", "main")
+	writeFile(t, r, "a.txt", "fight\n")
+	commitAll(t, r, "feat: fight again")
+	res, err = r.MergeNoCommit(ctx, "other")
+	if err != nil || res != Merged || !r.MergeInProgress(ctx) {
+		t.Fatalf("a recorded conflict's MergeNoCommit = %v, %v", res, err)
+	}
+	if got := mustRun(t, r, "show", ":a.txt"); got != "resolved" {
+		t.Errorf("a.txt staged as %q", got)
+	}
 	if err := r.AbortMerge(ctx); err != nil {
 		t.Fatal(err)
 	}

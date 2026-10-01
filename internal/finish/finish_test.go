@@ -31,6 +31,9 @@ func newFixture(t *testing.T) *fixture {
 	f.git("init", "--initial-branch=main")
 	for _, kv := range [][2]string{
 		{"user.name", "T"}, {"user.email", "t@example.com"}, {"commit.gpgsign", "false"},
+		// diatom turns rerere on for its own merges and picks; the human's
+		// are left as the repo has them.
+		{"rerere.enabled", "false"},
 	} {
 		f.git("config", kv[0], kv[1])
 	}

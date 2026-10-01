@@ -289,16 +289,13 @@ ready to finish again.
 
 Then diatom replays the goal's commits onto `main` without the merge commits,
 with each fixup squashed into its target, runs the gate on each PR's tip, and
-lands it. When `main` changed the goal's own code, the commits are rebased
-onto `main`'s tip instead: git merges what it can, and an agent settles each
-conflict git leaves, keeping both `main`'s change and the commit's, with the
-merge you reviewed as its guide. If the result differs from that merge, a last
-commit brings it there, so `main`'s history stays linear and every commit on
-it is signed. The page's log shows each conflict as the agent settles it. What
-the agent changed then comes to Next for review, beside the goals ready to
-finish, before anything lands, just
-its edits to the files git left conflicted; rejecting a hunk has it settle
-that commit again with your comments. `P` merges into `origin/main`, then
+lands it. When `main` changed the goal's own code, no agent runs again: git
+recorded how the catch-up's conflicts were resolved, and settles a commit
+meeting the same conflict that way. The first commit git still can't replay is
+squashed, with every commit after it, into one commit holding the merge you
+reviewed, and the page's log says which. If the result differs from that
+merge, a last commit brings it there, so `main`'s history stays linear and
+every commit on it is signed. `P` merges into `origin/main`, then
 fast-forwards your local `main` unless it has commits of its own or your
 uncommitted changes touch what landed; nothing is stashed. While it lands, the goal's page shows each step and the
 gate's output as they come, with nothing else offered, and Next moves on to

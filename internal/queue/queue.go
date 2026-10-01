@@ -189,6 +189,12 @@ type Origin struct {
 	Ref  string `yaml:"ref,omitempty"`
 }
 
+// SettledLanding reports whether t holds how an agent settled the conflicts
+// of a landing's rebase, as an older diatom put up for review. Landing is
+// mechanical now, and such a layout is made again, so the task's commits are
+// reviewed no more.
+func (t *Task) SettledLanding() bool { return t.Origin.Type == "landing" }
+
 // Usage is the tokens a session spent, divided evenly among its tasks.
 type Usage struct {
 	Session       string  `yaml:"session"`

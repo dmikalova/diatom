@@ -8,7 +8,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/dmikalova/diatom/internal/finish"
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/review"
@@ -164,11 +163,6 @@ func (h *Harness) applyDecision(
 	}
 
 	origin := originTasks(*tasks, sha)
-	if len(origin) > 0 && finish.IsLanding(origin[0]) {
-		// How a landing settled a conflict: the landing settles it again
-		// with the comments, rather than an agent revising it.
-		return nil
-	}
 	if len(origin) == 0 {
 		h.log().Warn("a rejected hunk's commit was made by no task", "goal", goal, "commit", sha)
 		return nil

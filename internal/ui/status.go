@@ -9,8 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -29,7 +27,6 @@ import (
 	"github.com/dmikalova/diatom/internal/review"
 	"github.com/dmikalova/diatom/internal/reviewui"
 	"github.com/dmikalova/diatom/internal/roster"
-	"github.com/dmikalova/diatom/internal/runner"
 	"github.com/dmikalova/diatom/internal/schedule"
 	"github.com/dmikalova/diatom/internal/session"
 	"github.com/dmikalova/diatom/internal/spend"
@@ -45,11 +42,6 @@ type Env struct {
 	Store *queue.Store
 	Paths config.Paths
 	Now   func() time.Time
-	// Runner runs the agent that settles a landing's conflicts, and Exe is
-	// diatom, for the hooks it runs with; a nil Runner leaves such conflicts
-	// unsettled.
-	Runner runner.Runner
-	Exe    string
 	// Config is the repo's config, read once when diatom starts: a change
 	// to it takes effect on the next start. Nil reads it afresh each time.
 	Config *config.Config
@@ -106,8 +98,8 @@ type goalRow struct {
 	// while diatom gates, commits and merges its work.
 	settling []string
 	// landingReview counts the hunks of toReview that finishing the goal
-	// brought: catching up with its base, and settling a rebase's
-	// conflicts. They hold the goal's landing up, as its finishing does.
+	// brought, catching up with its base. They hold the goal's landing up,
+	// as its finishing does.
 	landingReview int
 	activeWork    []string
 	// plan is the plan waiting for sign-off, and grilling the grilling
@@ -323,6 +315,9 @@ func countTasks(row *goalRow, tasks []*queue.Task) (commits, landing []string) {
 		if t.Kind == queue.Grilling {
 			row.grilling = t.State
 		}
+		if t.SettledLanding() {
+			continue
+		}
 		row.counts[t.State]++
 		if t.State == queue.Active {
 			row.activeWork = append(row.activeWork, t.Workstream)
@@ -331,7 +326,7 @@ func countTasks(row *goalRow, tasks []*queue.Task) (commits, landing []string) {
 			if !slices.Contains(commits, sha) {
 				commits = append(commits, sha)
 			}
-			if (finish.IsLanding(t) || t.Merge != "") && !slices.Contains(landing, sha) {
+			if t.Merge != "" && !slices.Contains(landing, sha) {
 				landing = append(landing, sha)
 			}
 		}
@@ -405,184 +400,15 @@ func (s *Status) toReview(store *queue.Store, goal string, commits []string) (in
 	return total, nil
 }
 
-// reviewSettlements holds a landing back until the human has reviewed how an
-// agent settled its rebase's conflicts. A settlement they rejected is thrown
-// away with the layout, which is made again with their comments. It returns
-// a note when the goal waits on review.
-func reviewSettlements(
-	ctx context.Context,
-	s *queue.Store,
-	env Env,
-	run runner.Runner,
-	exe string,
-	g *queue.Goal,
-	res **finish.Result,
-	log io.Writer,
-) (string, error) {
-	waiting, feedback, err := finish.Settled(ctx, s, g, *res)
-	if err != nil {
-		return "", err
-	}
-	if len(feedback) > 0 {
-		_, _ = fmt.Fprintln(
-			log,
-			"You rejected how some conflicts were settled: settling them again",
-		)
-		if err := finish.SaveFeedback(s.GoalDir(g.Name), feedback); err != nil {
-			return "", err
-		}
-		if err := finish.Discard(s.GoalDir(g.Name)); err != nil {
-			return "", err
-		}
-		if *res, err = prepare(ctx, s, env, run, exe, g, log); err != nil {
-			return "", err
-		}
-		if waiting, _, err = finish.Settled(ctx, s, g, *res); err != nil {
-			return "", err
-		}
-	}
-	if !waiting {
-		return "", nil
-	}
-	_, _ = fmt.Fprintln(log, "An agent settled conflicts: review its changes before the goal lands")
-	return fmt.Sprintf(
-		"an agent settled %s in rebasing %s onto %s: review what it changed in Next, "+
-			"then land it again",
-		count(len((*res).Settlements), "conflicted commit"),
-		g.Name,
-		g.Base,
-	), nil
-}
-
-// resolveProfile is the profile of the agent settling a landing's
-// conflicts: work that needs judgement, but not the most.
-const resolveProfile = "mechanical"
-
-// resolveConflict has an agent settle the conflicts rebasing a goal's commit
-// left in dir, telling log what it does. It returns how the agent ended, nil
-// when it didn't run.
-func resolveConflict(
-	ctx context.Context,
-	run runner.Runner,
-	profile config.Profile,
-	cfg *config.Config,
-	exe string,
-	g *queue.Goal,
-	dir string,
-	c finish.Conflict,
-	log io.Writer,
-) (*runner.Result, error) {
-	prompt := fmt.Sprintf(
-		`You are settling a merge conflict. diatom is rebasing the commits of the goal %q onto
-%s, which changed the same code while the goal ran. Git applied commit %s, %q, onto %s's
-tip and left these files conflicted, with the cherry-pick in progress in your working
-directory:
-
-- %s
-
-Resolve every conflict in these files so that both sides survive: nothing %s changed may be
-lost, and the commit's own change must still be made. Keep to what this commit changes;
-don't bring in what later commits of the goal do. When one side deleted a file the other
-changed, decide from what each side meant.
-
-How the goal as a whole was reconciled with %s, as the human reviewed it, is on %s: read
-it with `+"`git show %s:<path>`"+` as a guide, not a copy.
-
-Leave no conflict markers. Only edit files: diatom stages and commits the result, and git
-commands that change the repository are blocked. End once every file is resolved.%s`,
-		g.Title,
-		g.Base,
-		tui.Short(c.Commit),
-		c.Subject,
-		g.Base,
-		strings.Join(c.Files, "\n- "),
-		g.Base,
-		g.Base,
-		c.Integration,
-		c.Integration,
-		feedbackNote(c.Feedback),
-	)
-	spec := runner.Spec{
-		Dir:            dir,
-		Prompt:         prompt,
-		Profile:        profile,
-		CommandTimeout: cfg.CommandTimeout,
-	}
-	if exe != "" {
-		spec.Hooks.PreToolUse = exe + " hook pre-tool-use"
-	}
-	res, err := run.Run(ctx, spec, func(e runner.Event) {
-		if e.Summary != "" {
-			_, _ = fmt.Fprintln(log, "  "+e.Summary)
-		}
-	})
-	if err != nil {
-		return nil, err
-	}
-	_, _ = fmt.Fprintf(log, "  the agent %s, $%.2f\n", res.Outcome, res.Usage.CostUSD)
-	if res.Outcome != runner.Completed {
-		return &res, fmt.Errorf("the agent settling %s ended %s", tui.Short(c.Commit), res.Outcome)
-	}
-	return &res, nil
-}
-
-// recordSession keeps what an agent run outside the scheduler cost, as a
-// settled session of the goal's in root, so the goal and the repo's budget
-// count it.
-func recordSession(root string, at time.Time, profile string, res runner.Result) error {
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		return err
-	}
-	base := at.UTC().Format("20060102T150405Z") + "-landing"
-	for n := 0; ; n++ {
-		id := base
-		if n > 0 {
-			id = fmt.Sprintf("%s-%d", base, n)
-		}
-		dir := filepath.Join(root, id)
-		err := os.Mkdir(dir, 0o755)
-		if errors.Is(err, fs.ErrExist) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		if err := session.Create(dir, session.Spec{ID: id, Kind: queue.Conflict,
-			Profile: profile}); err != nil {
-			return err
-		}
-		if err := session.UpdateState(
-			dir,
-			func(st *session.State) { st.Settled = true },
-		); err != nil {
-			return err
-		}
-		return session.WriteResult(dir, res)
-	}
-}
-
-// feedbackNote is what the human said of the last settlement, for the agent
-// settling it again.
-func feedbackNote(feedback string) string {
-	if feedback == "" {
-		return ""
-	}
-	return "\n\nThe human rejected how this commit was settled last time, saying:\n\n" + feedback
-}
-
 // gateLines is how much of a failing gate's output shows under the notice.
 const gateLines = 20
 
 // prepare returns the goal's commits ready to land, building them again
-// when the goal's branches have moved since, or they failed the gate. When
-// the base changed the goal's own code, an agent settles each conflict git
-// leaves in rebasing the commits onto it.
+// when the goal's branches have moved since, or they failed the gate.
 func prepare(
 	ctx context.Context,
 	s *queue.Store,
 	env Env,
-	run runner.Runner,
-	exe string,
 	g *queue.Goal,
 	log io.Writer,
 ) (*finish.Result, error) {
@@ -594,36 +420,11 @@ func prepare(
 	if err != nil {
 		return nil, err
 	}
-	feedback, err := finish.LoadFeedback(s.GoalDir(g.Name))
-	if err != nil {
-		return nil, err
-	}
-	opts := finish.Options{
+	return finish.Build(ctx, s, g, finish.Options{
 		Gate:     cfg.Gate,
 		Timeout:  cfg.GateTimeout,
 		Progress: log,
-		Feedback: feedback,
-	}
-	if run != nil {
-		profile, err := cfg.Profile(resolveProfile)
-		if err != nil {
-			return nil, err
-		}
-		opts.Resolve = func(ctx context.Context, dir string, c finish.Conflict) error {
-			res, err := resolveConflict(ctx, run, profile, cfg, exe, g, dir, c, log)
-			if res != nil {
-				if rerr := recordSession(s.SessionsDir(g.Name), time.Now(), resolveProfile,
-					*res); rerr != nil {
-					_, _ = fmt.Fprintln(
-						log,
-						"  recording what the agent cost failed: "+rerr.Error(),
-					)
-				}
-			}
-			return err
-		}
-	}
-	return finish.Build(ctx, s, g, opts)
+	})
 }
 
 // jobDone ends a background job, such as preparing a goal to land, and
@@ -835,9 +636,9 @@ func (s *Status) start(j job) tea.Cmd {
 		return func() tea.Msg { return jobMsg{err: err} }
 	}
 	s.busy, s.busyGoal, s.logGoal, s.log = j.what, g.Name, g.Name, &jobLog{}
-	env, run, exe, ctx, log := s.env, s.env.Runner, s.env.Exe, s.ctx, s.log
+	env, ctx, log := s.env, s.ctx, s.log
 	return tea.Batch(func() tea.Msg {
-		flash, err := runFinish(ctx, store, env, run, exe, g, j.key, log)
+		flash, err := runFinish(ctx, store, env, g, j.key, log)
 		return jobMsg{flash: flash, err: err}
 	}, jobTick())
 }
@@ -880,8 +681,6 @@ func runFinish(
 	ctx context.Context,
 	s *queue.Store,
 	env Env,
-	run runner.Runner,
-	exe string,
 	g *queue.Goal,
 	key string,
 	log io.Writer,
@@ -909,7 +708,7 @@ func runFinish(
 			return "", err
 		}
 	}
-	res, err := prepare(ctx, s, env, run, exe, g, log)
+	res, err := prepare(ctx, s, env, g, log)
 	if err != nil {
 		if wasActive {
 			// Nothing is ready to land, so the goal isn't done after all.
@@ -917,23 +716,6 @@ func runFinish(
 			err = errors.Join(err, s.SaveGoal(g))
 		}
 		return "", err
-	}
-	if note, err := reviewSettlements(
-		ctx,
-		s,
-		env,
-		run,
-		exe,
-		g,
-		&res,
-		log,
-	); note != "" ||
-		err != nil {
-		if wasActive || g.State == queue.GoalDone {
-			g.State = queue.GoalActive
-			err = errors.Join(err, s.SaveGoal(g))
-		}
-		return note, err
 	}
 	if failed := res.Failing(); failed != nil {
 		// Landing never forces past the gate: an agent makes it pass.
@@ -944,9 +726,6 @@ func runFinish(
 		return fmt.Sprintf("%s fails the gate on %s's tip, so it didn't land: an agent is making "+
 				"it pass, and it comes back to Next once it does", g.Name, g.Base),
 			fmt.Errorf("the gate on %s:\n%s", failed.Branch, gate.Tail(failed.Output, gateLines))
-	}
-	if err := finish.SaveFeedback(s.GoalDir(g.Name), nil); err != nil {
-		return "", err
 	}
 	switch key {
 	case "F":

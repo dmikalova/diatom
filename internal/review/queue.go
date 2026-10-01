@@ -35,6 +35,9 @@ func Load(ctx context.Context, s *queue.Store, goal string) ([]Item, error) {
 	byCommit := map[string][]*queue.Task{}
 	var shas []string
 	for _, t := range tasks {
+		if t.SettledLanding() {
+			continue
+		}
 		for _, sha := range t.Commits {
 			if _, ok := byCommit[sha]; !ok {
 				shas = append(shas, sha)
