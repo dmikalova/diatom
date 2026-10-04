@@ -39,8 +39,9 @@ func TestSpendingByDay(t *testing.T) {
 	a.openEntry(entrySpending)
 	a.setFocus(partMain)
 	out := plain(a.render())
+	todayRow := fmt.Sprintf("%-18s %9s █", time.Now().Format("Mon Jan 2")+" · today", "$4.50")
 	for _, want := range []string{"💰 Spending", "Budget: $3.00 a day · $100 a week",
-		"today $4.50", "· today     $4.50 █"} {
+		"today $4.50", todayRow} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the spending lacks %q:\n%s", want, out)
 		}
