@@ -46,17 +46,30 @@ func (h *Harness) applyCI(
 			continue
 		}
 		t.CI = head
+		t.CILabels = finish.Label(ctx, repo.Store.Repo(), url, h.gh(), e.Labels, true)
 		if err := repo.Store.SaveTask(g.Name, t); err != nil {
 			return err
 		}
 		if err := repo.Store.AppendNote(g.Name, t.ID, "Waiting for CI",
-			fmt.Sprintf("%s\n\nDiatom pushed %s and is waiting for the checks on %s.",
-				e.Text, url, head[:min(len(head), 12)])); err != nil {
+			waitNote(e, url, head)); err != nil {
 			return err
 		}
 		h.log().Info("task waiting for checks", "goal", g.Name, "task", t.ID, "pr", url)
 	}
 	return nil
+}
+
+func waitNote(e session.Entry, url, head string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s\n\nDiatom pushed %s and is waiting for the checks on %s.\n",
+		e.Text, url, head[:min(len(head), 12)])
+	if len(e.Labels) > 0 {
+		fmt.Fprintf(&b, "\nIt put %s on the pull request after the push. A workflow that only "+
+			"reads its labels when a run starts may have started without them; if the checks "+
+			"come back without the jobs the label turns on, ask again and they will be there "+
+			"from the start.\n", strings.Join(e.Labels, ", "))
+	}
+	return b.String()
 }
 
 // openPR mirrors the goal's branch, opens its pull request if it has none,
@@ -118,6 +131,8 @@ func (h *Harness) checkTask(ctx context.Context, repo Repo, g *queue.Goal, t *qu
 	sha := t.CI
 	t.CI = ""
 	t.CIRounds++
+	finish.Label(ctx, dir, url, gh, t.CILabels, false)
+	t.CILabels = nil
 	body := ciNote(ctx, dir, sha, url, verdict, failing, gh)
 	if verdict == finish.ChecksFailed && t.CIRounds >= ciRounds {
 		if err := repo.Store.SaveTask(g.Name, t); err != nil {

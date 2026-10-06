@@ -207,7 +207,9 @@ func writeCI(b *strings.Builder) {
 		"request don't. If a task needs them, run `diatom task ci <id> \"<why>\"`: diatom pushes " +
 		"the goal's branch, opens its pull request as a draft if it has none, waits for the " +
 		"checks and puts the result on the task. They take longer than a session may wait, so " +
-		"the session ends and diatom runs the task again with the output.\n\n" +
+		"the session ends and diatom runs the task again with the output. When a label decides " +
+		"what the workflows run, add `--label <name>` to the ask: diatom puts it on for that " +
+		"run and takes it off with the verdict.\n\n" +
 		"You may read with `gh`: `gh pr view`, `gh pr checks`, `gh pr diff`, `gh run view` and " +
 		"`gh api` without a body. Everything that writes is blocked, and nothing but a human " +
 		"ever merges the pull request.\n\n")

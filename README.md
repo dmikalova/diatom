@@ -105,7 +105,7 @@ the mouse clicks and scrolls. Outside a text box:
   and opens from its footer
 - 💰 Spending, in that menu, shows each day's cost against the budget, and
   what landed goals came to in lines of code per dollar, which `diatom
-  ledger` prints goal by goal from a ledger kept in
+ledger` prints goal by goal from a ledger kept in
   `~/.local/state/diatom/landed.jsonl`
 - dragging in the main pane selects text within it, and copies it on release
 - `y` copies the selection, or else what has the keyboard, as cmd+c does in
@@ -239,7 +239,9 @@ it is made. Checks that only run on a pull request are the agents' blind spot:
 the gate runs in the worktree. An agent that needs them runs `diatom task ci`.
 Diatom opens the pull request as a draft if it has none, waits for the checks
 and puts the result, with what the failing ones printed, on the task; the task
-runs again with it. After three rounds a failing check becomes a question, so
+runs again with it. A `--label <name>` on the ask goes on the pull request for
+that run and comes off with the verdict, for repos whose workflows key off
+one. After three rounds a failing check becomes a question, so
 nothing spins on a flaky job. Agents may read with `gh pr view`, `gh pr checks`
 and `gh api` without a body; every gh command that writes is blocked, and only
 you ever merge.

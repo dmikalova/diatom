@@ -152,17 +152,20 @@ func taskConnect(args []string, stdout io.Writer) error {
 }
 
 func taskCI(args []string, stdout io.Writer) error {
+	labels, args := cutLabels(args)
 	if len(args) < 2 {
-		return fmt.Errorf("%w: task ci takes a task id and why the checks are needed", errUsage)
+		return fmt.Errorf("%w: task ci takes a task id, why the checks are needed, and any "+
+			"number of --label <name>", errUsage)
 	}
 	dir, spec, err := session.FromEnv()
 	if err != nil {
 		return err
 	}
 	e := session.Entry{
-		Type: session.EntryCI,
-		Task: args[0],
-		Text: strings.Join(args[1:], " "),
+		Type:   session.EntryCI,
+		Task:   args[0],
+		Text:   strings.Join(args[1:], " "),
+		Labels: labels,
 	}
 	if err := session.Append(dir, spec, e); err != nil {
 		return err
@@ -175,7 +178,30 @@ func taskCI(args []string, stdout io.Writer) error {
 			"the results.\n",
 		e.Task,
 	)
+	if len(labels) > 0 {
+		_, _ = fmt.Fprintf(stdout, "It puts %s on the pull request for this run, and takes them "+
+			"off again with the verdict.\n", strings.Join(labels, ", "))
+	}
 	return nil
+}
+
+// cutLabels takes the --label <name> and --label=<name> options out of args.
+func cutLabels(args []string) (labels, rest []string) {
+	for i := 0; i < len(args); i++ {
+		name, value, attached := strings.Cut(args[i], "=")
+		if name != "--label" && name != "-l" {
+			rest = append(rest, args[i])
+			continue
+		}
+		if !attached && i+1 < len(args) {
+			i++
+			value = args[i]
+		}
+		if value != "" {
+			labels = append(labels, value)
+		}
+	}
+	return labels, rest
 }
 
 // taskReport is the agent's task tool. In a revision session, marking a task

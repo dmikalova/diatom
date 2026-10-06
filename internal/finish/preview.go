@@ -86,6 +86,23 @@ func PRHead(ctx context.Context, dir, url string, gh GH) (string, error) {
 	return gh(ctx, dir, "pr", "view", url, "--json", "headRefOid", "--jq", ".headRefOid")
 }
 
+// Label puts labels on a pull request, or takes them off, and returns the
+// ones it changed. A repo's workflows may key off a label, so a CI ask can
+// carry them (ADR 0014); only diatom may write them.
+func Label(ctx context.Context, dir, url string, gh GH, labels []string, on bool) []string {
+	flag := "--remove-label"
+	if on {
+		flag = "--add-label"
+	}
+	var done []string
+	for _, name := range labels {
+		if _, err := gh(ctx, dir, "pr", "edit", url, flag, name); err == nil {
+			done = append(done, name)
+		}
+	}
+	return done
+}
+
 // CheckOutput is what the failing checks printed, as far as gh will say
 // without the run logs, which need a workflow run rather than a check.
 func CheckOutput(ctx context.Context, dir, sha string, gh GH, failing []string) string {

@@ -103,6 +103,9 @@ type Entry struct {
 	Tree string `json:"tree,omitempty"`
 	// Server is the connector an EntryConnect asks for, by catalog name.
 	Server string `json:"server,omitempty"`
+	// Labels are the pull request labels a CI ask needs, which decide what
+	// the repo's workflows run (ADR 0014).
+	Labels []string `json:"labels,omitempty"`
 	// Goal, Title, Workstream, After and Profile describe a task triage adds
 	// to a goal. Goal alone is the goal feedback is for, and Title alone a
 	// goal triage starts, with its Description.

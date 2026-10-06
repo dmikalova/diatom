@@ -167,6 +167,9 @@ type Task struct {
 	// scheduled, which parks it until diatom has the verdict (ADR 0014).
 	CI       string `yaml:"ci,omitempty"`
 	CIRounds int    `yaml:"ciRounds,omitempty"`
+	// CILabels are the labels diatom put on the pull request for this round,
+	// and takes off again with the verdict. Only the ones it added itself.
+	CILabels []string `yaml:"ciLabels,omitempty"`
 	// Commits are the commits made by sessions that worked on the task. They
 	// turn a later rejection into a revision with the right context.
 	Commits []string `yaml:"commits,omitempty"`
