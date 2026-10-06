@@ -90,64 +90,69 @@ var shells = []string{"sh", "bash", "zsh", "dash", "ksh", "fish"}
 // runs even inside double quotes.
 var substitution = regexp.MustCompile("\\$\\(([^)]*)\\)|`([^`]*)`")
 
-// BlockedGit returns the first git command in a shell command line that could
-// change the repository, or "" when there is none. It splits the line on
+// BlockedWrite returns the first git or gh command in a shell command line
+// that could change the repository or the remote, with the tool it runs
+// ("git" or "gh"), or "" when there is none. It splits the line on
 // operators and follows the places a quoted string is run as a command:
 // `sh -c` and the other shells, eval, command substitutions and find -exec.
 // Anywhere else a quoted string is only text, so a task note that mentions
 // `git commit` is not mistaken for one.
-func BlockedGit(line string) string {
-	for _, cmd := range split(line) {
-		if b := blockedCommand(cmd); b != "" {
-			return b
+func BlockedWrite(line string) (cmd, tool string) {
+	for _, c := range split(line) {
+		if b, t := blockedCommand(c); b != "" {
+			return b, t
 		}
-		for _, w := range cmd {
+		for _, w := range c {
 			for _, m := range substitution.FindAllStringSubmatch(w, -1) {
-				if b := BlockedGit(m[1] + m[2]); b != "" {
-					return b
+				if b, t := BlockedWrite(m[1] + m[2]); b != "" {
+					return b, t
 				}
 			}
 		}
 	}
-	return ""
+	return "", ""
 }
 
 // blockedCommand checks one simple command, following the ones it runs.
-func blockedCommand(cmd []string) string {
+func blockedCommand(cmd []string) (string, string) {
 	words := cmd
 	for len(words) > 0 && (strings.Contains(words[0], "=") && !strings.HasPrefix(words[0], "-") ||
 		slices.Contains(prefixes, words[0])) {
 		words = words[1:]
 	}
 	if len(words) == 0 {
-		return ""
+		return "", ""
 	}
 	name, args := filepath.Base(words[0]), words[1:]
 	switch {
 	case name == "git":
 		if !gitReadOnly(args) {
-			return strings.Join(cmd, " ")
+			return strings.Join(cmd, " "), "git"
+		}
+	case name == "gh":
+		if !ghCommandReadOnly(args) {
+			return strings.Join(cmd, " "), "gh"
 		}
 	case name == "eval":
-		return BlockedGit(strings.Join(args, " "))
+		return BlockedWrite(strings.Join(args, " "))
 	case slices.Contains(shells, name):
 		for i, a := range args {
 			if strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") &&
 				strings.Contains(a, "c") &&
 				i+1 < len(args) {
-				return BlockedGit(args[i+1])
+				return BlockedWrite(args[i+1])
 			}
 		}
 	case name == "find":
 		for i, a := range args {
 			if a == "-exec" || a == "-execdir" || a == "-ok" || a == "-okdir" {
-				if b := blockedCommand(args[i+1:]); b != "" {
-					return b
+				if b, t := blockedCommand(args[i+1:]); b != "" {
+					return b, t
 				}
 			}
 		}
 	}
-	return ""
+	return "", ""
 }
 
 // gitReadOnly reports whether git with these arguments only reads.

@@ -65,8 +65,9 @@ type Landing struct {
 type PRState struct {
 	URL string `yaml:"url"`
 	// State is GitHub's: OPEN, MERGED or CLOSED.
-	State  string `yaml:"state,omitempty"`
-	Checks string `yaml:"checks,omitempty"`
+	State   string   `yaml:"state,omitempty"`
+	Checks  string   `yaml:"checks,omitempty"`
+	Failing []string `yaml:"failing,omitempty"`
 }
 
 // Upstream is the remote-tracking branch the goal lands on.
@@ -311,7 +312,7 @@ func prState(ctx context.Context, gh GH, dir string, pr *PRState) error {
 		checks = append(checks, c)
 	}
 	pr.State = v.State
-	pr.Checks, _ = verdict(checks)
+	pr.Checks, pr.Failing = verdict(checks)
 	return nil
 }
 

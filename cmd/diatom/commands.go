@@ -76,6 +76,10 @@ func cmdTask(ctx context.Context, args []string, stdin io.Reader, stdout io.Writ
 	switch sub, rest := args[0], args[1:]; sub {
 	case session.EntryDone, session.EntryNote, session.EntryAsk, session.EntryManual:
 		return taskReport(ctx, sub, rest, stdout)
+	case session.EntryConnect:
+		return taskConnect(rest, stdout)
+	case session.EntryCI:
+		return taskCI(rest, stdout)
 	case "add-task", "after", "feedback", "new-goal", "plan":
 		return planningReport(sub, rest, stdin, stdout)
 	case "goals":
@@ -109,6 +113,69 @@ func taskGoals(ctx context.Context, args []string, stdout io.Writer) error {
 		return fmt.Errorf("no goal %q; the goals are %s", args[0], strings.Join(names, ", "))
 	}
 	return roster.Detail(stdout, s, args[0])
+}
+
+// taskConnect records that a task needs a connector the session doesn't
+// have. The harness runs the batch again with it attached (ADR 0013).
+func taskConnect(args []string, stdout io.Writer) error {
+	if len(args) < 3 {
+		return fmt.Errorf(
+			"%w: task connect takes a task id, a connector's name and why it is needed",
+			errUsage,
+		)
+	}
+	dir, spec, err := session.FromEnv()
+	if err != nil {
+		return err
+	}
+	if !slices.Contains(spec.Connectors, args[1]) {
+		return fmt.Errorf("no connector %q in this repo; it has %s",
+			args[1], strings.Join(spec.Connectors, ", "))
+	}
+	e := session.Entry{
+		Type:   session.EntryConnect,
+		Task:   args[0],
+		Server: args[1],
+		Text:   strings.Join(args[2:], " "),
+	}
+	if err := session.Append(dir, spec, e); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(
+		stdout,
+		"Task %s will get the %s connector. This session can't, so stop working on that task and "+
+			"end the session once the others are done; diatom runs it again with the connector.\n",
+		e.Task,
+		e.Server,
+	)
+	return nil
+}
+
+func taskCI(args []string, stdout io.Writer) error {
+	if len(args) < 2 {
+		return fmt.Errorf("%w: task ci takes a task id and why the checks are needed", errUsage)
+	}
+	dir, spec, err := session.FromEnv()
+	if err != nil {
+		return err
+	}
+	e := session.Entry{
+		Type: session.EntryCI,
+		Task: args[0],
+		Text: strings.Join(args[1:], " "),
+	}
+	if err := session.Append(dir, spec, e); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(
+		stdout,
+		"Diatom will push the goal's branch, open its pull request if it has none, and put the "+
+			"checks on task %s. They take longer than this session may wait, so stop working on "+
+			"that task and end the session once the others are done; diatom runs it again with "+
+			"the results.\n",
+		e.Task,
+	)
+	return nil
 }
 
 // taskReport is the agent's task tool. In a revision session, marking a task

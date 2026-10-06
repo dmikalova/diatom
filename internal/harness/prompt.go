@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dmikalova/diatom/internal/config"
 	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/roster"
@@ -30,6 +31,10 @@ type PromptInput struct {
 	Guides []string
 	// Goals are the repo's goals, this one included.
 	Goals []roster.Brief
+	// Connectors is the repo's catalog of MCP servers, and Attached the ones
+	// this session already has (ADR 0013).
+	Connectors []config.Connector
+	Attached   []string
 }
 
 // Prompt builds a batch's instructions. ADR 0006 has prompts refer to files
@@ -116,6 +121,8 @@ func Prompt(in PromptInput) string {
 	}
 
 	writeOthers(&b, in)
+	writeConnectors(&b, in)
+	writeCI(&b)
 
 	switch in.Batch.Kind {
 	case queue.Revision:
@@ -166,6 +173,44 @@ func Prompt(in PromptInput) string {
 	}
 	b.WriteString("\nWhen every task is done or asked, end the session.\n")
 	return b.String()
+}
+
+// writeConnectors lists the repo's MCP servers by name and purpose, and says
+// how to ask for one. The catalog costs a line each; a server's tools cost
+// their schemas, so only the attached ones are loaded (ADR 0013).
+func writeConnectors(b *strings.Builder, in PromptInput) {
+	if len(in.Connectors) == 0 {
+		return
+	}
+	b.WriteString("## Connectors\n\nThese MCP servers exist in this repo:\n\n")
+	for _, c := range in.Connectors {
+		attached := ""
+		if slices.Contains(in.Attached, c.Name) {
+			attached = " — connected"
+		}
+		fmt.Fprintf(b, "- `%s`: %s%s\n", c.Name, c.Purpose, attached)
+	}
+	if len(in.Attached) == 0 {
+		b.WriteString("\nNone of them is connected: their tools are not loaded, because carrying " +
+			"a server you don't call costs context on every turn.\n")
+	}
+	b.WriteString("\nIf a task needs one that isn't connected, run " +
+		"`diatom task connect <id> <name> \"<why>\"`. The session ends and diatom runs it again " +
+		"with that server, so ask before you do the work, not after, and only when the data is " +
+		"live and you can't get it from the repo.\n\n")
+}
+
+// writeCI says how to get the checks that only run on a pull request, which
+// diatom opens and reads for the agent (ADR 0014).
+func writeCI(b *strings.Builder) {
+	b.WriteString("## CI\n\nThe gate runs here, in the worktree. Checks that only run on a pull " +
+		"request don't. If a task needs them, run `diatom task ci <id> \"<why>\"`: diatom pushes " +
+		"the goal's branch, opens its pull request as a draft if it has none, waits for the " +
+		"checks and puts the result on the task. They take longer than a session may wait, so " +
+		"the session ends and diatom runs the task again with the output.\n\n" +
+		"You may read with `gh`: `gh pr view`, `gh pr checks`, `gh pr diff`, `gh run view` and " +
+		"`gh api` without a body. Everything that writes is blocked, and nothing but a human " +
+		"ever merges the pull request.\n\n")
 }
 
 // writeOthers lists the repo's other goals, so an agent knows what they
@@ -291,6 +336,8 @@ func (h *Harness) planningPrompt(repo Repo, g *queue.Goal, in PromptInput) (stri
 		b.WriteString("\n")
 		writeOthers(&b, in)
 	}
+	b.WriteString("\n")
+	writeConnectors(&b, in)
 	if len(in.Guides) > 0 {
 		b.WriteString("\n## Directory instructions\n\n")
 		for _, gd := range in.Guides {
@@ -457,6 +504,15 @@ func writeGrilling(b *strings.Builder, repo Repo, in PromptInput) {
 	}
 	slices.Sort(names)
 	fmt.Fprintf(b, "A task's profile is optional and one of: %s.\n\n", strings.Join(names, ", "))
+	if len(in.Connectors) > 0 {
+		b.WriteString(
+			"A task may also carry `mcpServers`, a list of connectors from the catalog below. " +
+				"Give a task one only when the data it works from is live, such as a current error rate: " +
+				"what you can look up now belongs in its `body` as plain text, so the task needs no " +
+				"connector at all. Every connector a task carries costs its session context, so most tasks " +
+				"should carry none.\n\n",
+		)
+	}
 	drafts := plan.DraftsDir(repo.Store.GoalDir(in.Goal.Name))
 	if dir := repo.Config.ADR.Dir; dir != "" {
 		fmt.Fprintf(

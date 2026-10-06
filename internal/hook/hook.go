@@ -1,11 +1,12 @@
 // Package hook implements the two Claude Code hooks diatom gives every agent
 // session (ADR 0005). PreToolUse blocks git commands that change the
-// repository, because the harness does every git operation, commands that
-// background or sleep to wait out the command time limit, and file tools
-// reaching into diatom's state beyond the session's own. Stop runs the gate
-// before the session may end and sends a failure back to the agent, which
-// keeps fixing in the same session: the cheapest retry, because nothing has to
-// be reloaded.
+// repository and gh commands that change anything on the remote, because the
+// harness does every git operation and owns the goal's pull request
+// (ADR 0014), commands that background or sleep to wait out the command time
+// limit, and file tools reaching into diatom's state beyond the session's own.
+// Stop runs the gate before the session may end and sends a failure back to
+// the agent, which keeps fixing in the same session: the cheapest retry,
+// because nothing has to be reloaded.
 package hook
 
 import (
@@ -47,17 +48,28 @@ func PreToolUse(in io.Reader, out io.Writer, scope Scope) error {
 	var reason string
 	if ev.ToolName != "Bash" {
 		reason = scope.deny(ev)
-	} else if blocked := BlockedGit(ev.ToolInput.Command); blocked != "" {
-		reason = fmt.Sprintf(
-			"diatom runs every git operation that changes the repository, so `%s` is blocked. "+
-				"Only edit files: when you finish, the harness runs the gate and commits your work. "+
-				"Never merge or pull the base branch yourself: diatom merges what lands on it into the goal "+
-				"as soon as it does, and into your worktree before each session. "+
-				"Read-only git commands such as status, diff, log and show are allowed, and so are the ones "+
-				"that only change files: `git restore <file>` or `git checkout -- <file>` to undo your edits, "+
-				"`git show <rev>:<file> > <file>` for a file as a commit had it, and `git rm` and `git mv`.",
-			blocked,
-		)
+	} else if blocked, tool := BlockedWrite(ev.ToolInput.Command); blocked != "" {
+		if tool == "gh" {
+			reason = fmt.Sprintf(
+				"`%s` is blocked: diatom opens and updates the goal's pull request itself, and "+
+					"nothing you run may merge, close or comment on one. Run `diatom task ci <id> "+
+					"\"<why>\"` to have diatom push the goal's branch, open its pull request if it has "+
+					"none, and bring the checks back to you. Read-only gh commands such as "+
+					"`gh pr view`, `gh pr checks`, `gh run view` and `gh api` without a body are allowed.",
+				blocked,
+			)
+		} else {
+			reason = fmt.Sprintf(
+				"diatom runs every git operation that changes the repository, so `%s` is blocked. "+
+					"Only edit files: when you finish, the harness runs the gate and commits your work. "+
+					"Never merge or pull the base branch yourself: diatom merges what lands on it into the goal "+
+					"as soon as it does, and into your worktree before each session. "+
+					"Read-only git commands such as status, diff, log and show are allowed, and so are the ones "+
+					"that only change files: `git restore <file>` or `git checkout -- <file>` to undo your edits, "+
+					"`git show <rev>:<file> > <file>` for a file as a commit had it, and `git rm` and `git mv`.",
+				blocked,
+			)
+		}
 	} else if waits := BlockedWait(ev.ToolInput.Command); waits != "" {
 		reason = fmt.Sprintf(
 			"`%s` is blocked: commands run in the foreground, and nothing may be backgrounded or "+

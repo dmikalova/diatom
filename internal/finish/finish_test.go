@@ -184,7 +184,7 @@ func TestBuildStacksWorkstreams(t *testing.T) {
 		t.Fatalf("result = %+v", res)
 	}
 	engine, cards := res.Stack[0], res.Stack[1]
-	if engine.Branch != "diatom/set/pr/engine" || cards.Branch != "diatom/set/pr/cards" {
+	if engine.Branch != "diatom/set/review" || cards.Branch != "diatom/set/pr/cards" {
 		t.Errorf("branches = %s, %s", engine.Branch, cards.Branch)
 	}
 	if got := f.subjects(engine.Branch); !slices.Equal(
@@ -240,7 +240,7 @@ func TestBuildFallsBackToOrderOfWork(t *testing.T) {
 	f.git("branch", "diatom/set/pr/old", "main")
 
 	res := f.build(Options{})
-	if len(res.Stack) != 1 || res.Stack[0].Branch != res.Final ||
+	if len(res.Stack) != 1 || res.Stack[0].Branch != ReviewBranch(f.goal) ||
 		!strings.Contains(res.Unstacked, "feat: strengthen ward") {
 		t.Fatalf("result = %+v", res)
 	}
@@ -325,7 +325,7 @@ func TestPushAndOpenPRs(t *testing.T) {
 	f.git("push", "--quiet", "origin", "main")
 
 	var calls []string
-	open := map[string]bool{"diatom/set/pr/engine": true}
+	open := map[string]bool{"diatom/set/review": true}
 	gh := func(_ context.Context, _ string, args ...string) (string, error) {
 		calls = append(calls, strings.Join(args[:min(len(args), 6)], " "))
 		switch args[1] {
@@ -347,10 +347,10 @@ func TestPushAndOpenPRs(t *testing.T) {
 		t.Errorf("urls = %v", urls)
 	}
 	wantCalls := []string{
-		"pr view diatom/set/pr/engine --json url --jq",
-		"pr edit diatom/set/pr/engine --base main",
+		"pr view diatom/set/review --json url --jq",
+		"pr edit diatom/set/review --base main",
 		"pr view diatom/set/pr/cards --json url --jq",
-		"pr create --head diatom/set/pr/cards --base diatom/set/pr/engine",
+		"pr create --head diatom/set/pr/cards --base diatom/set/review",
 	}
 	if !slices.Equal(calls, wantCalls) {
 		t.Errorf("gh calls:\n%s", strings.Join(calls, "\n"))

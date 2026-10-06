@@ -58,6 +58,10 @@ type Spec struct {
 	// ChainContext is the context, in tokens, past which marking a task
 	// done releases the session's other tasks to fresh sessions; 0 never.
 	ChainContext int `json:"chainContext,omitempty"`
+	// Connectors are the repo's catalog names, which bound what the session
+	// may ask for, and Attached the ones it already has (ADR 0013).
+	Connectors []string `json:"connectors,omitempty"`
+	Attached   []string `json:"attached,omitempty"`
 }
 
 // Create makes the session directory and writes its spec.
@@ -97,6 +101,8 @@ type Entry struct {
 	// Tree is the worktree's files when a revision was marked done, which
 	// splits a session's work into one fixup per revision.
 	Tree string `json:"tree,omitempty"`
+	// Server is the connector an EntryConnect asks for, by catalog name.
+	Server string `json:"server,omitempty"`
 	// Goal, Title, Workstream, After and Profile describe a task triage adds
 	// to a goal. Goal alone is the goal feedback is for, and Title alone a
 	// goal triage starts, with its Description.
@@ -132,6 +138,12 @@ const (
 	// EntryRelease hands a task the session hasn't started back to the
 	// queue, for a fresh session, once the session's context is large.
 	EntryRelease = "release"
+	// EntryConnect asks for a connector the task needs, by catalog name. The
+	// session ends and the batch runs again with it (ADR 0013).
+	EntryConnect = "connect"
+	// EntryCI asks diatom to open the goal's pull request and bring back its
+	// checks. The session ends and the task waits for them (ADR 0014).
+	EntryCI = "ci"
 )
 
 // Append adds an entry to the session's report, after checking that it names
@@ -177,6 +189,10 @@ type Report struct {
 	// Adds, Feedback, Goals, Afters and Plans are what triage and grilling
 	// handed in, in order.
 	Adds, Feedback, Goals, Afters, Plans []Entry
+	// Connects are the connectors the session asked for, in order.
+	Connects []Entry
+	// CI are the asks for the goal's pull request and its checks, in order.
+	CI []Entry
 	// Released are the tasks handed back unstarted, for fresh sessions.
 	Released map[string]bool
 }
@@ -235,6 +251,10 @@ func ReadReport(dir string) (Report, error) {
 			r.Plans = append(r.Plans, e)
 		case EntryRelease:
 			r.Released[e.Task] = true
+		case EntryConnect:
+			r.Connects = append(r.Connects, e)
+		case EntryCI:
+			r.CI = append(r.CI, e)
 		}
 	}
 	return r, sc.Err()

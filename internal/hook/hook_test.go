@@ -16,7 +16,7 @@ import (
 	"github.com/dmikalova/diatom/internal/session"
 )
 
-func TestBlockedGit(t *testing.T) {
+func TestBlockedWrite(t *testing.T) {
 	allowed := []string{
 		"git status",
 		"git diff HEAD~1 -- engine/",
@@ -45,10 +45,18 @@ func TestBlockedGit(t *testing.T) {
 		`git log --grep "git commit"`,
 		`grep -rn "git push" .`,
 		`find . -name '*.go' -exec gofmt -l {} +`,
+		"gh pr view 12 --json state",
+		"gh pr checks 12",
+		"gh pr diff 12 | head -50",
+		"gh run view 9 --log-failed",
+		"gh api repos/o/r/commits/abc/check-runs",
+		"gh api -X GET repos/o/r/pulls",
+		"gh auth status",
+		"gh",
 	}
 	for _, c := range allowed {
-		if got := BlockedGit(c); got != "" {
-			t.Errorf("BlockedGit(%q) = %q, want allowed", c, got)
+		if got, _ := BlockedWrite(c); got != "" {
+			t.Errorf("BlockedWrite(%q) = %q, want allowed", c, got)
 		}
 	}
 	blocked := []string{
@@ -87,10 +95,24 @@ func TestBlockedGit(t *testing.T) {
 		`echo "$(git commit -m x)"`,
 		"echo \"`git push`\"",
 		`find . -exec git reset {} \;`,
+		"gh pr merge 12 --squash",
+		"gh pr create --fill",
+		"gh pr edit 12 --add-label ci:affect-all",
+		"gh pr close 12",
+		"gh pr comment 12 --body hi",
+		"gh pr ready 12",
+		"gh run rerun 9",
+		"gh workflow run deploy.yml",
+		"gh release create v1",
+		"gh repo delete o/r",
+		"gh api -X DELETE repos/o/r",
+		"gh api repos/o/r/issues -f title=x",
+		"gh extension install foo/bar",
+		"sh -c 'gh pr merge 12'",
 	}
 	for _, c := range blocked {
-		if got := BlockedGit(c); got == "" {
-			t.Errorf("BlockedGit(%q) allowed it", c)
+		if got, _ := BlockedWrite(c); got == "" {
+			t.Errorf("BlockedWrite(%q) allowed it", c)
 		}
 	}
 }

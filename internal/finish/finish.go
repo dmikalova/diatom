@@ -123,6 +123,12 @@ func (o Options) step(format string, args ...any) {
 // FinalBranch is the branch a goal is laid out on.
 func FinalBranch(g *queue.Goal) string { return "diatom/" + g.Name + "/final" }
 
+// ReviewBranch is the branch the goal's pull request lives on, from its first
+// commit to its merge. GitHub cannot move a pull request's head branch, so
+// the first of the stack has to sit on a branch chosen before there is a
+// stack, for the pull request opened early to survive landing (ADR 0014).
+func ReviewBranch(g *queue.Goal) string { return "diatom/" + g.Name + "/review" }
+
 // prBranch is the branch of one pull request of a goal's stack.
 func prBranch(g *queue.Goal, ws string) string { return "diatom/" + g.Name + "/pr/" + ws }
 
@@ -220,12 +226,11 @@ func Build(ctx context.Context, s *queue.Store, g *queue.Goal, opts Options) (*R
 	}
 	if len(stack) == 1 {
 		stack[0].Workstream = ""
-		stack[0].Branch = res.Final
-	} else {
-		for i := range stack {
-			stack[i].Branch = prBranch(g, stack[i].Workstream)
-		}
 	}
+	for i := range stack {
+		stack[i].Branch = prBranch(g, stack[i].Workstream)
+	}
+	stack[0].Branch = ReviewBranch(g)
 	res.Stack = stack
 
 	if opts.Gate != "" {

@@ -20,6 +20,7 @@ The scheduler core runs:
 - the reviewer, with revisions landing as fixups (ADRs 0001 and 0008)
 - triage of intake, and grilling with plan sign-off (ADRs 0009 and 0010)
 - landing done goals as a stack of pull requests (ADR 0003)
+- a pull request per goal, with its checks read back to the agent (ADR 0014)
 - suspending and resuming sessions, and updating itself (ADR 0012)
 
 ## Install
@@ -31,6 +32,17 @@ go install github.com/dmikalova/diatom/cmd/diatom@latest
 Installed this way, diatom can keep itself on the latest release: set
 `autoUpdate = true` in `~/.config/diatom/config.toml`. A diatom built from a
 checkout never updates itself.
+
+To run your own changes, build the checkout and put that binary first on your
+`PATH`:
+
+```bash
+go build -o ~/.local/bin/diatom ./cmd/diatom      # from the checkout
+```
+
+`go run ./cmd/diatom` works for a one-off command, but not for the window: the
+scheduler puts its own executable on each agent's `PATH` as the task tool, and
+`go run` deletes the binary when it exits.
 
 diatom keeps its state in `.diatom/` inside each repo, which must be ignored
 through the global excludes file:
@@ -112,7 +124,9 @@ agent's fix lands as a `fixup!` commit that comes back for review.
 A goal ready to finish comes up in Next. `P` merges it into the base branch,
 and `F` opens it as a stack of pull requests instead, one per workstream on
 `diatom/<goal>/pr/<ws>`, each stacked on the one before; `d` only marks it
-done, to land later. Goals follow their base branch as it moves: whenever
+done, to land later. The first of that stack is the pull request the goal has
+had all along, on `diatom/<goal>/review`, so landing reuses it rather than
+leaving a stray one behind. Goals follow their base branch as it moves: whenever
 something lands on it, whether diatom pushed it or it was fetched from the
 remote, the scheduler merges it into each goal's integration branch, and each
 workstream takes that in before its next session. When that conflicts, an
@@ -182,6 +196,7 @@ instructions = ["~/notes/go.md"] # more files for every agent's system prompt
 skills = ["grill-me", "grilling"] # skills every session may load: names in ~/.claude/skills, or paths
 editor = "nvim"                   # what the reviewer's o opens a hunk's file in, at its line
 land = "merge"                    # how goals land: "merge" into their base, "prs"; unset offers both
+maxConnectors = 2                 # MCP servers one session may carry; 0 doesn't cap them
 
 [budget]                          # dollars; once one is spent, nothing new starts
 day = 50                          # today
@@ -195,19 +210,39 @@ node = "npm test"
 [fixes]                           # the fix of each kind of repo that sets none
 go = "mage ci:fix"
 
-[mcpServers.docs]                 # the only MCP servers agents get
+[mcpServers.docs]                 # the only MCP servers agents may ask for
 command = "docs-mcp"
+purpose = "the API docs"          # one line; how an agent knows to ask for it
 ```
 
 Agent sessions load none of your own Claude Code settings, skills, plugins or
 MCP servers (ADR 0011). They get the instruction files above, the `AGENTS.md`
 of every directory from your home directory down to the repo's, the repo's
-`CLAUDE.md` and project settings, the MCP servers above and the skills above
-and in their profile. Any config file in the walk-up can set `skills`,
-`instructions` and `mcpServers`, `~/.config/diatom/config.toml` for every repo;
-a nearer file's list replaces a further one's, while MCP servers add up by
-name. A nested `AGENTS.md`, such as `internal/engine/AGENTS.md`, isn't loaded:
-the prompt names it for the agent to read before working in that directory.
+`CLAUDE.md` and project settings, and the skills above and in their profile.
+Any config file in the walk-up can set `skills`, `instructions` and
+`mcpServers`, `~/.config/diatom/config.toml` for every repo; a nearer file's
+list replaces a further one's, while MCP servers add up by name. A nested
+`AGENTS.md`, such as `internal/engine/AGENTS.md`, isn't loaded: the prompt
+names it for the agent to read before working in that directory.
+
+No session starts with an MCP server (ADR 0013). Every prompt lists the servers
+above by name and purpose, which costs a line each, but a server's tools are
+loaded only for the sessions that need them, which is what costs context. A
+plan gives a task `mcpServers` when the data it works from is live, and an
+agent that finds it needs one runs `diatom task connect`: the session ends, and
+diatom runs the batch again with that server. A batch carries the union of its
+tasks' servers, up to `maxConnectors`.
+
+Every goal has one pull request, on `diatom/<goal>/review` (ADR 0014). Diatom
+pushes that branch after each integration, so your work is on the remote while
+it is made. Checks that only run on a pull request are the agents' blind spot:
+the gate runs in the worktree. An agent that needs them runs `diatom task ci`.
+Diatom opens the pull request as a draft if it has none, waits for the checks
+and puts the result, with what the failing ones printed, on the task; the task
+runs again with it. After three rounds a failing check becomes a question, so
+nothing spins on a flaky job. Agents may read with `gh pr view`, `gh pr checks`
+and `gh api` without a body; every gh command that writes is blocked, and only
+you ever merge.
 
 Only `~/.config/diatom/config.toml` may set these:
 

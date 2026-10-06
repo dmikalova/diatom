@@ -12,7 +12,7 @@ Every commit has to pass the repo's checks, so downstream workstreams and review
 
 - **The gate is a configurable command per repo** (`mage check` for vex). It covers lint, build and tests. Formatting steps in the gate may rewrite files, so the harness runs it and then commits the result.
 - **Agent sessions get two Claude Code hooks from diatom:**
-  - **PreToolUse** blocks git commands that change the repository, such as commit, merge, checkout and reset.
+  - **PreToolUse** blocks git commands that change the repository, such as commit, merge, checkout and reset, and gh commands that change anything on the remote (ADR 0014).
     It also blocks backgrounding a command (`&`, `nohup`, `setsid`) and `sleep`. Every command is stopped at the command time limit, and a headless session can't be woken when a background command ends, so an agent that backgrounds a long command and sleeps on its log is only working around the limit. It should run a narrower check instead and leave the whole gate to the Stop hook.
     It also keeps file tools (Read, Grep, Glob and the edit tools) out of `.diatom/`, apart from the session's own worktree, its task files and its goal's ADR drafts. Other goals are known from the prompt and `diatom task goals` (ADR 0011), not from their files. Bash isn't checked for this, because what a command reads can't be told reliably.
   - **Stop** runs the gate before the session may end. On failure, the output goes back to the agent, which keeps fixing in the same session. That is the cheapest retry, because nothing has to be reloaded.

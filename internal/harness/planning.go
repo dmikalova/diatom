@@ -548,7 +548,7 @@ func (h *Harness) startGoal(
 	grill := tasks[0]
 	p, err := plan.Parse([]byte(e.Plan))
 	if err == nil {
-		err = p.Validate(repo.Config.Profiles)
+		err = p.Validate(repo.Config)
 	}
 	if err != nil {
 		// Grilling starts from the draft instead.
@@ -582,7 +582,7 @@ func (h *Harness) applyPlan(
 	e := report.Plans[len(report.Plans)-1]
 	p, err := plan.Parse([]byte(e.Text))
 	if err == nil {
-		err = p.Validate(repo.Config.Profiles)
+		err = p.Validate(repo.Config)
 	}
 	if err != nil {
 		return planned, repo.Store.AppendNote(

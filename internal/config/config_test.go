@@ -154,7 +154,8 @@ func TestPathsExpand(t *testing.T) {
 func TestLoadContextDefaults(t *testing.T) {
 	root, paths := tree(t)
 	write(t, paths.XDG, "skills = [\"grill-me\", \"grilling\"]\n")
-	write(t, filepath.Join(root, DirName), "[mcpServers.docs]\ncommand = \"docs-mcp\"\n")
+	write(t, filepath.Join(root, DirName),
+		"[mcpServers.docs]\ncommand = \"docs-mcp\"\npurpose = \"the API docs\"\n")
 	c, err := Load(root, paths)
 	if err != nil {
 		t.Fatal(err)

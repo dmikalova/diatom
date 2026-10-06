@@ -1,0 +1,29 @@
+# 14. Every goal has a pull request, and diatom drives it
+
+This decision records how a goal's work reaches CI before it lands, and who may touch the pull request.
+
+## Context
+
+A repo's gate runs locally, in the worktree. Some checks only exist on a pull request: a workflow with `on: pull_request`, a job that needs the repo's secrets, a build matrix too slow to run on every commit. A task whose whole purpose is to change what CI does cannot tell whether it worked.
+
+Until now diatom pushed nothing until a goal landed. The integration branch was local, so there was no branch to open a pull request from. An agent that needed one found `git push` blocked (ADR 0005), and the only way out was to hand the push, the `gh pr create` and the reading of the results to the human as manual steps. That is three round trips through a person for something mechanical.
+
+The block was also narrower than it looked. PreToolUse inspected `git` and nothing else, so `gh` was never checked: an agent with Bash could merge the goal's own pull request, close it, or write to the API directly. Nothing had stopped it; nothing had tried.
+
+## Decision
+
+**Every goal has one pull request on `diatom/<goal>/review`. diatom opens it, pushes to it and reads its checks. No agent touches it, and nothing diatom runs ever merges it.**
+
+- **The branch is pushed for every goal, not every task.** After each integration, diatom force-pushes the integration branch's tip to `diatom/<goal>/review` with a lease. The branch is therefore always there to open a pull request from.
+- **The pull request is asked for, not planned.** Grilling cannot know which task will need CI evidence, so an agent that needs it runs `diatom task ci <id> "<why>"`. The first ask opens the pull request as a draft against the goal's base; a later ask only reads the checks again.
+- **diatom waits, not the agent.** The session ends on the ask, as it does for a connector (ADR 0013). The harness reads the checks on its own pass, the one that already watches a landing. The verdict goes into the task's body and the task returns to the queue, so the next session starts with real CI output. An agent blocking on a ten-minute run would burn model time and hit the command timeout besides.
+- **A failed check goes back to the agent, and the rounds are capped.** diatom reports the failing checks and what they printed. The agent decides whether to fix the code or ask for another run, and an agent that reads the same failure twice judges a flake better than a heuristic could. Past the cap the failure becomes a question, because a goal must not spin on a flaky job at model prices.
+- **A failed push is a question, not a task.** A push to a branch diatom owns fails because `gh` is not authenticated, because the branch is protected, or because there is no network. None of those is something an agent can fix, and a session spent concluding that costs more than asking.
+- **Landing reuses the pull request.** The stack's first pull request is on `diatom/<goal>/review`, the same branch, so landing force-pushes the replayed commits to it and the pull request follows. GitHub does not allow a pull request's head branch to change, so reuse is only possible by choosing the branch up front, before the goal has a stack to name it after. A goal of one workstream has that pull request and no other; a goal of several stacks the rest on `diatom/<goal>/pr/<workstream>` behind it.
+- **`gh` is on an allowlist, like git.** Only read-only commands pass: `pr view`, `pr checks`, `pr diff`, `run view`, `gh api` without a method or a body, and their like. `pr merge`, `pr create`, `pr edit`, `pr comment`, `run rerun`, `workflow run` and everything else are blocked, with the task tool named as the way to get what the agent wanted.
+
+**Almost none of this is written down.** The branch name is the pull request's identity: it comes from the goal's name, and `gh pr view <branch>` finds the pull request from it. Pushing, opening and reading the checks are therefore idempotent calls with no record behind them. A record would have had nowhere to live: the layout in `finish.yaml` is rebuilt whenever the base or the integration branch moves, and a pull request opened on a goal's first commit has to outlive every one of those rebuilds.
+
+The one thing written down is on the task that asked: the commit whose checks it waits for, and how many verdicts it has had. A task waiting on a commit is not scheduled, which parks it without a question and without a new state.
+
+Merging stays the human's, as it was: diatom opens pull requests and watches them, and `P` and `F` in the window are keypresses, not scheduled work. What changes is that the evidence an agent needs to do its job no longer has to come through a person.

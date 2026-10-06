@@ -111,9 +111,75 @@ type Repo struct {
 	// profile's own: a bare name is a directory in ~/.claude/skills, anything
 	// else a path to a skill directory.
 	Skills []string `toml:"skills"`
-	// MCPServers are the MCP servers agents may use, in Claude Code's
-	// mcpServers format. None of the user's own servers are loaded.
+	// MCPServers are the MCP servers agents may ask for, in Claude Code's
+	// mcpServers format with a `purpose` added (ADR 0013). None of the
+	// user's own servers are loaded, and a session gets only the servers its
+	// tasks declare or it asks for.
 	MCPServers map[string]any `toml:"mcpServers"`
+	// MaxConnectors caps the MCP servers one session may carry, so a batch's
+	// union stays small (ADR 0013). 0 does not cap them.
+	MaxConnectors int `toml:"maxConnectors"`
+}
+
+// PurposeKey is the catalog entry diatom adds to Claude Code's mcpServers
+// format, and strips again before passing the server on.
+const PurposeKey = "purpose"
+
+// Connector is one MCP server as the catalog describes it to an agent.
+type Connector struct {
+	Name    string
+	Purpose string
+}
+
+// Connectors is the repo's catalog, by name: what every session is told
+// exists, without any of the servers' tool schemas (ADR 0013).
+func (c *Repo) Connectors() []Connector {
+	cat := make([]Connector, 0, len(c.MCPServers))
+	for name, v := range c.MCPServers {
+		m, _ := v.(map[string]any)
+		purpose, _ := m[PurposeKey].(string)
+		cat = append(cat, Connector{Name: name, Purpose: purpose})
+	}
+	slices.SortFunc(cat, func(a, b Connector) int { return cmp.Compare(a.Name, b.Name) })
+	return cat
+}
+
+// MCPConfig is the named servers in Claude Code's own format, with the
+// catalog's purpose stripped. Unknown names are an error, so a stale task or
+// a made-up request fails loudly instead of running without its connector.
+func (c *Repo) MCPConfig(names []string) (map[string]any, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]any, len(names))
+	for _, name := range names {
+		v, ok := c.MCPServers[name]
+		if !ok {
+			return nil, fmt.Errorf("no MCP server %q in the config; it has %s",
+				name, strings.Join(connectorNames(c.Connectors()), ", "))
+		}
+		m, ok := v.(map[string]any)
+		if !ok {
+			out[name] = v
+			continue
+		}
+		server := make(map[string]any, len(m))
+		for k, mv := range m {
+			if k != PurposeKey {
+				server[k] = mv
+			}
+		}
+		out[name] = server
+	}
+	return out, nil
+}
+
+func connectorNames(cat []Connector) []string {
+	names := make([]string, len(cat))
+	for i, c := range cat {
+		names[i] = c.Name
+	}
+	return names
 }
 
 // The ways a repo's goals land.
@@ -458,6 +524,13 @@ func decode(m map[string]any) (*Config, error) {
 	if c.Land != "" && c.Land != LandMerge && c.Land != LandPRs {
 		return nil, fmt.Errorf("config: land is %q: it is %q, %q, or unset to offer both",
 			c.Land, LandMerge, LandPRs)
+	}
+	for _, conn := range c.Connectors() {
+		if conn.Purpose == "" {
+			return nil, fmt.Errorf("config: mcpServers.%s has no %s: agents choose a "+
+				"connector by that one line, so a server without one can never be asked for",
+				conn.Name, PurposeKey)
+		}
 	}
 	return &c, nil
 }

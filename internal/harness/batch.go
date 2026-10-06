@@ -329,6 +329,8 @@ func (h *Harness) newSession(
 		Kind: b.Kind, Profile: b.Profile, Effort: b.Effort,
 		Gate: cfg.SessionGate(), GateAttempts: cfg.GateAttempts, GateTimeout: cfg.GateTimeout,
 		ChainContext: cfg.ChainContext,
+		Connectors:   catalog(cfg),
+		Attached:     attached(cfg, b.Tasks),
 	}
 	if p, err := cfg.Profile(b.Profile); err == nil {
 		spec.Model, spec.Level = p.Model, cmp.Or(b.Effort, p.Effort)
@@ -357,10 +359,12 @@ func (h *Harness) newSession(
 	}
 	in := PromptInput{
 		Goal: g, Batch: b, Gate: cfg.Gate, Fix: cfg.Fix, Timeout: cfg.CommandTimeout,
-		TaskDir: filepath.Join(s.GoalDir(g.Name), "tasks", string(queue.Active)),
-		Merging: wt.MergeInProgress(ctx),
-		Guides:  guides,
-		Goals:   goals,
+		TaskDir:    filepath.Join(s.GoalDir(g.Name), "tasks", string(queue.Active)),
+		Merging:    wt.MergeInProgress(ctx),
+		Guides:     guides,
+		Goals:      goals,
+		Connectors: cfg.Connectors(),
+		Attached:   spec.Attached,
 	}
 	var prompt string
 	if planningKind(b.Kind) {
@@ -455,6 +459,10 @@ func (h *Harness) runSession(
 		}
 		prompt = string(data)
 	}
+	servers, err := repo.Config.MCPConfig(spec.Attached)
+	if err != nil {
+		return runner.Result{}, err
+	}
 	events, err := os.OpenFile(
 		filepath.Join(dir, "events.jsonl"),
 		os.O_WRONLY|os.O_CREATE|os.O_APPEND,
@@ -484,7 +492,8 @@ func (h *Harness) runSession(
 		addDirs = append(addDirs, plan.DraftsDir(repo.Store.GoalDir(g.Name)))
 	}
 	h.log().Info("session starting", "session", spec.ID, "goal", g.Name, "workstream", b.Workstream,
-		"kind", b.Kind, "profile", b.Profile, "tasks", spec.Tasks, "resuming", resume != "")
+		"kind", b.Kind, "profile", b.Profile, "tasks", spec.Tasks, "connectors", spec.Attached,
+		"resuming", resume != "")
 	res, err := h.Runner.Run(ctx, runner.Spec{
 		Dir:     wt.Dir,
 		AddDirs: addDirs,
@@ -497,7 +506,7 @@ func (h *Harness) runSession(
 		Hooks:          hooks,
 		Instructions:   instructions,
 		Skills:         skills,
-		MCPServers:     repo.Config.MCPServers,
+		MCPServers:     servers,
 		Resume:         resume,
 		CacheTTL:       cacheTTL(b.Kind),
 		CommandTimeout: repo.Config.CommandTimeout,
@@ -646,6 +655,12 @@ func (h *Harness) finish(
 		}
 	}
 	if err := appendSummaries(s, g.Name, report); err != nil {
+		return err
+	}
+	if err := h.applyConnects(repo, g.Name, report); err != nil {
+		return err
+	}
+	if err := h.applyCI(ctx, repo, g, report); err != nil {
 		return err
 	}
 	tasks, err := h.reload(s, g.Name, b.Tasks)
@@ -1057,6 +1072,9 @@ func (h *Harness) integrate(ctx context.Context, repo Repo, g *queue.Goal, ws st
 	conflicted, err := main.MergeInto(ctx, g.IntegrationBranch(), g.WorkstreamBranch(ws))
 	unlock()
 	if err != nil || !conflicted {
+		if err == nil {
+			h.mirror(ctx, repo, g)
+		}
 		return err
 	}
 	return h.addFix(

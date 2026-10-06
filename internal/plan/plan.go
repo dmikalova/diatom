@@ -40,6 +40,10 @@ type Task struct {
 	Workstream string   `yaml:"workstream"`
 	Profile    string   `yaml:"profile,omitempty"`
 	After      []string `yaml:"after,omitempty"`
+	// MCPServers are the catalog's connectors this task needs, because the
+	// data it works from is live (ADR 0013). What grilling could look up once
+	// belongs in Body instead.
+	MCPServers []string `yaml:"mcpServers,omitempty"`
 	Body       string   `yaml:"body,omitempty"`
 }
 
@@ -59,13 +63,13 @@ func Parse(b []byte) (*Plan, error) {
 }
 
 // Validate checks that the plan can be signed off: valid and unique names,
-// dependencies that exist and don't loop, and known profiles when profiles is
-// given.
-func (p *Plan) Validate(profiles map[string]config.Profile) error {
+// dependencies that exist and don't loop, and known profiles and connectors
+// when cfg is given.
+func (p *Plan) Validate(cfg *config.Config) error {
 	if len(p.Workstreams) == 0 || len(p.Tasks) == 0 {
 		return errors.New("a plan needs at least one workstream and one task")
 	}
-	errs := append(p.validateWorkstreams(), p.validateTasks(profiles)...)
+	errs := append(p.validateWorkstreams(), p.validateTasks(cfg)...)
 	if len(errs) == 0 {
 		if _, err := p.order(); err != nil {
 			errs = append(errs, err)
@@ -100,7 +104,7 @@ func (p *Plan) validateWorkstreams() []error {
 	return errs
 }
 
-func (p *Plan) validateTasks(profiles map[string]config.Profile) []error {
+func (p *Plan) validateTasks(cfg *config.Config) []error {
 	var errs []error
 	bad := func(format string, args ...any) { errs = append(errs, fmt.Errorf(format, args...)) }
 	keys := map[string]bool{}
@@ -121,8 +125,13 @@ func (p *Plan) validateTasks(profiles map[string]config.Profile) []error {
 		) {
 			bad("task %s is on workstream %q, which the plan doesn't list", t.Key, t.Workstream)
 		}
-		if _, ok := profiles[t.Profile]; profiles != nil && t.Profile != "" && !ok {
-			bad("task %s uses unknown profile %q", t.Key, t.Profile)
+		if cfg != nil {
+			if _, ok := cfg.Profiles[t.Profile]; t.Profile != "" && !ok {
+				bad("task %s uses unknown profile %q", t.Key, t.Profile)
+			}
+			if _, err := cfg.MCPConfig(t.MCPServers); err != nil {
+				bad("task %s: %w", t.Key, err)
+			}
 		}
 	}
 	for _, t := range p.Tasks {
@@ -323,7 +332,7 @@ func Approve(
 	if p == nil {
 		return fmt.Errorf("goal %s has no plan yet: grilling hands one in", goal)
 	}
-	if err := p.Validate(cfg.Profiles); err != nil {
+	if err := p.Validate(cfg); err != nil {
 		return err
 	}
 	ordered, err := p.order()
@@ -343,6 +352,7 @@ func Approve(
 			Kind:       queue.Planned,
 			Profile:    t.Profile,
 			Workstream: t.Workstream,
+			MCPServers: t.MCPServers,
 			Priority:   i,
 			Origin:     queue.Origin{Type: "plan", Ref: t.Key},
 			Created:    now,
@@ -423,6 +433,9 @@ func Describe(p *Plan) string {
 		}
 		if t.Profile != "" {
 			b.WriteString(" on " + t.Profile)
+		}
+		if len(t.MCPServers) > 0 {
+			b.WriteString(" with " + strings.Join(t.MCPServers, ", "))
 		}
 		b.WriteString("\n")
 	}

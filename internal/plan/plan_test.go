@@ -102,9 +102,18 @@ func TestValidate(t *testing.T) {
 	}
 	p, _ := Parse([]byte(sample))
 	p.Tasks[0].Profile = "nope"
-	if err := p.Validate(map[string]config.Profile{"implementation": {}}); err == nil ||
+	cfg := &config.Config{
+		Profiles: map[string]config.Profile{"implementation": {}},
+	}
+	if err := p.Validate(cfg); err == nil ||
 		!strings.Contains(err.Error(), `unknown profile "nope"`) {
 		t.Errorf("Validate with profiles = %v", err)
+	}
+	p.Tasks[0].Profile = "implementation"
+	p.Tasks[0].MCPServers = []string{"nope"}
+	if err := p.Validate(cfg); err == nil ||
+		!strings.Contains(err.Error(), `no MCP server "nope"`) {
+		t.Errorf("Validate with connectors = %v", err)
 	}
 }
 

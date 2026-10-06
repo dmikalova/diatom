@@ -36,7 +36,8 @@ func Rank(k queue.Kind) int {
 	return len(rank)
 }
 
-// Ready returns a goal's pending tasks whose dependencies are all done.
+// Ready returns a goal's pending tasks whose dependencies are all done and
+// which are not waiting for a commit's checks (ADR 0014).
 func Ready(tasks []*queue.Task) []*queue.Task {
 	done := map[string]bool{}
 	for _, t := range tasks {
@@ -46,7 +47,7 @@ func Ready(tasks []*queue.Task) []*queue.Task {
 	}
 	var ready []*queue.Task
 	for _, t := range tasks {
-		if t.State == queue.Pending &&
+		if t.State == queue.Pending && t.CI == "" &&
 			!slices.ContainsFunc(t.DependsOn, func(id string) bool { return !done[id] }) {
 			ready = append(ready, t)
 		}

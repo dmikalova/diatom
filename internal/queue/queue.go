@@ -159,6 +159,14 @@ type Task struct {
 	Escalated bool `yaml:"escalated,omitempty"`
 	// Effort overrides the profile's effort level, for a retry.
 	Effort string `yaml:"effort,omitempty"`
+	// MCPServers are the connectors the task needs, by catalog name: the
+	// plan's, plus any a session asked for while working on it (ADR 0013).
+	MCPServers []string `yaml:"mcpServers,omitempty"`
+	// CI is the commit whose checks the task waits for, and CIRounds how many
+	// verdicts it has already had. A task waiting on a commit is not
+	// scheduled, which parks it until diatom has the verdict (ADR 0014).
+	CI       string `yaml:"ci,omitempty"`
+	CIRounds int    `yaml:"ciRounds,omitempty"`
 	// Commits are the commits made by sessions that worked on the task. They
 	// turn a later rejection into a revision with the right context.
 	Commits []string `yaml:"commits,omitempty"`

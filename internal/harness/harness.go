@@ -58,6 +58,9 @@ type Harness struct {
 	// autoApproved holds the commits autoApprove has looked at, each with
 	// the patterns it used: a commit's hunks never change.
 	autoApproved sync.Map
+	// checked holds when each commit's checks were last read, so a parked
+	// task doesn't poll GitHub on every pass (ADR 0014).
+	checked sync.Map
 	// spent adds up what the repo's sessions cost, for its budget, and
 	// spentNote is the budget last found spent, "" for none.
 	spent     *spend.Tally
@@ -274,6 +277,7 @@ func (h *Harness) load(ctx context.Context, path string) (Repo, []*schedule.Goal
 		return repo, nil, err
 	}
 	h.watchDone(ctx, repo.Store, all)
+	h.watchCI(ctx, repo, all)
 	h.followBases(ctx, repo.Store, all)
 	// Triage runs beside the goals, in the goal that holds it.
 	if g, err := repo.Store.Goal(queue.IntakeGoal); err == nil {
@@ -353,7 +357,8 @@ func (h *Harness) loadGoal(
 		if t.State != queue.Done {
 			sg.Unfinished[t.ID] = true
 		}
-		if g.State == queue.GoalActive && t.State == queue.Pending && runnable[t.Kind] &&
+		if g.State == queue.GoalActive && t.State == queue.Pending && t.CI == "" &&
+			runnable[t.Kind] &&
 			t.Workstream != "" && !slices.Contains(ready, t) {
 			sg.Later = append(sg.Later, t)
 		}
@@ -498,13 +503,9 @@ func (h *Harness) backfillLedger(ctx context.Context) {
 // its base branch there, with the checks passing (ADR 0003). A failed check
 // is kept on the goal's layout for the window, and tried again later.
 func (h *Harness) watchLanding(ctx context.Context, s *queue.Store, g *queue.Goal) {
-	gh := h.GH
-	if gh == nil {
-		gh = finish.RunGH
-	}
 	ctx, cancel := context.WithTimeout(ctx, watchTimeout)
 	defer cancel()
-	finished, err := finish.Watch(ctx, s, g, gh, h.now())
+	finished, err := finish.Watch(ctx, s, g, h.gh(), h.now())
 	if err != nil {
 		h.log().
 			Warn("checking a done goal upstream failed", "repo", s.Repo(), "goal", g.Name, "err", err)

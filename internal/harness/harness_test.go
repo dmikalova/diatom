@@ -835,7 +835,7 @@ func TestSessionContext(t *testing.T) {
 		t,
 		f.main.Dir,
 		".diatom/config.toml",
-		"gate = \"check\"\n[mcpServers.docs]\ncommand = \"docs-mcp\"\n",
+		"gate = \"check\"\n[mcpServers.docs]\ncommand = \"docs-mcp\"\npurpose = \"the API docs\"\n",
 	)
 	writeFile(t, f.main.Dir, "AGENTS.md", "Run mage.\n")
 	writeFile(t, f.main.Dir, "internal/cards/AGENTS.md", "Card rules.\n")
@@ -868,12 +868,50 @@ func TestSessionContext(t *testing.T) {
 	}) {
 		t.Errorf("skills = %v", spec.Skills)
 	}
-	if _, ok := spec.MCPServers["docs"]; !ok {
-		t.Errorf("MCP servers = %v", spec.MCPServers)
+	if len(spec.MCPServers) != 0 {
+		t.Errorf("MCP servers = %v, want none: no task asked for one (ADR 0013)", spec.MCPServers)
+	}
+	if !strings.Contains(spec.Prompt, "`docs`: the API docs") {
+		t.Errorf("prompt does not list the connector catalog:\n%s", spec.Prompt)
 	}
 	if !strings.Contains(spec.Prompt, "`internal/cards/AGENTS.md`") ||
 		strings.Contains(spec.Prompt, "- `AGENTS.md`") {
 		t.Errorf("prompt does not list the nested guide alone:\n%s", spec.Prompt)
+	}
+}
+
+func TestConnectorIsAttachedOnlyAfterItIsAskedFor(t *testing.T) {
+	f := newFixture(t)
+	writeFile(t, f.store.Repo(), ".diatom/config.toml",
+		"gate = \"check\"\nmaxSessions = 2\n"+
+			"[mcpServers.metrics]\ncommand = \"dd-mcp\"\npurpose = \"live error rates\"\n")
+	task := f.add("engine", "Chase the errors")
+
+	f.agent.act = func(_ *testing.T, _ string, s agentSession) {
+		if err := session.Append(s.dir, s.spec, session.Entry{
+			Type: session.EntryConnect, Task: task.ID, Server: "metrics",
+			Text: "the rate has to be current",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.step()
+	if got := f.agent.last.MCPServers; len(got) != 0 {
+		t.Errorf("first session's MCP servers = %v, want none", got)
+	}
+	if got := f.task(task.ID).MCPServers; !slices.Equal(got, []string{"metrics"}) {
+		t.Errorf("task connectors = %v, want the one it asked for", got)
+	}
+
+	f.agent.act = func(_ *testing.T, _ string, s agentSession) {
+		s.report(session.EntryDone, task.ID, "")
+	}
+	f.step()
+	if _, ok := f.agent.last.MCPServers["metrics"]; !ok {
+		t.Errorf("second session's MCP servers = %v, want metrics", f.agent.last.MCPServers)
+	}
+	if srv, _ := f.agent.last.MCPServers["metrics"].(map[string]any); srv["purpose"] != nil {
+		t.Errorf("the catalog's purpose reached Claude Code's config: %v", srv)
 	}
 }
 
