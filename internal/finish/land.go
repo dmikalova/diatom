@@ -98,6 +98,9 @@ func OpenPRs(
 			pr.Branch,
 			"--base",
 			base,
+			// The human owns every pull request diatom opens: they merge it.
+			"--assignee",
+			"@me",
 			"--title",
 			prTitle(g, res, i),
 			"--body",
@@ -113,10 +116,11 @@ func OpenPRs(
 }
 
 func prTitle(g *queue.Goal, res *Result, i int) string {
-	if len(res.Stack) == 1 {
-		return g.Title
+	title := g.Title
+	if len(res.Stack) > 1 {
+		title = fmt.Sprintf("%s (%d/%d: %s)", g.Title, i+1, len(res.Stack), res.Stack[i].Workstream)
 	}
-	return fmt.Sprintf("%s (%d/%d: %s)", g.Title, i+1, len(res.Stack), res.Stack[i].Workstream)
+	return Title(g.Ticket, title, res.Stack[i].Commits)
 }
 
 func prBody(g *queue.Goal, res *Result, i int, before []string) string {

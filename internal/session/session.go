@@ -62,6 +62,9 @@ type Spec struct {
 	// may ask for, and Attached the ones it already has (ADR 0013).
 	Connectors []string `json:"connectors,omitempty"`
 	Attached   []string `json:"attached,omitempty"`
+	// Tickets names the tracker every new goal must carry a ticket from, such
+	// as "linear"; empty asks for none.
+	Tickets string `json:"tickets,omitempty"`
 }
 
 // Create makes the session directory and writes its spec.
@@ -121,6 +124,8 @@ type Entry struct {
 	// Branch is the branch a new goal's pull request lives on, when a
 	// tracker named one for its ticket (ADR 0014).
 	Branch string `json:"branch,omitempty"`
+	// Ticket is a new goal's ticket in the repo's tracker (ADR 0014).
+	Ticket string `json:"ticket,omitempty"`
 }
 
 // The entry types.

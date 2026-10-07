@@ -330,7 +330,8 @@ func (h *Harness) newSession(
 		Gate: cfg.SessionGate(), GateAttempts: cfg.GateAttempts, GateTimeout: cfg.GateTimeout,
 		ChainContext: cfg.ChainContext,
 		Connectors:   catalog(cfg),
-		Attached:     attached(cfg, b.Tasks),
+		Attached:     attached(cfg, b.Tasks, planningKind(b.Kind)),
+		Tickets:      cfg.Tickets,
 	}
 	if p, err := cfg.Profile(b.Profile); err == nil {
 		spec.Model, spec.Level = p.Model, cmp.Or(b.Effort, p.Effort)
@@ -365,6 +366,7 @@ func (h *Harness) newSession(
 		Goals:      goals,
 		Connectors: cfg.Connectors(),
 		Attached:   spec.Attached,
+		Tickets:    cfg.Tickets,
 	}
 	var prompt string
 	if planningKind(b.Kind) {
@@ -724,6 +726,10 @@ func (h *Harness) settleTasks(
 	asked map[string]bool,
 ) error {
 	share := usageShare(filepath.Base(dir), res.Usage, len(tasks))
+	waiting := map[string]bool{}
+	for _, e := range report.CI {
+		waiting[e.Task] = true
+	}
 	for _, t := range tasks {
 		if sha := shas[t.ID]; sha != "" {
 			t.Commits = append(t.Commits, sha)
@@ -736,7 +742,7 @@ func (h *Harness) settleTasks(
 			}
 			continue
 		}
-		if err := h.settle(repo, goal, t, report.Done[t.ID], asked[t.ID],
+		if err := h.settle(repo, goal, t, report.Done[t.ID], asked[t.ID], waiting[t.ID],
 			ended(filepath.Base(dir), res)); err != nil {
 			return err
 		}
@@ -933,7 +939,7 @@ func (h *Harness) settle(
 	repo Repo,
 	goal string,
 	t *queue.Task,
-	done, asked bool,
+	done, asked, waiting bool,
 	how string,
 ) error {
 	s := repo.Store
@@ -942,6 +948,10 @@ func (h *Harness) settle(
 		return s.Move(goal, t, queue.Blocked)
 	case done:
 		return s.Move(goal, t, queue.Done)
+	case waiting:
+		// It asked for the goal's checks, so it is waiting for an answer, not
+		// giving up. applyCI parks it once the work is on the goal's branch.
+		return s.Move(goal, t, queue.Pending)
 	}
 	t.Attempts++
 	t.Body = appendSection(t.Body, "Unfinished", how+" before the task was done. The work "+

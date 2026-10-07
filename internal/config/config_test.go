@@ -177,6 +177,38 @@ func TestLoadContextDefaults(t *testing.T) {
 	}
 }
 
+// TestCatalogComesFromTheReposMCPFile pins that a repo declares its servers
+// once, in Claude Code's own file, and diatom's config only adds a purpose
+// (ADR 0013).
+func TestCatalogComesFromTheReposMCPFile(t *testing.T) {
+	root, paths := tree(t)
+	if err := os.WriteFile(filepath.Join(root, MCPFileName), []byte(
+		`{"mcpServers":{"linear":{"type":"sse","url":"https://mcp.linear.app/sse"},`+
+			`"docs":{"command":"docs-mcp"}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(root, DirName),
+		"[mcpServers.linear]\npurpose = \"the tickets\"\n")
+	c, err := Load(root, paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cat := c.Connectors()
+	if len(cat) != 2 || cat[0].Name != "docs" || cat[0].Purpose != "" ||
+		cat[1].Name != "linear" || cat[1].Purpose != "the tickets" {
+		t.Fatalf("catalog = %+v, want both servers, the purpose on linear", cat)
+	}
+	// Diatom's purpose must not cost the server what .mcp.json said it is.
+	srv, err := c.MCPConfig([]string{"linear"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _ := srv["linear"].(map[string]any)
+	if m["url"] != "https://mcp.linear.app/sse" || m[PurposeKey] != nil {
+		t.Errorf("linear = %v, want .mcp.json's own fields without the purpose", m)
+	}
+}
+
 // TestRetryEffort pins that a retry thinks one step harder but never climbs
 // to max effort (ADR 0005).
 func TestRetryEffort(t *testing.T) {

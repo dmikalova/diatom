@@ -213,6 +213,35 @@ func TestPlanningToolCommands(t *testing.T) {
 	); code != 0 {
 		t.Fatalf("new-goal: %s", stderr)
 	}
+	// A repo with a tracker refuses a goal with no ticket, or a bad one.
+	tracked := t.TempDir()
+	if err := session.Create(tracked, session.Spec{ID: "s", Kind: queue.Triage,
+		Tasks: []string{"0001"}, Tickets: "linear"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(session.EnvVar, tracked)
+	if code, _, stderr := diatom(
+		t, "", "task", "new-goal", "0001", "-title", "Web UI", "-description", "x",
+	); code != 2 || !strings.Contains(stderr, "every goal needs -ticket") {
+		t.Errorf("new-goal with no ticket = %d %q", code, stderr)
+	}
+	if code, _, stderr := diatom(
+		t, "", "task", "new-goal", "0001", "-title", "Web UI", "-description", "x",
+		"-ticket", "no ticket",
+	); code != 2 || !strings.Contains(stderr, "such as DIP-4117") {
+		t.Errorf("new-goal with a bad ticket = %d %q", code, stderr)
+	}
+	if code, _, stderr := diatom(
+		t, "", "task", "new-goal", "0001", "-title", "Web UI", "-description", "x",
+		"-ticket", "dip-4117",
+	); code != 0 {
+		t.Fatalf("new-goal with a ticket: %s", stderr)
+	}
+	if rep, err := session.ReadReport(tracked); err != nil || len(rep.Goals) != 1 ||
+		rep.Goals[0].Ticket != "DIP-4117" {
+		t.Errorf("the ticket was not kept: %+v, %v", rep.Goals, err)
+	}
+	t.Setenv(session.EnvVar, dir)
 	planFile := filepath.Join(t.TempDir(), "plan.yaml")
 	good := "summary: x\nworkstreams: [{name: e}]\ntasks: [{key: a, title: A, workstream: e}]\n"
 	if err := os.WriteFile(planFile, []byte(good), 0o644); err != nil {

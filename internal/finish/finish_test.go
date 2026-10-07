@@ -273,6 +273,34 @@ func TestAGoalKeepsTheBranchItWasGiven(t *testing.T) {
 	}
 }
 
+// TestTitlesCarryTheTypeAndTheTicket covers the pull request titles the repos
+// that lint them want (ADR 0014).
+func TestTitlesCarryTheTypeAndTheTicket(t *testing.T) {
+	commits := []string{"chore: tidy", "feat: add ward", "fix: ward targets"}
+	for _, c := range []struct {
+		ticket   string
+		subjects []string
+		want     string
+	}{
+		{"DIP-4117", commits, "[feat](DIP-4117): New set"},
+		{"", commits, "feat: New set"},
+		{"DIP-4117", []string{"chore: tidy"}, "[chore](DIP-4117): New set"},
+		{"DIP-4117", []string{"no type here"}, "[DIP-4117]: New set"},
+		{"", nil, "New set"},
+	} {
+		if got := Title(c.ticket, "New set", c.subjects); got != c.want {
+			t.Errorf("Title(%q, %v) = %q, want %q", c.ticket, c.subjects, got, c.want)
+		}
+	}
+	f := newFixture(t)
+	f.goal.Ticket = "DIP-4117"
+	f.task("engine", f.work("engine", "engine.txt", "v1\n", "feat: add ward"))
+	res := f.build(Options{})
+	if got := prTitle(f.goal, res, 0); got != "[feat](DIP-4117): New set" {
+		t.Errorf("the landing pull request is titled %q", got)
+	}
+}
+
 func TestBuildCarriesMergeFixes(t *testing.T) {
 	f := newFixture(t)
 	f.task("engine", f.work("engine", "engine.txt", "ward\n", "feat: add ward"))

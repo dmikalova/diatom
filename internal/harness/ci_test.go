@@ -84,6 +84,11 @@ func TestTaskWaitsForTheChecksItAskedFor(t *testing.T) {
 	if got := f.task(task.ID); got.CI == "" {
 		t.Fatalf("task is not waiting for any commit's checks: %+v", got)
 	}
+	// Waiting is not giving up: it costs the task no attempt, so nothing
+	// escalates to the human while the checks run.
+	if got := f.task(task.ID); got.Attempts != 0 || strings.Contains(got.Body, "Unfinished") {
+		t.Errorf("waiting for the checks counted against the task: %+v", got)
+	}
 
 	// While the checks run, the task is not scheduled.
 	now = now.Add(5 * time.Minute)

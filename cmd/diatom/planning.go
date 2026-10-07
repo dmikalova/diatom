@@ -32,6 +32,7 @@ func planningReport(sub string, args []string, stdin io.Reader, stdout io.Writer
 	after := fs.String("after", "", "ids of tasks that must be done first, comma-separated")
 	profile := fs.String("profile", "", "the profile, instead of the kind's default")
 	branch := fs.String("branch", "", "the branch a new goal's pull request lives on")
+	ticket := fs.String("ticket", "", "a new goal's ticket in the repo's tracker, such as DIP-4117")
 	pos, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
@@ -58,6 +59,7 @@ func planningReport(sub string, args []string, stdin io.Reader, stdout io.Writer
 		if err := triageEntry(&e, sub, entryFlags{
 			goal: *goal, title: *title, description: *description, ws: *ws,
 			after: *after, profile: *profile, planFile: *planFile, branch: *branch,
+			ticket: *ticket, tracker: spec.Tickets,
 		}); err != nil {
 			return err
 		}
@@ -110,7 +112,10 @@ func planningReport(sub string, args []string, stdin io.Reader, stdout io.Writer
 
 // entryFlags are the flags of what a triage session hands in.
 type entryFlags struct {
-	goal, title, description, ws, after, profile, planFile, branch string
+	goal, title, description, ws, after, profile, planFile, branch, ticket string
+	// tracker is the repo's ticket tracker, when every goal must carry a
+	// ticket from one.
+	tracker string
 }
 
 // triageEntry fills in what a triage session hands in with add-task,
@@ -156,6 +161,10 @@ func triageEntry(e *session.Entry, sub string, f entryFlags) error {
 		after,
 	)
 	e.Branch = strings.TrimSpace(f.branch)
+	var err error
+	if e.Ticket, err = goalTicket(f); err != nil {
+		return err
+	}
 	if f.planFile == "" {
 		return nil
 	}
@@ -168,6 +177,28 @@ func triageEntry(e *session.Entry, sub string, f entryFlags) error {
 	}
 	e.Plan = string(b)
 	return nil
+}
+
+// goalTicket is a new goal's ticket. A repo with a tracker needs one on
+// every goal, so a goal handed in without one is refused and the agent asks
+// the human for it.
+func goalTicket(f entryFlags) (string, error) {
+	id, ok := queue.ParseTicket(f.ticket)
+	switch {
+	case f.ticket == "" && f.tracker == "":
+		return "", nil
+	case f.ticket == "":
+		return "", fmt.Errorf(
+			"%w: this repo tracks its work in %s, so every goal needs -ticket <id>. "+
+				"Ask the human for the ticket if the input has none, and hand the goal in once "+
+				"they answer",
+			errUsage, f.tracker,
+		)
+	case !ok:
+		return "", fmt.Errorf("%w: -ticket takes a ticket id, such as DIP-4117, not %q",
+			errUsage, f.ticket)
+	}
+	return id, nil
 }
 
 func orNone(names []string) string {

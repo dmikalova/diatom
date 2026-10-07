@@ -256,7 +256,9 @@ var failed = []string{
 	"failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale", "error",
 }
 
-// verdict sums checks up, and names the ones that failed.
+// verdict sums checks up, and names the ones that failed. A run still going
+// outranks one that failed: coming back on the first failure would bring one
+// name at a time, and the agent would spend a round on each.
 func verdict(checks []check) (string, []string) {
 	if len(checks) == 0 {
 		return ChecksNone, nil
@@ -272,10 +274,10 @@ func verdict(checks []check) (string, []string) {
 		}
 	}
 	switch {
-	case len(failing) > 0:
-		return ChecksFailed, failing
 	case pending:
 		return ChecksPending, nil
+	case len(failing) > 0:
+		return ChecksFailed, failing
 	}
 	return ChecksPassed, nil
 }

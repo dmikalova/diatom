@@ -200,6 +200,7 @@ instructions = ["~/notes/go.md"] # more files for every agent's system prompt
 skills = ["grill-me", "grilling"] # skills every session may load: names in ~/.claude/skills, or paths
 editor = "nvim"                   # what the reviewer's o opens a hunk's file in, at its line ("code" works too)
 land = "merge"                    # how goals land: "merge" into their base, "prs"; unset offers both
+tickets = "linear"                # the repo's tracker: every goal then needs a ticket, and triage asks for one
 maxConnectors = 2                 # MCP servers one session may carry; 0 doesn't cap them
 
 [budget]                          # dollars; once one is spent, nothing new starts
@@ -214,7 +215,7 @@ node = "npm test"
 [fixes]                           # the fix of each kind of repo that sets none
 go = "mage ci:fix"
 
-[mcpServers.docs]                 # the only MCP servers agents may ask for
+[mcpServers.docs]                 # adds to the servers the repo's .mcp.json declares
 command = "docs-mcp"
 purpose = "the API docs"          # one line; how an agent knows to ask for it
 ```
@@ -222,20 +223,26 @@ purpose = "the API docs"          # one line; how an agent knows to ask for it
 Agent sessions load none of your own Claude Code settings, skills, plugins or
 MCP servers (ADR 0011). They get the instruction files above, the `AGENTS.md`
 of every directory from your home directory down to the repo's, the repo's
-`CLAUDE.md` and project settings, and the skills above and in their profile.
-Any config file in the walk-up can set `skills`, `instructions` and
-`mcpServers`, `~/.config/diatom/config.toml` for every repo; a nearer file's
-list replaces a further one's, while MCP servers add up by name. A nested
-`AGENTS.md`, such as `internal/engine/AGENTS.md`, isn't loaded: the prompt
-names it for the agent to read before working in that directory.
+`CLAUDE.md`, project settings and `.mcp.json`, and the skills above and in
+their profile. Any config file in the walk-up can set `skills`, `instructions`
+and `mcpServers`, `~/.config/diatom/config.toml` for every repo; a nearer
+file's list replaces a further one's, while MCP servers add up by name. A
+nested `AGENTS.md`, such as `internal/engine/AGENTS.md`, isn't loaded: the
+prompt names it for the agent to read before working in that directory.
 
-No session starts with an MCP server (ADR 0013). Every prompt lists the servers
-above by name and purpose, which costs a line each, but a server's tools are
-loaded only for the sessions that need them, which is what costs context. A
+No session starts with an MCP server (ADR 0013). The catalog is the repo's own
+`.mcp.json`, so a repo that already declares its servers declares them nowhere
+else; `[mcpServers.<name>]` merges on top of it by name, which is how a server
+gets a `purpose` or how one only diatom should see is added. Every prompt lists
+the catalog by name and purpose, which costs a line each, but a server's tools
+are loaded only for the sessions that need them, which is what costs context. A
 plan gives a task `mcpServers` when the data it works from is live, and an
 agent that finds it needs one runs `diatom task connect`: the session ends, and
 diatom runs the batch again with that server. A batch carries the union of its
-tasks' servers, up to `maxConnectors`.
+tasks' servers, up to `maxConnectors`. The one exception is the tracker: when
+`tickets` names a server in the catalog, every triage and grilling session
+carries it, since each goal they hand in needs a ticket and they can open one
+themselves.
 
 Every goal has one pull request, on `diatom/<goal>/review` (ADR 0014). Diatom
 pushes that branch after each integration, so your work is on the remote while
@@ -253,6 +260,14 @@ you ever merge.
 When a tracker names the branch for its ticket, as Linear does, give the goal
 that name and its pull request lives there instead: `-branch <name>` on
 `diatom task new-goal`, or `branch:` in the goal's `goal.yaml`.
+
+Pull requests are titled the way the repos that lint titles want:
+`[feat](DIP-4117): what the goal is`. The type is the strongest Conventional
+Commits type among the goal's own commits, and the scope is the goal's ticket,
+from `-ticket <id>` or `ticket:` in its `goal.yaml`. Either part is left out
+when it is missing. Set `tickets = "linear"` and a goal without a ticket is
+refused, so triage asks you for one before it starts the goal. You are
+assigned to every pull request diatom opens, since only you merge them.
 
 Only `~/.config/diatom/config.toml` may set these:
 

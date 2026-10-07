@@ -109,7 +109,8 @@ From a triage session, except new-goal, which any session may run:
   diatom task feedback <id> -goal <goal> < text
   diatom task after <id> -goal <goal> [-after <goals>]
   diatom task new-goal <id> -title <title> -description <line>
-                       [-after <goals>] [-branch <name>] [-plan <file.yaml>] < brief
+                       [-after <goals>] [-branch <name>] [-ticket <id>]
+                       [-plan <file.yaml>] < brief
 
 From a grilling session:
   diatom task plan <id> < plan.yaml        hand in the plan for sign-off

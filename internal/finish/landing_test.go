@@ -47,6 +47,34 @@ func (g *fakeGH) run(_ context.Context, _ string, args ...string) (string, error
 	return "", nil
 }
 
+func TestVerdictWaitsForEveryCheck(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		checks []check
+		want   string
+	}{
+		{"none", nil, ChecksNone},
+		{"all passed", []check{
+			{name: "gha", status: "COMPLETED", conclusion: "SUCCESS"},
+			{name: "circleci", status: "COMPLETED", conclusion: "SUCCESS"},
+		}, ChecksPassed},
+		{"one failed while another runs", []check{
+			{name: "gha", status: "COMPLETED", conclusion: "FAILURE"},
+			{name: "circleci", status: "IN_PROGRESS"},
+		}, ChecksPending},
+		{"all in", []check{
+			{name: "gha", status: "COMPLETED", conclusion: "FAILURE"},
+			{name: "circleci", status: "COMPLETED", conclusion: "SUCCESS"},
+		}, ChecksFailed},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got, _ := verdict(c.checks); got != c.want {
+				t.Errorf("verdict = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
 func TestWatchFinishesOnceMergedAndPassing(t *testing.T) {
 	f := newFixture(t)
 	f.task("engine", f.work("engine", "engine.txt", "ward\n", "feat: add ward"))

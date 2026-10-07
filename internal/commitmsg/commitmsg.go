@@ -25,6 +25,16 @@ var header = regexp.MustCompile(
 	`^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]+\))?!?: \S`,
 )
 
+// Type is the Conventional Commits type of a subject line, "" when it has
+// none.
+func Type(subject string) string {
+	m := header.FindStringSubmatch(strings.TrimSpace(subject))
+	if m == nil {
+		return ""
+	}
+	return m[1]
+}
+
 // maxDiff is how much of the diff the prompt carries; the stat always goes in
 // whole, so a huge diff still gets an accurate subject.
 const maxDiff = 60 << 10

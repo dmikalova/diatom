@@ -69,7 +69,11 @@ type Goal struct {
 	// Branch is the branch the goal's pull request lives on, for a tracker
 	// that links the ticket to a branch it named itself, such as Linear.
 	// Empty means diatom names it (ADR 0014).
-	Branch  string    `yaml:"branch,omitempty"`
+	Branch string `yaml:"branch,omitempty"`
+	// Ticket is the goal's ticket in the repo's tracker, such as DIP-4117.
+	// It names the scope of the pull request's title, so the repos that
+	// lint titles take it (ADR 0014).
+	Ticket  string    `yaml:"ticket,omitempty"`
 	Created time.Time `yaml:"created"`
 	// Finished is when the goal was found landed upstream.
 	Finished    time.Time    `yaml:"finished,omitempty"`
@@ -88,6 +92,17 @@ type Goal struct {
 type Workstream struct {
 	Name      string   `yaml:"name"`
 	DependsOn []string `yaml:"dependsOn,omitempty"`
+}
+
+// ticketRe matches a tracker's ticket id, which Linear, Jira and Shortcut
+// all write the same way: a team key, a dash, and a number.
+var ticketRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*-[0-9]+$`)
+
+// ParseTicket is a ticket id as a goal stores it, upper-cased, and whether
+// what it was given is one at all.
+func ParseTicket(s string) (string, bool) {
+	s = strings.TrimSpace(s)
+	return strings.ToUpper(s), ticketRe.MatchString(s)
 }
 
 // IntegrationBranch is the branch that collects all of a goal's work.

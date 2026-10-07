@@ -35,6 +35,8 @@ type PromptInput struct {
 	// this session already has (ADR 0013).
 	Connectors []config.Connector
 	Attached   []string
+	// Tickets names the tracker every new goal must carry a ticket from.
+	Tickets string
 }
 
 // Prompt builds a batch's instructions. ADR 0006 has prompts refer to files
@@ -100,7 +102,7 @@ func Prompt(in PromptInput) string {
 	)
 	b.WriteString(askGuide)
 	b.WriteString(manualGuide)
-	b.WriteString(newGoalGuide)
+	b.WriteString(newGoalGuide(in))
 	b.WriteString(
 		"- A task you don't mark done goes back in the queue, and a later session continues from " +
 			"the files you leave.\n",
@@ -187,6 +189,10 @@ func writeConnectors(b *strings.Builder, in PromptInput) {
 		attached := ""
 		if slices.Contains(in.Attached, c.Name) {
 			attached = " — connected"
+		}
+		if c.Purpose == "" {
+			fmt.Fprintf(b, "- `%s`%s\n", c.Name, attached)
+			continue
 		}
 		fmt.Fprintf(b, "- `%s`: %s%s\n", c.Name, c.Purpose, attached)
 	}
@@ -277,14 +283,42 @@ const manualGuide = "  - `diatom task manual <id> \"<steps>\"` when the task nee
 
 // newGoalGuide is how a session other than triage starts a goal: only when
 // the human asks for one.
-const newGoalGuide = "  - `diatom task new-goal <id> -title \"<title>\" -description \"<line>\" " +
-	"[-after <goals>] [-branch <name>] < brief` starts a new goal, grilled before any work starts. Use it only when the " +
-	"human asks for a new goal, such as in answering your question; an idea of your own goes in a note " +
-	"or a question instead. The description says in one plain sentence what the goal is for. The brief " +
-	"on stdin is everything its grilling starts from: what the human asked, and what you found. -after " +
-	"names the goals it must wait for, this one among them when it builds on this work. " +
-	"Pass -branch only when the human gave a branch name, such as the one a tracker made for its " +
-	"ticket: the goal's pull request then lives on it.\n"
+func newGoalGuide(in PromptInput) string {
+	return "  - `diatom task new-goal <id> -title \"<title>\" -description \"<line>\" " +
+		"[-after <goals>] [-branch <name>] [-ticket <id>] < brief` starts a new goal, grilled before any work starts. Use it only when the " +
+		"human asks for a new goal, such as in answering your question; an idea of your own goes in a note " +
+		"or a question instead. The description says in one plain sentence what the goal is for. The brief " +
+		"on stdin is everything its grilling starts from: what the human asked, and what you found. -after " +
+		"names the goals it must wait for, this one among them when it builds on this work. " +
+		"Pass -branch only when the human gave a branch name, such as the one a tracker made for its " +
+		"ticket: the goal's pull request then lives on it.\n" +
+		ticketGuide(in)
+}
+
+// ticketGuide is what a session is told about the repo's tracker, nothing
+// when it has none.
+func ticketGuide(in PromptInput) string {
+	if in.Tickets == "" {
+		return "    Pass -ticket when the human gave a ticket id, such as DIP-4117: it names the scope " +
+			"of the goal's pull request title.\n"
+	}
+	get := "If what the human sent carries no ticket, ask them for one with `diatom task ask` and " +
+		"start the goal once they answer"
+	if slices.Contains(in.Attached, in.Tickets) {
+		get = fmt.Sprintf(
+			"If what the human sent carries no ticket, open one yourself with the %s "+
+				"connector and use its id. Ask the human only when you need a decision they have not made, "+
+				"such as which project or parent the ticket belongs under",
+			in.Tickets,
+		)
+	}
+	return fmt.Sprintf(
+		"    **This repo tracks its work in %s, so -ticket <id> is required.** The id "+
+			"looks like DIP-4117, and it names the scope of the goal's pull request title. %s: a goal "+
+			"handed in without a ticket is refused.\n",
+		in.Tickets, get,
+	)
+}
 
 // orderGuide is how planning orders work, which it never asks the human
 // about.
@@ -329,10 +363,10 @@ func (h *Harness) planningPrompt(repo Repo, g *queue.Goal, in PromptInput) (stri
 	b.WriteString("  - `diatom task note <id> \"<text>\"` records something worth keeping.\n")
 	b.WriteString("  - `diatom task done <id>` marks the task done.\n")
 	if in.Batch.Kind != queue.Triage {
-		b.WriteString(newGoalGuide)
+		b.WriteString(newGoalGuide(in))
 	}
 	if in.Batch.Kind == queue.Triage {
-		if err := writeTriage(&b, repo, in.Goals); err != nil {
+		if err := writeTriage(&b, repo, in.Goals, in); err != nil {
 			return "", err
 		}
 	} else {
@@ -364,7 +398,7 @@ func (h *Harness) planningPrompt(repo Repo, g *queue.Goal, in PromptInput) (stri
 	return b.String(), nil
 }
 
-func writeTriage(b *strings.Builder, repo Repo, briefs []roster.Brief) error {
+func writeTriage(b *strings.Builder, repo Repo, briefs []roster.Brief, in PromptInput) error {
 	b.WriteString(
 		"  - `diatom task add-task <id> -goal <goal> -ws <workstream> -title \"<title>\" " +
 			"[-after <ids>] [-profile <profile>] < body` adds a task to one of a goal's workstreams, with its " +
@@ -381,14 +415,17 @@ func writeTriage(b *strings.Builder, repo Repo, briefs []roster.Brief) error {
 	)
 	b.WriteString(
 		"  - `diatom task new-goal <id> -title \"<title>\" -description \"<line>\" [-after <goals>] " +
-			"[-branch <name>] [-plan <plan.yaml>] < brief` starts a new goal, which is grilled before any work starts. The " +
+			"[-branch <name>] [-ticket <id>] [-plan <plan.yaml>] < brief` starts a new goal, which is grilled before any work starts. The " +
 			"description says in one plain sentence what the goal is for, beyond its title: it is how agents on " +
 			"other goals, and the human answering its questions, tell it apart. The brief on stdin is " +
 			"everything grilling starts from. Pass -branch when the input carries a branch name, such as the " +
 			"one a tracker made for its ticket: the goal's pull request lives on that branch, so the ticket " +
 			"links to it. Pass -plan only when the input already " +
 			"decides everything, workstreams and tasks: the goal then skips grilling and waits for the human " +
-			"to sign the plan off. The plan's format is below.\n\n",
+			"to sign the plan off. The plan's format is below.\n" +
+			ticketGuide(
+				in,
+			) + "\n",
 	)
 	b.WriteString(
 		"## Triage\n\nEach task below is one intake: whatever the human sent, from a new goal " +

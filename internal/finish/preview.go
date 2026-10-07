@@ -78,8 +78,14 @@ func EnsurePR(
 			"the pull request opens the next time a task asks for its checks",
 			remote, g.Base, g.Name)
 	}
-	out, err := gh(ctx, dir, "pr", "create", "--draft",
-		"--head", branch, "--base", g.Base, "--title", g.Title, "--body", draftBody(g))
+	subjects, err := repo.Run(ctx, "log", "--format=%s", g.Base+".."+g.IntegrationBranch())
+	if err != nil {
+		return "", err
+	}
+	out, err := gh(ctx, dir, "pr", "create", "--draft", "--head", branch, "--base", g.Base,
+		"--assignee", "@me",
+		"--title", Title(g.Ticket, g.Title, strings.Split(subjects, "\n")),
+		"--body", draftBody(g))
 	if err != nil {
 		return "", err
 	}

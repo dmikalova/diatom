@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -137,6 +138,36 @@ func ReviewBranch(g *queue.Goal) string {
 
 // prBranch is the branch of one pull request of a goal's stack.
 func prBranch(g *queue.Goal, ws string) string { return "diatom/" + g.Name + "/pr/" + ws }
+
+// titleTypes are the Conventional Commits types, strongest first: a pull
+// request is named after the most significant change in it.
+var titleTypes = []string{
+	"feat", "fix", "perf", "revert", "refactor", "docs", "test", "build", "ci", "style", "chore",
+}
+
+// Title names a pull request the way the repos that lint titles want:
+// "[feat](DIP-4117): what it does". The type is the strongest among the
+// commits' own Conventional Commits subjects, and the ticket is the goal's.
+// Whichever of the two is missing is left out, down to the bare title.
+func Title(ticket, title string, subjects []string) string {
+	kind := ""
+	for _, s := range subjects {
+		t := commitmsg.Type(s)
+		if i := slices.Index(titleTypes, t); i >= 0 &&
+			(kind == "" || i < slices.Index(titleTypes, kind)) {
+			kind = t
+		}
+	}
+	switch {
+	case kind != "" && ticket != "":
+		return fmt.Sprintf("[%s](%s): %s", kind, ticket, title)
+	case kind != "":
+		return kind + ": " + title
+	case ticket != "":
+		return fmt.Sprintf("[%s]: %s", ticket, title)
+	}
+	return title
+}
 
 // ConflictError is a commit that doesn't apply where it was replayed.
 type ConflictError struct {

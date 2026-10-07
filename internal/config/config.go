@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"cmp"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -33,6 +34,11 @@ const FileName = "config.toml"
 // oldFileName is the YAML config diatom read before, which is now an error
 // so a setting in one is never silently ignored.
 const oldFileName = "config.yaml"
+
+// MCPFileName is Claude Code's own project file, which diatom reads as a
+// catalog so a repo that already declares its servers declares them nowhere
+// else (ADR 0013).
+const MCPFileName = ".mcp.json"
 
 // defaults is the lowest layer of every merge, below the XDG file.
 //
@@ -93,6 +99,10 @@ type Repo struct {
 	// Land is how a goal ready to finish lands: LandMerge merges it into its
 	// base branch, LandPRs opens its stacked pull requests. Empty offers both.
 	Land string `toml:"land"`
+	// Tickets names the repo's ticket tracker, such as "linear". Set, every
+	// goal must carry a ticket, which names the scope of its pull request's
+	// title; empty asks for none.
+	Tickets string `toml:"tickets"`
 	// CommitCheck lints a commit message: it is run with `sh -c` and the path
 	// of a file holding the message appended, such as
 	// `project-standards commit-msg`. The default runs the repo's own
@@ -113,9 +123,11 @@ type Repo struct {
 	// else a path to a skill directory.
 	Skills []string `toml:"skills"`
 	// MCPServers are the MCP servers agents may ask for, in Claude Code's
-	// mcpServers format with a `purpose` added (ADR 0013). None of the
-	// user's own servers are loaded, and a session gets only the servers its
-	// tasks declare or it asks for.
+	// mcpServers format with an optional `purpose` added (ADR 0013). The
+	// repo's own .mcp.json is read into this, so a repo that already declares
+	// its servers needs nothing here but a purpose for the ones whose name
+	// does not say what they are. None of the user's own servers are loaded,
+	// and a session gets only the servers its tasks declare or it asks for.
 	MCPServers map[string]any `toml:"mcpServers"`
 	// MaxConnectors caps the MCP servers one session may carry, so a batch's
 	// union stays small (ADR 0013). 0 does not cap them.
@@ -453,7 +465,13 @@ func walk(root string, paths Paths) ([]map[string]any, error) {
 					filepath.Join(paths.XDG, FileName))
 			}
 		}
-		near = append(near, layer)
+		servers, err := readMCP(filepath.Join(dir, MCPFileName))
+		if err != nil {
+			return nil, err
+		}
+		// Diatom's own file is nearer than the .mcp.json beside it, so it
+		// can give a server a purpose without redeclaring it.
+		near = append(near, layer, servers)
 		parent := filepath.Dir(dir)
 		if dir == paths.Home || parent == dir {
 			break
@@ -462,6 +480,28 @@ func walk(root string, paths Paths) ([]map[string]any, error) {
 	}
 	slices.Reverse(near)
 	return append([]map[string]any{base, xdg}, near...), nil
+}
+
+// readMCP parses Claude Code's .mcp.json at path into a config layer. A
+// missing file is an empty layer.
+func readMCP(path string) (map[string]any, error) {
+	b, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return map[string]any{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var f struct {
+		MCPServers map[string]any `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(b, &f); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	if len(f.MCPServers) == 0 {
+		return map[string]any{}, nil
+	}
+	return map[string]any{"mcpServers": f.MCPServers}, nil
 }
 
 // read parses the TOML file at path. A missing file is an empty layer, and
@@ -525,13 +565,6 @@ func decode(m map[string]any) (*Config, error) {
 	if c.Land != "" && c.Land != LandMerge && c.Land != LandPRs {
 		return nil, fmt.Errorf("config: land is %q: it is %q, %q, or unset to offer both",
 			c.Land, LandMerge, LandPRs)
-	}
-	for _, conn := range c.Connectors() {
-		if conn.Purpose == "" {
-			return nil, fmt.Errorf("config: mcpServers.%s has no %s: agents choose a "+
-				"connector by that one line, so a server without one can never be asked for",
-				conn.Name, PurposeKey)
-		}
 	}
 	return &c, nil
 }

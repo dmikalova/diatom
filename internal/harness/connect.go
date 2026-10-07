@@ -13,7 +13,7 @@ import (
 // more sessions than the context the union costs, but an uncapped union puts
 // every server of a mixed batch in one session, which is what the catalog
 // exists to avoid.
-func attached(cfg *config.Config, tasks []*queue.Task) []string {
+func attached(cfg *config.Config, tasks []*queue.Task, planning bool) []string {
 	var names []string
 	for _, t := range tasks {
 		for _, name := range t.MCPServers {
@@ -23,10 +23,28 @@ func attached(cfg *config.Config, tasks []*queue.Task) []string {
 		}
 	}
 	slices.Sort(names)
+	if name := tracker(cfg, planning); name != "" {
+		names = append([]string{name},
+			slices.DeleteFunc(names, func(n string) bool { return n == name })...)
+	}
 	if cfg.MaxConnectors > 0 && len(names) > cfg.MaxConnectors {
 		names = names[:cfg.MaxConnectors]
 	}
 	return names
+}
+
+// tracker is the connector a planning session gets without asking: the
+// repo's ticket tracker, when the catalog has a server by that name. Every
+// goal such a session hands in needs a ticket, so making it ask for the
+// tracker first would cost a session on the way to every goal.
+func tracker(cfg *config.Config, planning bool) string {
+	if !planning || cfg.Tickets == "" {
+		return ""
+	}
+	if _, ok := cfg.MCPServers[cfg.Tickets]; !ok {
+		return ""
+	}
+	return cfg.Tickets
 }
 
 // catalog is the names of the repo's connectors, which bound what a session

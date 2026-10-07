@@ -320,7 +320,7 @@ func (h *Harness) finishPlanning(
 			)
 			done = false
 		}
-		if err := h.settle(repo, g.Name, t, done, asked[t.ID],
+		if err := h.settle(repo, g.Name, t, done, asked[t.ID], false,
 			ended(filepath.Base(dir), res)); err != nil {
 			return err
 		}
@@ -536,8 +536,8 @@ func (h *Harness) startGoal(
 	if err != nil {
 		return nil, err
 	}
-	if e.Branch != "" {
-		g.Branch = e.Branch
+	if e.Branch != "" || e.Ticket != "" {
+		g.Branch, g.Ticket = e.Branch, e.Ticket
 		if err := s.SaveGoal(g); err != nil {
 			return nil, err
 		}
