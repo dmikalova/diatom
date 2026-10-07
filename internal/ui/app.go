@@ -1434,9 +1434,9 @@ func (a *App) notify() tea.Cmd {
 	if was > 0 || a.waiting == 0 || !a.blurred {
 		return nil
 	}
-	body := fmt.Sprintf("%d things wait on you", a.waiting)
-	if a.waiting == 1 {
-		body = "something waits on you"
+	body := "diatom results are ready"
+	if a.waiting > 1 {
+		body = fmt.Sprintf("%d diatom results are ready", a.waiting)
 	}
 	if it := a.next.shown(); it != nil {
 		body += ": " + it.row.goal.Name

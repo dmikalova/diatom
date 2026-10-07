@@ -37,6 +37,9 @@ type PromptInput struct {
 	Attached   []string
 	// Tickets names the tracker every new goal must carry a ticket from.
 	Tickets string
+	// Feedback is set when the human sent this goal's plan back with a
+	// comment the next plan must answer.
+	Feedback bool
 }
 
 // Prompt builds a batch's instructions. ADR 0006 has prompts refer to files
@@ -527,15 +530,28 @@ func writeGrilling(b *strings.Builder, repo Repo, in PromptInput) {
 	)
 	b.WriteString(
 		"- **Or hand in the plan** once nothing is left to decide, then mark the task done. The human " +
-			"signs it off before work starts.\n\n",
+			"signs it off before work starts.\n",
+	)
+	b.WriteString(
+		"- **Answer the feedback.** When the task below carries feedback from the human, they have " +
+			"read a plan of yours and sent it back. Never hand the same plan in again: put what you changed " +
+			"and why in the plan's `response`, and say so there even when you disagree and changed nothing. " +
+			"A comment you can't settle alone is a question, so ask it with `diatom task ask`; `response` is " +
+			"the only place they see your answer, and a plan handed in without one is refused.\n\n",
 	)
 	b.WriteString(
 		"The plan is YAML: workstreams, scoped by purpose rather than path, with the order between " +
 			"them, and small tasks, each one session's work for an agent.\n\n",
 	)
 	b.WriteString(orderGuide)
+	response := ""
+	if in.Feedback {
+		response = "response: What you changed in answer to the human's feedback, or why nothing " +
+			"changed.\n"
+	}
 	b.WriteString(
-		"```yaml\nsummary: What the goal does and how, in a few sentences.\nworkstreams:\n" +
+		"```yaml\nsummary: What the goal does and how, in a few sentences.\n" + response +
+			"workstreams:\n" +
 			"  - name: engine\n  - name: cards\n    dependsOn: [engine]\ntasks:\n  - key: ward\n" +
 			"    title: Add the ward keyword\n    workstream: engine\n    body: |\n      What to do and how to " +
 			"know it's done.\n  - key: warden\n    title: Implement Warden\n    workstream: cards\n" +

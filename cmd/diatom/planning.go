@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -67,8 +68,17 @@ func planningReport(sub string, args []string, stdin io.Reader, stdout io.Writer
 		if spec.Kind != queue.Grilling {
 			return fmt.Errorf("task plan is only for grilling sessions")
 		}
-		if _, err := plan.Parse([]byte(e.Text)); err != nil {
+		p, err := plan.Parse([]byte(e.Text))
+		if err != nil {
 			return fmt.Errorf("the plan was not accepted; fix it and hand it in again:\n%w", err)
+		}
+		// The human sees a plan they commented on come back. Without an
+		// answer in it, it reads as a plan they never commented on.
+		if spec.Feedback && strings.TrimSpace(p.Response) == "" {
+			return errors.New("the plan was not accepted; fix it and hand it in again:\n" +
+				"the human sent your last plan back with a comment, so this plan needs a " +
+				"response: field answering it. Say what you changed and why, and say so even " +
+				"when you disagree and changed nothing")
 		}
 		e.Type = session.EntryPlan
 	}

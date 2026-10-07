@@ -311,7 +311,8 @@ func TestFeedbackRegrillsAPlan(t *testing.T) {
 			return
 		}
 		t, _ := f.store.Task(g.Name, task)
-		sawFeedback = strings.Contains(t.Body, "Split cards into two workstreams.")
+		sawFeedback = strings.Contains(t.Body, "Split cards into two workstreams.") &&
+			s.spec.Feedback
 		s.report(session.EntryAsk, task, "Split how?")
 	}
 	f.step() // triage
@@ -320,7 +321,7 @@ func TestFeedbackRegrillsAPlan(t *testing.T) {
 		t.Error("the old plan was not set aside")
 	}
 	if !sawFeedback {
-		t.Error("the next round did not see the feedback")
+		t.Error("the next round did not see the feedback, or was not told to answer it")
 	}
 }
 

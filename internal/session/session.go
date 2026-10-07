@@ -65,6 +65,9 @@ type Spec struct {
 	// Tickets names the tracker every new goal must carry a ticket from, such
 	// as "linear"; empty asks for none.
 	Tickets string `json:"tickets,omitempty"`
+	// Feedback says the human sent this goal's plan back with a comment, so
+	// the plan this round hands in must answer it (ADR 0010).
+	Feedback bool `json:"feedback,omitempty"`
 }
 
 // Create makes the session directory and writes its spec.

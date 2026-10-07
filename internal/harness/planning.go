@@ -117,6 +117,21 @@ func feedbackDir(s *queue.Store, goal string) string {
 	return plan.FeedbackDir(s.GoalDir(goal))
 }
 
+// feedbackHeading is the section applyFeedback puts the human's comment
+// under, which is also how a round knows it must answer one.
+const feedbackHeading = "Feedback from the human"
+
+// sentBack says whether the human has commented on a plan of this batch's,
+// which the plan it hands in must answer.
+func sentBack(tasks []*queue.Task) bool {
+	for _, t := range tasks {
+		if t.Kind == queue.Grilling && strings.Contains(t.Body, "## "+feedbackHeading) {
+			return true
+		}
+	}
+	return false
+}
+
 // applyFeedback passes feedback to a goal's grilling. A plan handed in and
 // not yet signed off is set aside, and grilling starts another round with the
 // feedback. A round already running gets it once it ends.
@@ -135,7 +150,7 @@ func (h *Harness) applyFeedback(s *queue.Store, goal string, tasks []*queue.Task
 		return nil
 	}
 	for _, in := range items {
-		grill.Body = appendSection(grill.Body, "Feedback from the human", in.Text)
+		grill.Body = appendSection(grill.Body, feedbackHeading, in.Text)
 	}
 	if grill.State == queue.Done {
 		if err := plan.Supersede(s.GoalDir(goal), h.now()); err != nil {

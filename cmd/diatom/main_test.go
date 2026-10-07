@@ -357,6 +357,26 @@ func TestPlanningToolCommands(t *testing.T) {
 		!strings.Contains(stdout, "accepted") {
 		t.Errorf("a valid plan = %d %q", code, stdout)
 	}
+	// A plan the human sent back is refused until it answers them.
+	back := session.Spec{
+		ID: "b", Kind: queue.Grilling, Tasks: []string{"0002"}, Feedback: true,
+	}
+	bdir := t.TempDir()
+	if err := session.Create(bdir, back); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(session.EnvVar, bdir)
+	if code, _, stderr := diatom(t, good, "task", "plan", "0002"); code != 1 ||
+		!strings.Contains(stderr, "response:") {
+		t.Errorf("a plan that ignores the feedback = %d %q", code, stderr)
+	}
+	answered := strings.Replace(good, "summary:", "response: I split the cards.\nsummary:", 1)
+	if code, stdout, stderr := diatom(t, answered, "task", "plan", "0002"); code != 0 ||
+		!strings.Contains(stdout, "accepted") {
+		t.Errorf("an answered plan = %d %q %q", code, stdout, stderr)
+	}
+	t.Setenv(session.EnvVar, gdir)
+
 	// A goal the human asked for can be started from any session; sorting
 	// work into goals stays triage's.
 	if code, stdout, stderr := diatom(

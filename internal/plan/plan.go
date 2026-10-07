@@ -27,7 +27,11 @@ import (
 // Plan is what grilling hands in for the human to sign off.
 type Plan struct {
 	// Summary says in a few sentences what the goal will do and how.
-	Summary     string             `yaml:"summary"`
+	Summary string `yaml:"summary"`
+	// Response answers the feedback the human sent a plan back with: what
+	// changed, or why nothing did. A round that started from feedback is
+	// refused without it (ADR 0010).
+	Response    string             `yaml:"response,omitempty"`
 	Workstreams []queue.Workstream `yaml:"workstreams"`
 	Tasks       []Task             `yaml:"tasks"`
 }
@@ -417,6 +421,11 @@ func commitDrafts(ctx context.Context, s *queue.Store, cfg *config.Config, g *qu
 // Describe renders a plan for the human to read before signing it off.
 func Describe(p *Plan) string {
 	var b strings.Builder
+	if r := strings.TrimSpace(p.Response); r != "" {
+		// What they asked for comes before the plan: it is why they are
+		// reading this one again.
+		b.WriteString("Answering your last comment: " + r + "\n\n")
+	}
 	b.WriteString(strings.TrimSpace(p.Summary) + "\n\nWorkstreams:\n")
 	for _, w := range p.Workstreams {
 		b.WriteString("  " + w.Name)

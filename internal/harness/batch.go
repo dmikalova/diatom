@@ -332,6 +332,7 @@ func (h *Harness) newSession(
 		Connectors:   catalog(cfg),
 		Attached:     attached(cfg, b.Tasks, planningKind(b.Kind)),
 		Tickets:      cfg.Tickets,
+		Feedback:     sentBack(b.Tasks),
 	}
 	if p, err := cfg.Profile(b.Profile); err == nil {
 		spec.Model, spec.Level = p.Model, cmp.Or(b.Effort, p.Effort)
@@ -367,6 +368,7 @@ func (h *Harness) newSession(
 		Connectors: cfg.Connectors(),
 		Attached:   spec.Attached,
 		Tickets:    cfg.Tickets,
+		Feedback:   spec.Feedback,
 	}
 	var prompt string
 	if planningKind(b.Kind) {

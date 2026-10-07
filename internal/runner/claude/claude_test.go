@@ -223,7 +223,7 @@ func TestArgs(t *testing.T) {
 		"-p --output-format stream-json --verbose",
 		"--setting-sources project,local --strict-mcp-config",
 		"--model opus", "--effort high", "--max-turns 50",
-		"--tools Read,Bash ", "--allowedTools Read,Bash(go test:*),Bash",
+		"--tools Read,Bash ", "--allowedTools Read,Bash(go test:*),Bash,mcp__docs",
 		"--add-dir /repo/.diatom/goals/g/tasks/active",
 		"--append-system-prompt-file /scratch/instructions.md",
 		"--plugin-dir /scratch/plugin",

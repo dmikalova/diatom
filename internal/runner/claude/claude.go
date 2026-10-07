@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -183,8 +184,14 @@ func Args(spec runner.Spec, scratch string) ([]string, error) {
 		}
 	}
 	args = append(args, "--tools", strings.Join(base, ","))
-	if len(p.Tools) > 0 {
-		args = append(args, "--allowedTools", strings.Join(p.Tools, ","))
+	// An attached server's tools are allowed by `mcp__<server>`: nothing
+	// prompts in dontAsk mode, so a tool left out is a tool denied.
+	allowed := slices.Clone(p.Tools)
+	for _, name := range slices.Sorted(maps.Keys(spec.MCPServers)) {
+		allowed = append(allowed, "mcp__"+name)
+	}
+	if len(allowed) > 0 {
+		args = append(args, "--allowedTools", strings.Join(allowed, ","))
 	}
 	for _, d := range spec.AddDirs {
 		args = append(args, "--add-dir", d)
