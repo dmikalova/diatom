@@ -74,6 +74,9 @@ func cmdTask(ctx context.Context, args []string, stdin io.Reader, stdout io.Writ
 		return fmt.Errorf("%w: task needs a subcommand", errUsage)
 	}
 	switch sub, rest := args[0], args[1:]; sub {
+	case "help", "-h", "--help":
+		_, _ = fmt.Fprintln(stdout, usage)
+		return nil
 	case session.EntryDone, session.EntryNote, session.EntryAsk, session.EntryManual:
 		return taskReport(ctx, sub, rest, stdout)
 	case session.EntryConnect:

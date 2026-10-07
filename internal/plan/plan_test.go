@@ -170,6 +170,40 @@ func TestNewGoal(t *testing.T) {
 	}
 }
 
+func TestAGoalIsBasedOnTheRemotesDefaultBranch(t *testing.T) {
+	ctx := context.Background()
+	s := newRepo(t)
+	r := git.Repo{Dir: s.Repo()}
+	bare := git.Repo{Dir: t.TempDir()}
+	if _, err := bare.Run(ctx, "init", "--bare", "--initial-branch=main"); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"remote", "add", "origin", bare.Dir}, {"push", "--quiet", "origin", "main"},
+		{"checkout", "--quiet", "-b", "dmikalova/dip-4117-drop-the-status-records"},
+	} {
+		if _, err := r.Run(ctx, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	g, err := NewGoal(
+		ctx,
+		s,
+		"",
+		"Drop the status records",
+		"",
+		"",
+		queue.Origin{},
+		time.Unix(1, 0),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.Base != "main" {
+		t.Errorf("base = %q, want main whatever is checked out", g.Base)
+	}
+}
+
 func TestApprove(t *testing.T) {
 	ctx := context.Background()
 	s := newRepo(t)

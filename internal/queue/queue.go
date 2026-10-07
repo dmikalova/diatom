@@ -65,7 +65,11 @@ type Goal struct {
 	Description string    `yaml:"description,omitempty"`
 	State       GoalState `yaml:"state"`
 	// Base is the branch the integration branch started from.
-	Base    string    `yaml:"base"`
+	Base string `yaml:"base"`
+	// Branch is the branch the goal's pull request lives on, for a tracker
+	// that links the ticket to a branch it named itself, such as Linear.
+	// Empty means diatom names it (ADR 0014).
+	Branch  string    `yaml:"branch,omitempty"`
 	Created time.Time `yaml:"created"`
 	// Finished is when the goal was found landed upstream.
 	Finished    time.Time    `yaml:"finished,omitempty"`

@@ -131,6 +131,47 @@ func (r Repo) CurrentBranch(ctx context.Context) (string, error) {
 	return r.Run(ctx, "symbolic-ref", "--short", "HEAD")
 }
 
+// BaseBranch is the branch goals are based on: the one the remote's HEAD
+// points at, such as main, whatever happens to be checked out. The remote is
+// asked first, then what was last fetched from it, and a repo with no remote
+// falls back to the checked-out branch.
+func (r Repo) BaseBranch(ctx context.Context, remote string) (string, error) {
+	if out, err := r.Run(ctx, "ls-remote", "--symref", remote, "HEAD"); err == nil {
+		if b := symrefHead(out); b != "" {
+			return b, nil
+		}
+	}
+	if head, err := r.Run(
+		ctx,
+		"symbolic-ref",
+		"--short",
+		"refs/remotes/"+remote+"/HEAD",
+	); err == nil {
+		if b := strings.TrimPrefix(head, remote+"/"); b != "" {
+			return b, nil
+		}
+	}
+	return r.CurrentBranch(ctx)
+}
+
+// symrefHead is the branch named by the "ref: refs/heads/main\tHEAD" line of
+// git ls-remote --symref, or "" when there is none.
+func symrefHead(out string) string {
+	for line := range strings.SplitSeq(out, "\n") {
+		ref, ok := strings.CutPrefix(line, "ref: ")
+		if !ok {
+			continue
+		}
+		fields := strings.Fields(ref)
+		if len(fields) > 0 {
+			if b, ok := strings.CutPrefix(fields[0], "refs/heads/"); ok {
+				return b
+			}
+		}
+	}
+	return ""
+}
+
 // RevParse resolves a revision to its object name.
 func (r Repo) RevParse(ctx context.Context, rev string) (string, error) {
 	return r.Run(ctx, "rev-parse", "--verify", "--quiet", rev+"^{commit}")
@@ -140,6 +181,13 @@ func (r Repo) RevParse(ctx context.Context, rev string) (string, error) {
 func (r Repo) BranchExists(ctx context.Context, branch string) bool {
 	_, err := r.Run(ctx, "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
 	return err == nil
+}
+
+// RemoteHasBranch reports whether the remote has the branch, asked of the
+// remote itself rather than of what was last fetched.
+func (r Repo) RemoteHasBranch(ctx context.Context, remote, branch string) bool {
+	out, err := r.Run(ctx, "ls-remote", "--heads", remote, "refs/heads/"+branch)
+	return err == nil && strings.TrimSpace(out) != ""
 }
 
 // CreateBranch creates branch at start unless it already exists.
@@ -175,13 +223,19 @@ func (r Repo) IsIgnored(ctx context.Context, path string) bool {
 }
 
 // Upstream returns the remote-tracking branch branch follows, such as
-// origin/main, or "" when it follows none.
+// origin/main, or "" when it follows none. A branch with no upstream
+// configured, or none checked out locally at all, still follows origin's own
+// copy of it.
 func (r Repo) Upstream(ctx context.Context, branch string) string {
 	up, err := r.Run(ctx, "rev-parse", "--abbrev-ref", "--symbolic-full-name", branch+"@{upstream}")
-	if err != nil {
+	if err == nil {
+		return up
+	}
+	tracking := "origin/" + branch
+	if _, err := r.RevParse(ctx, "refs/remotes/"+tracking); err != nil {
 		return ""
 	}
-	return up
+	return tracking
 }
 
 // IsAncestor reports whether a is an ancestor of, or the same commit as, b.

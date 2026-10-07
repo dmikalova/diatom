@@ -12,11 +12,15 @@ import (
 )
 
 // BaseTip is what the goal lands on: its base branch, or the upstream branch
-// the base follows when that is ahead, as it is before the human pulls.
+// the base follows when that is ahead, as it is before the human pulls. A
+// base with no branch of its own locally is the upstream itself.
 func BaseTip(ctx context.Context, repo git.Repo, g *queue.Goal) string {
 	up := repo.Upstream(ctx, g.Base)
 	if up == "" {
 		return g.Base
+	}
+	if !repo.BranchExists(ctx, g.Base) {
+		return up
 	}
 	if ahead, err := repo.IsAncestor(ctx, g.Base, up); err != nil || !ahead {
 		return g.Base

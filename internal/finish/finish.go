@@ -127,7 +127,13 @@ func FinalBranch(g *queue.Goal) string { return "diatom/" + g.Name + "/final" }
 // commit to its merge. GitHub cannot move a pull request's head branch, so
 // the first of the stack has to sit on a branch chosen before there is a
 // stack, for the pull request opened early to survive landing (ADR 0014).
-func ReviewBranch(g *queue.Goal) string { return "diatom/" + g.Name + "/review" }
+// The goal's own branch wins, so a ticket that named one keeps its link.
+func ReviewBranch(g *queue.Goal) string {
+	if g.Branch != "" {
+		return g.Branch
+	}
+	return "diatom/" + g.Name + "/review"
+}
 
 // prBranch is the branch of one pull request of a goal's stack.
 func prBranch(g *queue.Goal, ws string) string { return "diatom/" + g.Name + "/pr/" + ws }

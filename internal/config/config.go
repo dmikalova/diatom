@@ -87,7 +87,8 @@ type Repo struct {
 	Budget Budget `toml:"budget"`
 	// Editor is the command the reviewer's o opens a hunk's file in, at its
 	// line, from the worktree of the workstream that made it. It takes the
-	// terminal until it exits. Empty turns o off.
+	// terminal until it exits. VS Code and its forks are given the line their
+	// own way, so "code" works as it stands. Empty turns o off.
 	Editor string `toml:"editor"`
 	// Land is how a goal ready to finish lands: LandMerge merges it into its
 	// base branch, LandPRs opens its stacked pull requests. Empty offers both.

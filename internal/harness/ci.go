@@ -2,6 +2,7 @@ package harness
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -39,9 +40,8 @@ func (h *Harness) applyCI(
 			return loadErr
 		}
 		if err != nil {
-			if askErr := h.askAbout(repo.Store, g, t, "Pushing the goal's branch failed",
-				err.Error()); askErr != nil {
-				return askErr
+			if noteErr := h.ciUnavailable(repo, g, t, err); noteErr != nil {
+				return noteErr
 			}
 			continue
 		}
@@ -57,6 +57,35 @@ func (h *Harness) applyCI(
 		h.log().Info("task waiting for checks", "goal", g.Name, "task", t.ID, "pr", url)
 	}
 	return nil
+}
+
+// ciDropped tells the tasks that asked for the checks that their work never
+// reached the goal's branch, so nothing was pushed to run them on.
+func (h *Harness) ciDropped(repo Repo, g *queue.Goal, report session.Report, why string) {
+	for _, e := range report.CI {
+		if err := repo.Store.AppendNote(g.Name, e.Task, "No CI",
+			"You asked for the checks, but "+why+". Ask again once the work is in.\n"); err != nil {
+			h.log().Warn("noting a dropped ask for the checks failed",
+				"goal", g.Name, "task", e.Task, "err", err)
+		}
+	}
+}
+
+// ciUnavailable says why a task got no checks. A goal with nothing committed
+// yet is the agent's to fix, so the task keeps its place and runs again; the
+// rest, such as a base branch the remote has never seen, need the human.
+func (h *Harness) ciUnavailable(repo Repo, g *queue.Goal, t *queue.Task, err error) error {
+	if errors.Is(err, finish.ErrNoCommits) {
+		h.log().Info("no commits to open the goal's pull request with",
+			"goal", g.Name, "task", t.ID)
+		return repo.Store.AppendNote(g.Name, t.ID, "No CI yet",
+			"You asked for the checks, but "+g.Name+" has no commits of its own yet, so there "+
+				"is nothing to run them on. Commit your work first, then ask again.\n")
+	}
+	return h.askAbout(repo.Store, g, t, "The goal's pull request could not be opened",
+		fmt.Sprintf("Task %s asked for the checks on %s. Opening or updating the pull request "+
+			"failed, so it has nothing to wait for and carries on without a verdict.\n\n%s\n",
+			t.ID, finish.ReviewBranch(g), err))
 }
 
 func waitNote(e session.Entry, url, head string) string {
@@ -117,9 +146,16 @@ func (h *Harness) checkTask(ctx context.Context, repo Repo, g *queue.Goal, t *qu
 	ctx, cancel := context.WithTimeout(ctx, watchTimeout)
 	defer cancel()
 	gh, dir := h.gh(), repo.Store.Repo()
-	url, err := finish.EnsurePR(ctx, repo.Store, g, "origin", gh)
-	if err != nil {
-		return err
+	url := finish.FindPR(ctx, dir, g, gh)
+	if url == "" {
+		// No pull request, so no verdict is coming: let the task run again.
+		t.CI, t.CILabels = "", nil
+		if err := repo.Store.SaveTask(g.Name, t); err != nil {
+			return err
+		}
+		return repo.Store.AppendNote(g.Name, t.ID, "No CI",
+			"The pull request on "+finish.ReviewBranch(g)+" is gone, so the checks you waited "+
+				"for will not come back. Ask again if you still need them.\n")
 	}
 	verdict, failing, err := finish.PRChecks(ctx, dir, url, gh)
 	if err != nil {

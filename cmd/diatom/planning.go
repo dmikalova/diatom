@@ -31,6 +31,7 @@ func planningReport(sub string, args []string, stdin io.Reader, stdout io.Writer
 	description := fs.String("description", "", "what a new goal is for, in a line")
 	after := fs.String("after", "", "ids of tasks that must be done first, comma-separated")
 	profile := fs.String("profile", "", "the profile, instead of the kind's default")
+	branch := fs.String("branch", "", "the branch a new goal's pull request lives on")
 	pos, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
@@ -56,7 +57,7 @@ func planningReport(sub string, args []string, stdin io.Reader, stdout io.Writer
 		}
 		if err := triageEntry(&e, sub, entryFlags{
 			goal: *goal, title: *title, description: *description, ws: *ws,
-			after: *after, profile: *profile, planFile: *planFile,
+			after: *after, profile: *profile, planFile: *planFile, branch: *branch,
 		}); err != nil {
 			return err
 		}
@@ -109,7 +110,7 @@ func planningReport(sub string, args []string, stdin io.Reader, stdout io.Writer
 
 // entryFlags are the flags of what a triage session hands in.
 type entryFlags struct {
-	goal, title, description, ws, after, profile, planFile string
+	goal, title, description, ws, after, profile, planFile, branch string
 }
 
 // triageEntry fills in what a triage session hands in with add-task,
@@ -154,6 +155,7 @@ func triageEntry(e *session.Entry, sub string, f entryFlags) error {
 	e.Type, e.Title, e.Description, e.After = session.EntryGoal, title, description, splitList(
 		after,
 	)
+	e.Branch = strings.TrimSpace(f.branch)
 	if f.planFile == "" {
 		return nil
 	}

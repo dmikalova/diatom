@@ -339,7 +339,10 @@ func (n *Next) key(msg tea.KeyPressMsg) nextKey {
 	if it == nil {
 		return nextKey{back: k == "esc" || k == "left"}
 	}
-	if (n.area != areaAnswer || k != "enter") && (it.kind != itemPlan || k != approveKey) {
+	// Everything but a second press of the key that asked to sign off.
+	if (n.area != areaAnswer || k != "enter") &&
+		(it.kind != itemPlan || k != approveKey) &&
+		(it.kind != itemQuestion || k != sameKey) {
 		n.confirm = ""
 	}
 	switch n.area {
@@ -351,29 +354,7 @@ func (n *Next) key(msg tea.KeyPressMsg) nextKey {
 			return nextKey{open: it.row.goal.Name}
 		}
 	case areaBody:
-		if it.kind == itemReview {
-			return n.reviewKey(*it, msg)
-		}
-		if it.kind == itemPlan && slices.Contains([]string{approveKey, commentKey, laterKey}, k) {
-			// A plan is decided on as a hunk is, while reading it.
-			return nextKey{cmd: n.planKey(*it, k)}
-		}
-		switch k {
-		case "esc", "left":
-			return nextKey{back: true}
-		case "j", "down":
-			n.scrollBy(1)
-		case "k", "up":
-			n.scrollBy(-1)
-		case "space", " ":
-			n.scrollBy(max(n.room/2, 1))
-		case "shift+space":
-			n.scrollBy(-max(n.room/2, 1))
-		case "pgdown":
-			n.scrollBy(max(n.room-1, 1))
-		case "pgup":
-			n.scrollBy(-max(n.room-1, 1))
-		}
+		return n.bodyKey(*it, msg)
 	case areaAnswer:
 		if it.kind == itemFinish && n.more {
 			return n.moreKey(*it, msg)
@@ -388,6 +369,41 @@ func (n *Next) key(msg tea.KeyPressMsg) nextKey {
 			return nextKey{cmd: n.planKey(*it, k)}
 		}
 		return n.answerKey(*it, msg)
+	}
+	return nextKey{}
+}
+
+// bodyKey hands a key to the item being read: the reviewer's own keys, the
+// decisions a plan or a question can be done with while reading it, and
+// scrolling.
+func (n *Next) bodyKey(it item, msg tea.KeyPressMsg) nextKey {
+	k := msg.String()
+	switch {
+	case it.kind == itemReview:
+		return n.reviewKey(it, msg)
+	case it.kind == itemPlan && slices.Contains([]string{approveKey, commentKey, laterKey}, k):
+		// A plan is decided on as a hunk is, while reading it.
+		return nextKey{cmd: n.planKey(it, k)}
+	case it.kind == itemQuestion && k == laterKey:
+		return nextKey{cmd: n.putOff(it)}
+	case it.kind == itemQuestion && k == sameKey:
+		return nextKey{cmd: n.sameAnswer(it)}
+	}
+	switch k {
+	case "esc", "left":
+		return nextKey{back: true}
+	case "j", "down":
+		n.scrollBy(1)
+	case "k", "up":
+		n.scrollBy(-1)
+	case "space", " ":
+		n.scrollBy(max(n.room/2, 1))
+	case "shift+space":
+		n.scrollBy(-max(n.room/2, 1))
+	case "pgdown":
+		n.scrollBy(max(n.room-1, 1))
+	case "pgup":
+		n.scrollBy(-max(n.room-1, 1))
 	}
 	return nextKey{}
 }
@@ -601,8 +617,8 @@ func (n *Next) finishKey(it item, k string) tea.Cmd {
 	return cmd
 }
 
-// laterKey puts a goal ready to finish off, to land once the rest is seen to,
-// and moreKey says what more it needs first.
+// laterKey puts an item off, to come back once the rest is seen to, and
+// moreKey says what more a goal ready to finish needs.
 const (
 	laterKey = "l"
 	moreKey  = "m"
@@ -644,6 +660,63 @@ func (n *Next) moreKey(it item, msg tea.KeyPressMsg) nextKey {
 	var cmd tea.Cmd
 	n.answer, cmd = n.answer.Update(msg)
 	return nextKey{cmd: cmd}
+}
+
+// sameKey answers a question with the answer an earlier one already got.
+const sameKey = "s"
+
+// sameAnswer hands a question the answer an earlier one already got, once it
+// is asked for twice. The task's own answers come first, then the rest of
+// the goal's.
+func (n *Next) sameAnswer(it item) tea.Cmd {
+	src := n.lastAnswered(it)
+	if src == nil {
+		n.flash = it.row.goal.Name + " has no earlier answer to repeat"
+		return nil
+	}
+	if n.confirm != it.id() {
+		n.confirm = it.id()
+		n.flash = fmt.Sprintf("%s again to answer it as question %s was on %s: %s", sameKey,
+			src.ID, stamp(src.Answered), roster.Clip(src.Answer))
+		return nil
+	}
+	text := fmt.Sprintf("Question %s asked this too, and the answer was:\n\n%s", src.ID, src.Answer)
+	if err := n.env.Store.Answer(it.row.goal.Name, it.q.ID, text, n.env.Now()); err != nil {
+		n.err = err
+		return nil
+	}
+	n.flash = fmt.Sprintf("answered as question %s was; task %s is ready again", src.ID, it.q.Task)
+	return n.moveOn()
+}
+
+// lastAnswered is the newest answer the goal already has, its own task's
+// first, nil when it has none.
+func (n *Next) lastAnswered(it item) *queue.Question {
+	var answered []*queue.Question
+	for _, st := range []queue.QuestionState{queue.QuestionOpen, queue.QuestionClosed} {
+		qs, err := n.env.Store.Questions(it.row.goal.Name, st)
+		if err != nil {
+			n.err = err
+			continue
+		}
+		for _, q := range qs {
+			if q.ID != it.q.ID && q.Answer != "" {
+				answered = append(answered, q)
+			}
+		}
+	}
+	own := slices.DeleteFunc(slices.Clone(answered), func(q *queue.Question) bool {
+		return q.Task != it.q.Task
+	})
+	if len(own) > 0 {
+		answered = own
+	}
+	if len(answered) == 0 {
+		return nil
+	}
+	return slices.MaxFunc(answered, func(a, b *queue.Question) int {
+		return a.Answered.Compare(b.Answered)
+	})
 }
 
 // lower is what shows below the item: the answer box, or what can be done
@@ -693,6 +766,9 @@ func (n *Next) putOff(it item) tea.Cmd {
 	}
 	n.later[it.id()] = true
 	n.flash = it.row.goal.Name + " waits until the rest are done"
+	if it.kind == itemQuestion {
+		n.flash = "question " + it.q.ID + " waits until the rest are done"
+	}
 	return n.moveOn()
 }
 
@@ -827,6 +903,7 @@ func (n *Next) contextLines(it item, w int) []string {
 			}
 			lines = append(lines, clipLines(asked, w, 2)...)
 		}
+		lines = append(lines, tui.Dim("waiting since "+stamp(it.q.Created)))
 	case itemPlan:
 		lines = append(lines, tui.Dim("Grilling's plan, waiting for you to approve it"))
 	case itemFinish:
@@ -837,6 +914,10 @@ func (n *Next) contextLines(it item, w int) []string {
 	more := "enter opens the goal"
 	if r.intake {
 		more = "enter opens the intake"
+	}
+	if it.kind == itemQuestion {
+		more = fmt.Sprintf("%s puts it off · %s answers it as the last one was · %s",
+			laterKey, sameKey, more)
 	}
 	if e := n.earlier[name]; e > 0 {
 		more = fmt.Sprintf("%d earlier answers · %s", e, more)

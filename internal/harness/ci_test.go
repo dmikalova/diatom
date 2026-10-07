@@ -127,7 +127,35 @@ func TestAFailedPushAsksTheHuman(t *testing.T) {
 		t.Errorf("task waits for checks that will never run: %+v", got)
 	}
 	if len(qs) != 1 || qs[0].Task != task.ID ||
-		!strings.Contains(qs[0].Text, "Pushing the goal's branch failed") {
+		!strings.Contains(qs[0].Text, "The goal's pull request could not be opened") {
 		t.Errorf("questions = %+v", qs)
+	}
+}
+
+// TestAskingForCIWithNothingCommittedTellsTheAgent covers the goal that has
+// nothing to run checks on: that is the agent's to fix, so the task keeps
+// its place rather than becoming a question.
+func TestAskingForCIWithNothingCommittedTellsTheAgent(t *testing.T) {
+	f := newFixture(t)
+	f.origin()
+	task := f.add("engine", "Make CI run the matrix")
+	f.agent.act = func(t *testing.T, _ string, s agentSession) {
+		if err := session.Append(s.dir, s.spec, session.Entry{
+			Type: session.EntryCI, Task: task.ID, Text: "it only runs on a pull request",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.step()
+	qs, err := f.store.Questions("set", queue.QuestionOpen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(qs) != 0 {
+		t.Errorf("nothing committed asked the human: %+v", qs)
+	}
+	got := f.task(task.ID)
+	if got.CI != "" || !strings.Contains(got.Body, "no commits of its own yet") {
+		t.Errorf("task after asking with nothing committed = %+v", got)
 	}
 }

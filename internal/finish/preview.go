@@ -2,6 +2,7 @@ package finish
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -24,6 +25,21 @@ func Mirror(ctx context.Context, s *queue.Store, g *queue.Goal, remote string) e
 	return err
 }
 
+// FindPR is the goal's open pull request, "" when it has none. The branch
+// is its identity, so finding it costs one read and no push (ADR 0014).
+func FindPR(ctx context.Context, dir string, g *queue.Goal, gh GH) string {
+	url, err := gh(ctx, dir, "pr", "view", ReviewBranch(g), "--json", "url", "--jq", ".url")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(url)
+}
+
+// ErrNoCommits is what EnsurePR answers when the goal has nothing to open a
+// pull request with. It is the agent's to fix, not the human's: the task
+// runs again and commits first.
+var ErrNoCommits = errors.New("the goal has no commits of its own yet")
+
 // EnsurePR returns the goal's open pull request, opening it as a draft when
 // it has none. The branch is the only identity the pull request needs, so
 // nothing about it is stored (ADR 0014).
@@ -34,24 +50,33 @@ func EnsurePR(
 	remote string,
 	gh GH,
 ) (string, error) {
+	repo := git.Repo{Dir: s.Repo()}
+	if ReviewBranch(g) == g.Base {
+		return "", fmt.Errorf("goal %s has %s as both its branch and its base, so it has "+
+			"nowhere to open a pull request: give it a branch of its own in goal.yaml",
+			g.Name, g.Base)
+	}
+	ahead, err := commitsOfItsOwn(ctx, repo, g)
+	if err != nil {
+		return "", err
+	}
+	if !ahead {
+		return "", ErrNoCommits
+	}
 	if err := Mirror(ctx, s, g, remote); err != nil {
 		return "", err
 	}
 	branch := ReviewBranch(g)
 	dir := s.Repo()
-	if url, err := gh(
-		ctx,
-		dir,
-		"pr",
-		"view",
-		branch,
-		"--json",
-		"url",
-		"--jq",
-		".url",
-	); err == nil &&
-		url != "" {
+	if url := FindPR(ctx, dir, g, gh); url != "" {
 		return url, nil
+	}
+	if !repo.RemoteHasBranch(ctx, remote, g.Base) {
+		// GitHub answers this as an unreadable GraphQL error, so it is asked
+		// here instead.
+		return "", fmt.Errorf("%s has no branch %s, which goal %s is based on: push it, and "+
+			"the pull request opens the next time a task asks for its checks",
+			remote, g.Base, g.Name)
 	}
 	out, err := gh(ctx, dir, "pr", "create", "--draft",
 		"--head", branch, "--base", g.Base, "--title", g.Title, "--body", draftBody(g))
@@ -60,6 +85,18 @@ func EnsurePR(
 	}
 	lines := strings.Split(out, "\n")
 	return lines[len(lines)-1], nil
+}
+
+// commitsOfItsOwn reports whether the goal's branch is ahead of its base.
+func commitsOfItsOwn(ctx context.Context, repo git.Repo, g *queue.Goal) (bool, error) {
+	if !repo.BranchExists(ctx, g.IntegrationBranch()) {
+		return false, nil
+	}
+	ahead, err := repo.Run(ctx, "rev-list", "--count", g.Base+".."+g.IntegrationBranch())
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(ahead) != "0", nil
 }
 
 func draftBody(g *queue.Goal) string {

@@ -446,10 +446,13 @@ func stillBlocked(task, answered string, open []*queue.Question) bool {
 	return false
 }
 
-// goalStart is where a goal's integration branch starts: its base branch,
-// or the upstream branch that one follows when it is ahead, as it is once a
+// goalStart is where a goal's integration branch starts: its base branch, or
+// the upstream branch that one follows when it is ahead, as it is once a
 // goal this one waited for has landed there and before the human has pulled.
-func goalStart(ctx context.Context, main git.Repo, g *queue.Goal) string {
+// The base is fetched first, so a goal starts from the remote's tip rather
+// than from whatever was last pulled.
+func (h *Harness) goalStart(ctx context.Context, main git.Repo, g *queue.Goal) string {
+	h.fetchBase(ctx, main, g.Base)
 	return finish.BaseTip(ctx, main, g)
 }
 

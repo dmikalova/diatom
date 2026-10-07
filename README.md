@@ -82,7 +82,9 @@ each goal and session spent on it.
   ready to finish with the hunks finishing them brought, then plans to sign
   off, then questions, then the other hunks to review, each in the nav's order
   of goals. A goal ready to finish can instead get more work, or wait until
-  later. Above each item is what its goal is
+  later. A question you are not ready for waits until later too, `l`, and one
+  an earlier question already settled takes that answer, `s` twice. Above each
+  item is what its goal is
   for; enter there opens the goal. Answering moves on to the first item left.
 - **The intake box** takes anything you want done, such as "Turn
   docs/todo.md into goals, one per section". Triage, an agent, sorts it into
@@ -124,7 +126,9 @@ agent's fix lands as a `fixup!` commit that comes back for review.
 A goal ready to finish comes up in Next. `P` merges it into the base branch,
 and `F` opens it as a stack of pull requests instead, one per workstream on
 `diatom/<goal>/pr/<ws>`, each stacked on the one before; `d` only marks it
-done, to land later. The first of that stack is the pull request the goal has
+done, to land later. A goal's base is the branch `origin`'s HEAD points at,
+usually `main`, whatever you have checked out, and it starts from the remote's
+tip of it. The first of that stack is the pull request the goal has
 had all along, on `diatom/<goal>/review`, so landing reuses it rather than
 leaving a stray one behind. Goals follow their base branch as it moves: whenever
 something lands on it, whether diatom pushed it or it was fetched from the
@@ -194,7 +198,7 @@ chainContext = 100000             # context, in tokens, past which a session's o
 commitCheck = "project-standards commit-msg"   # lints a commit message file; the repo's commit-msg hook by default
 instructions = ["~/notes/go.md"] # more files for every agent's system prompt
 skills = ["grill-me", "grilling"] # skills every session may load: names in ~/.claude/skills, or paths
-editor = "nvim"                   # what the reviewer's o opens a hunk's file in, at its line
+editor = "nvim"                   # what the reviewer's o opens a hunk's file in, at its line ("code" works too)
 land = "merge"                    # how goals land: "merge" into their base, "prs"; unset offers both
 maxConnectors = 2                 # MCP servers one session may carry; 0 doesn't cap them
 
@@ -245,6 +249,10 @@ one. After three rounds a failing check becomes a question, so
 nothing spins on a flaky job. Agents may read with `gh pr view`, `gh pr checks`
 and `gh api` without a body; every gh command that writes is blocked, and only
 you ever merge.
+
+When a tracker names the branch for its ticket, as Linear does, give the goal
+that name and its pull request lives there instead: `-branch <name>` on
+`diatom task new-goal`, or `branch:` in the goal's `goal.yaml`.
 
 Only `~/.config/diatom/config.toml` may set these:
 

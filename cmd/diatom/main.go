@@ -7,15 +7,18 @@
 //	diatom
 //	diatom ledger
 //	diatom version
+//	diatom help
 //
 // diatom opens a window on the repository the current directory is in, and
 // runs its scheduler until the window closes (ADR 0007).
 //
 // Inside an agent session:
 //
-//	diatom task done|note|ask <id> [text]
-//	diatom task add-task|after|feedback|new-goal|plan <id> ...
+//	diatom task done|note|ask|manual <id> [text]
+//	diatom task connect <id> <connector> <why>
+//	diatom task ci <id> [--label <name>]... <why>
 //	diatom task goals [<goal>]
+//	diatom task add-task|after|feedback|new-goal|plan <id> ...
 //	diatom hook pre-tool-use|stop
 package main
 
@@ -81,12 +84,35 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 }
 
 const usage = `Usage:
-  diatom           open diatom on the repo; quitting suspends its sessions
-  diatom ledger    the repo's landed goals: lines of code for each dollar
-  diatom version
+  diatom                 open diatom on the repo; quitting suspends its sessions
+  diatom ledger          the repo's landed goals: lines of code for each dollar
+  diatom version         the version running
+  diatom help            this
 
-Inside an agent session:
-  diatom task done|note|ask <id> [text]
-  diatom task add-task|after|feedback|new-goal|plan <id> ...
-  diatom task goals [<goal>]
+Inside an agent session, reporting on the task you were given:
+  diatom task done <id> [what you did]
+  diatom task note <id> <text>             add to the task's body
+  diatom task ask <id> <question>          park the task on a question
+  diatom task manual <id> <steps>          park it on steps only the human can do
+  diatom task connect <id> <connector> <why>
+                                           ask for one of the repo's MCP servers;
+                                           the session ends and runs again with it
+  diatom task ci <id> [--label <name>]... <why>
+                                           push the goal's branch, open its pull
+                                           request and bring back its checks;
+                                           a label goes on for the run only
+  diatom task goals [<goal>]               the repo's goals, or one in full
+
+From a triage session, except new-goal, which any session may run:
+  diatom task add-task <id> -goal <goal> -ws <ws> -title <title>
+                       [-after <ids>] [-profile <name>] < body
+  diatom task feedback <id> -goal <goal> < text
+  diatom task after <id> -goal <goal> [-after <goals>]
+  diatom task new-goal <id> -title <title> -description <line>
+                       [-after <goals>] [-branch <name>] [-plan <file.yaml>] < brief
+
+From a grilling session:
+  diatom task plan <id> < plan.yaml        hand in the plan for sign-off
+
+Run by Claude Code, not by you:
   diatom hook pre-tool-use|stop`

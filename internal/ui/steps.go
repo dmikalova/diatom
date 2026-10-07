@@ -404,11 +404,11 @@ func (tv *taskView) render(s *Status, room int) string {
 		if i == 0 {
 			lines = append(lines, "", tui.Dim("─── questions"))
 		}
-		state := tui.Color("open", tui.Magenta)
+		state := tui.Color("open", tui.Magenta) + tui.Dim(" since "+stamp(q.Created))
 		if q.Answer != "" {
-			state = tui.Dim("answered")
+			state = tui.Dim("answered " + stamp(q.Answered))
 		}
-		lines = append(lines, fmt.Sprintf("? %s %s", oneLine(q.Text, s.width-14), state))
+		lines = append(lines, fmt.Sprintf("? %s %s", oneLine(q.Text, s.width-32), state))
 	}
 	if body := strings.TrimSpace(t.Body); body != "" {
 		lines = append(lines, "", tui.Dim("─── task"))
@@ -420,10 +420,18 @@ func (tv *taskView) render(s *Status, room int) string {
 	return scroll(lines, target, target, &tv.top, room, s.width)
 }
 
+// stamp is a time as the window writes it, "never" for none.
+func stamp(t time.Time) string {
+	if t.IsZero() {
+		return "never"
+	}
+	return t.Local().Format("Jan 2 15:04")
+}
+
 // line is the session as one of a task's: whether Claude is running or how
 // it ended, and what diatom made of it.
 func (sv *sessionView) line(width int) string {
-	at := sv.started.Local().Format("Jan 2 15:04")
+	at := stamp(sv.started)
 	steps := fmt.Sprintf("%d steps", len(sv.steps))
 	var line string
 	switch {

@@ -278,11 +278,13 @@ const manualGuide = "  - `diatom task manual <id> \"<steps>\"` when the task nee
 // newGoalGuide is how a session other than triage starts a goal: only when
 // the human asks for one.
 const newGoalGuide = "  - `diatom task new-goal <id> -title \"<title>\" -description \"<line>\" " +
-	"[-after <goals>] < brief` starts a new goal, grilled before any work starts. Use it only when the " +
+	"[-after <goals>] [-branch <name>] < brief` starts a new goal, grilled before any work starts. Use it only when the " +
 	"human asks for a new goal, such as in answering your question; an idea of your own goes in a note " +
 	"or a question instead. The description says in one plain sentence what the goal is for. The brief " +
 	"on stdin is everything its grilling starts from: what the human asked, and what you found. -after " +
-	"names the goals it must wait for, this one among them when it builds on this work.\n"
+	"names the goals it must wait for, this one among them when it builds on this work. " +
+	"Pass -branch only when the human gave a branch name, such as the one a tracker made for its " +
+	"ticket: the goal's pull request then lives on it.\n"
 
 // orderGuide is how planning orders work, which it never asks the human
 // about.
@@ -379,10 +381,12 @@ func writeTriage(b *strings.Builder, repo Repo, briefs []roster.Brief) error {
 	)
 	b.WriteString(
 		"  - `diatom task new-goal <id> -title \"<title>\" -description \"<line>\" [-after <goals>] " +
-			"[-plan <plan.yaml>] < brief` starts a new goal, which is grilled before any work starts. The " +
+			"[-branch <name>] [-plan <plan.yaml>] < brief` starts a new goal, which is grilled before any work starts. The " +
 			"description says in one plain sentence what the goal is for, beyond its title: it is how agents on " +
 			"other goals, and the human answering its questions, tell it apart. The brief on stdin is " +
-			"everything grilling starts from. Pass -plan only when the input already " +
+			"everything grilling starts from. Pass -branch when the input carries a branch name, such as the " +
+			"one a tracker made for its ticket: the goal's pull request lives on that branch, so the ticket " +
+			"links to it. Pass -plan only when the input already " +
 			"decides everything, workstreams and tasks: the goal then skips grilling and waits for the human " +
 			"to sign the plan off. The plan's format is below.\n\n",
 	)

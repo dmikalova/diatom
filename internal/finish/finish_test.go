@@ -258,6 +258,21 @@ func TestBuildFallsBackToOrderOfWork(t *testing.T) {
 	}
 }
 
+// TestAGoalKeepsTheBranchItWasGiven covers a goal whose pull request has to
+// live on a branch a tracker named, so its ticket links to it (ADR 0014).
+func TestAGoalKeepsTheBranchItWasGiven(t *testing.T) {
+	f := newFixture(t)
+	f.goal.Branch = "dmikalova/dip-4117-drop-the-status-records"
+	if got := ReviewBranch(f.goal); got != f.goal.Branch {
+		t.Fatalf("review branch = %q", got)
+	}
+	f.task("engine", f.work("engine", "engine.txt", "v1\n", "feat: add ward"))
+	res := f.build(Options{})
+	if len(res.Stack) != 1 || res.Stack[0].Branch != f.goal.Branch {
+		t.Errorf("the stack ignores the goal's branch: %+v", res.Stack)
+	}
+}
+
 func TestBuildCarriesMergeFixes(t *testing.T) {
 	f := newFixture(t)
 	f.task("engine", f.work("engine", "engine.txt", "ward\n", "feat: add ward"))

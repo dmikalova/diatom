@@ -424,14 +424,33 @@ func (m *Model) editCommand() *exec.Cmd {
 	}
 	args := slices.Clone(m.Editor[1:])
 	if !it.Deleted {
-		if line := it.NewLine(m.cursor); line > 0 {
-			args = append(args, fmt.Sprintf("+%d", line))
-		}
-		args = append(args, filepath.FromSlash(it.Path))
+		args = append(args, openAt(m.Editor[0], args,
+			filepath.FromSlash(it.Path), it.NewLine(m.cursor))...)
 	}
 	cmd := exec.CommandContext(m.ctx, m.Editor[0], args...)
 	cmd.Dir = dir
 	return cmd
+}
+
+// vscode is the editors that take a line as --goto path:line. They are all
+// the same command under different names.
+var vscode = []string{"code", "code-insiders", "codium", "vscodium", "cursor", "windsurf"}
+
+// openAt is how the editor is told which file to open, and where in it: VS
+// Code's own way for VS Code, and vim's "+line path", which nvim, vim, emacs
+// and nano all take, for everything else.
+func openAt(editor string, args []string, path string, line int) []string {
+	if line <= 0 {
+		return []string{path}
+	}
+	if !slices.Contains(vscode, strings.TrimSuffix(filepath.Base(editor), ".exe")) {
+		return []string{fmt.Sprintf("+%d", line), path}
+	}
+	target := fmt.Sprintf("%s:%d", path, line)
+	if slices.Contains(args, "--goto") || slices.Contains(args, "-g") {
+		return []string{target}
+	}
+	return []string{"--goto", target}
 }
 
 func isDir(path string) bool {

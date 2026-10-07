@@ -575,6 +575,17 @@ func TestOpenInEditor(t *testing.T) {
 	if cmd := m.editCommand(); cmd.Dir != wt {
 		t.Errorf("opened in %s, want the workstream's worktree %s", cmd.Dir, wt)
 	}
+	// VS Code takes the line its own way, and keeps the --goto it was given.
+	for _, editor := range [][]string{{"code"}, {"code", "--goto"}} {
+		m.Editor = editor
+		want := append(slices.Clone(editor), "--goto", fmt.Sprintf("ward.go:%d", line))
+		if len(editor) > 1 {
+			want = append(slices.Clone(editor), fmt.Sprintf("ward.go:%d", line))
+		}
+		if cmd := m.editCommand(); !slices.Equal(cmd.Args, want) {
+			t.Errorf("%v opens with %v, want %v", editor, cmd.Args, want)
+		}
+	}
 }
 
 // TestCommentBoxTakesCmdKeys pins that the comment box takes the

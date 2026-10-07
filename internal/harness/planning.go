@@ -70,12 +70,12 @@ func (h *Harness) applyIntake(ctx context.Context, s *queue.Store) error {
 }
 
 // ensureIntakeGoal makes the goal that holds the triage tasks. Triage reads
-// the base branch as it is, so it follows what is checked out now.
+// the base branch, so it sees the repo as the remote has it.
 func (h *Harness) ensureIntakeGoal(ctx context.Context, s *queue.Store) error {
 	if _, err := s.Goal(queue.IntakeGoal); err == nil {
 		return nil
 	}
-	base, err := git.Repo{Dir: s.Repo()}.CurrentBranch(ctx)
+	base, err := git.Repo{Dir: s.Repo()}.BaseBranch(ctx, "origin")
 	if err != nil {
 		return fmt.Errorf("finding the branch triage reads: %w", err)
 	}
@@ -171,8 +171,8 @@ func (h *Harness) runPlanning(
 	unlock := h.lockRepo(s.Repo())
 	var err error
 	if g.Name == queue.IntakeGoal {
-		err = main.EnsureDetached(ctx, wt.Dir, goalStart(ctx, main, g))
-	} else if err = main.CreateBranch(ctx, g.IntegrationBranch(), goalStart(ctx, main, g)); err == nil {
+		err = main.EnsureDetached(ctx, wt.Dir, h.goalStart(ctx, main, g))
+	} else if err = main.CreateBranch(ctx, g.IntegrationBranch(), h.goalStart(ctx, main, g)); err == nil {
 		err = main.EnsureDetached(ctx, wt.Dir, g.IntegrationBranch())
 	}
 	unlock()
@@ -535,6 +535,12 @@ func (h *Harness) startGoal(
 	g, err := plan.NewGoal(ctx, s, "", e.Title, e.Description, body, origin, h.now())
 	if err != nil {
 		return nil, err
+	}
+	if e.Branch != "" {
+		g.Branch = e.Branch
+		if err := s.SaveGoal(g); err != nil {
+			return nil, err
+		}
 	}
 	h.log().Info("new goal", "repo", s.Repo(), "goal", g.Name, "from", origin.Type,
 		"planned", e.Plan != "")

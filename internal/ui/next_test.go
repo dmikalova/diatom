@@ -99,6 +99,56 @@ func TestNextAnswersAndMovesOn(t *testing.T) {
 	}
 }
 
+// TestNextPutsAQuestionOffAndRepeatsAnAnswer covers the two ways past a
+// question other than writing an answer: putting it off, and saying an
+// earlier question already answered it.
+func TestNextPutsAQuestionOffAndRepeatsAnAnswer(t *testing.T) {
+	f := newFixture(t)
+	for _, text := range []string{"And poison?", "And deathtouch?"} {
+		if err := f.store.AddQuestion(
+			"set",
+			&queue.Question{Task: "0001", Text: text},
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a, _ := newApp(t, f)
+	key(a, "enter")
+	// Answer the first, so there is an answer to repeat.
+	key(a, "tab")
+	typeText(a, "No")
+	key(a, "enter")
+	if it := a.next.shown(); it == nil || it.q.ID != "0002" {
+		t.Fatalf("after answering, Next shows %+v", it)
+	}
+	if !strings.Contains(plain(a.render()), "l puts it off") {
+		t.Errorf("the question doesn't offer its keys:\n%s", plain(a.render()))
+	}
+	// l puts it off and the question behind it shows.
+	key(a, "l")
+	if it := a.next.shown(); it == nil || it.q.ID != "0003" {
+		t.Fatalf("after l, Next shows %+v", it)
+	}
+	if last := a.next.items[len(a.next.items)-1]; last.id() != "set question 0002" {
+		t.Errorf("the question put off is not last: %s", last.id())
+	}
+	// s asks first, and only answers on the second press.
+	key(a, "s")
+	open, _ := f.store.Questions("set", queue.QuestionOpen)
+	if open[2].Answer != "" {
+		t.Fatalf("one s already answered it: %q", open[2].Answer)
+	}
+	if !strings.Contains(a.next.flash, "s again to answer it as question 0001 was") {
+		t.Errorf("s doesn't ask first: %q", a.next.flash)
+	}
+	key(a, "s")
+	open, _ = f.store.Questions("set", queue.QuestionOpen)
+	if got := open[2].Answer; !strings.Contains(got, "Question 0001") ||
+		!strings.Contains(got, "No") {
+		t.Errorf("the repeated answer = %q", got)
+	}
+}
+
 // TestNextReviewRulesJoinTheNav pins that the reviewer's rule under a
 // hunk's head runs on to the nav's border, as Next's own rules do.
 func TestNextReviewRulesJoinTheNav(t *testing.T) {

@@ -229,7 +229,8 @@ What needs you:
     does. nvim takes the terminal until you quit it, and the review is where
     you left it; sessions keep running meanwhile. What you change there goes
     into that workstream's next commit, so `editor = "nvim -R"` opens it
-    read-only. `editor` sets another command.
+    read-only. `editor` sets another command, `code` among them: VS Code and
+    its forks are given the line their own way.
   - A comment or rejection becomes a revision task within seconds. The fix
     comes back as a `fixup!` commit, and `v` shows it folded into the original.
   - Review doesn't hold up the agents, but you have to review everything before

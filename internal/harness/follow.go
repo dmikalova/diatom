@@ -94,3 +94,15 @@ func (h *Harness) fetchBases(ctx context.Context, main git.Repo, goals []*queue.
 		}
 	}
 }
+
+// fetchBase fetches one base branch from origin, at most once every
+// fetchEvery. Offline, the goal starts from what was fetched last.
+func (h *Harness) fetchBase(ctx context.Context, main git.Repo, base string) {
+	if base == "" || h.now().Sub(h.fetched) < fetchEvery {
+		return
+	}
+	h.fetched = h.now()
+	ctx, cancel := context.WithTimeout(ctx, watchTimeout)
+	defer cancel()
+	_, _ = main.Run(ctx, "fetch", "--quiet", "origin", base)
+}

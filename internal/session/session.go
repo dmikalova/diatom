@@ -118,6 +118,9 @@ type Entry struct {
 	// Plan is the plan of a goal triage starts with its work already
 	// decided, as YAML, for the human to sign off without grilling.
 	Plan string `json:"plan,omitempty"`
+	// Branch is the branch a new goal's pull request lives on, when a
+	// tracker named one for its ticket (ADR 0014).
+	Branch string `json:"branch,omitempty"`
 }
 
 // The entry types.

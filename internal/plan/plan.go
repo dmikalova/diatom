@@ -249,10 +249,10 @@ func NewGoal(
 	if name == "" {
 		name = uniqueName(s, slug(title))
 	}
-	base, err := git.Repo{Dir: s.Repo()}.CurrentBranch(ctx)
+	base, err := git.Repo{Dir: s.Repo()}.BaseBranch(ctx, "origin")
 	if err != nil {
 		return nil, fmt.Errorf(
-			"a goal branches from the repo's current branch, and there is none: %w",
+			"a goal branches from the remote's default branch, and there is none: %w",
 			err,
 		)
 	}

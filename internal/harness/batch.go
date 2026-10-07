@@ -73,7 +73,7 @@ func (h *Harness) runBatch(ctx context.Context, repo Repo, b schedule.Batch) err
 	main := git.Repo{Dir: s.Repo()}
 	wt := git.Repo{Dir: s.WorktreeDir(g.Name, b.Workstream)}
 	unlock := h.lockRepo(s.Repo())
-	err = main.CreateBranch(ctx, g.IntegrationBranch(), goalStart(ctx, main, g))
+	err = main.CreateBranch(ctx, g.IntegrationBranch(), h.goalStart(ctx, main, g))
 	if err == nil {
 		err = main.EnsureWorktree(
 			ctx,
@@ -660,9 +660,6 @@ func (h *Harness) finish(
 	if err := h.applyConnects(repo, g.Name, report); err != nil {
 		return err
 	}
-	if err := h.applyCI(ctx, repo, g, report); err != nil {
-		return err
-	}
 	tasks, err := h.reload(s, g.Name, b.Tasks)
 	if err != nil {
 		return err
@@ -689,9 +686,11 @@ func (h *Harness) finish(
 		}
 	}
 	if err := errors.Join(runErr, gateErr); err != nil {
+		h.ciDropped(repo, g, report, "the session ended with an error, so nothing was committed")
 		return h.requeue(s, g.Name, tasks, asked, err)
 	}
 	if !passed {
+		h.ciDropped(repo, g, report, "the gate failed, so the work was stashed, not committed")
 		id := filepath.Base(dir)
 		return h.failed(ctx, repo, g, wt, tasks, asked, id, ended(id, res), output)
 	}
@@ -705,7 +704,11 @@ func (h *Harness) finish(
 		return err
 	}
 	h.settling(dir, "Merging it into the goal's integration branch")
-	return h.integrate(ctx, repo, g, b.Workstream)
+	if err := h.integrate(ctx, repo, g, b.Workstream); err != nil {
+		return err
+	}
+	// The checks run on the goal's branch, so the work has to be on it first.
+	return h.applyCI(ctx, repo, g, report)
 }
 
 // settleTasks moves each task of a session whose work is committed on: its
