@@ -157,7 +157,9 @@ func (h *Harness) Run(stop, kill context.Context) error {
 			}
 		}
 		for _, b := range batches {
-			key := schedule.Running{Repo: b.Repo, Goal: b.Goal, Workstream: b.Workstream}
+			key := schedule.Running{
+				Repo: b.Repo, Goal: b.Goal, Workstream: b.Workstream, Mechanical: b.Mechanical,
+			}
 			p.start(key, func() error {
 				err := h.RunBatch(kill, repos[b.Repo], b)
 				if err != nil {
@@ -185,9 +187,9 @@ func (h *Harness) Run(stop, kill context.Context) error {
 	}
 }
 
-// slots tracks the workstreams with a session running, and those cooling
-// down after a batch that failed outright, such as when the agent could not
-// start, until they may be tried again.
+// slots tracks the workstreams with a session or mechanical work running, and
+// those cooling down after a batch that failed outright, such as when the
+// agent could not start, until they may be tried again.
 type slots struct {
 	mu      sync.Mutex
 	running map[schedule.Running]bool
@@ -312,11 +314,13 @@ func (h *Harness) plan(
 			// limit is how many run across every repo at once.
 			lim.Machine = repo.Config.MaxSessions
 		}
+		sessions := repo.Config.MaxSessions
 		if h.overBudget(root, repo) {
-			continue
+			// Work without an agent costs nothing, so it goes on.
+			sessions = 0
 		}
 		lim.Repos[root] = schedule.RepoLimits{
-			Sessions: repo.Config.MaxSessions,
+			Sessions: sessions,
 			Batch:    repo.Config.MaxBatch,
 		}
 		goals = append(goals, rg...)
@@ -395,6 +399,11 @@ func (h *Harness) load(ctx context.Context, path string) (Repo, []*schedule.Goal
 	// A goal that fails to load waits, and says why; the others go on.
 	var errs []error
 	for _, g := range all {
+		if g.State == queue.GoalParked {
+			if err := h.catchUpAfter(ctx, repo, g); err != nil {
+				errs = append(errs, fmt.Errorf("goal %s: %w", g.Name, err))
+			}
+		}
 		if g.State != queue.GoalActive && g.State != queue.GoalPlanning {
 			continue
 		}
@@ -424,6 +433,9 @@ func (h *Harness) loadGoal(
 	if err := h.applyReplies(s, g); err != nil {
 		return nil, err
 	}
+	if err := h.catchUpAfter(ctx, repo, g); err != nil {
+		return nil, err
+	}
 	open, err := s.Problems(g.Name, queue.ProblemOpen)
 	if err != nil {
 		return nil, err
@@ -441,9 +453,6 @@ func (h *Harness) loadGoal(
 		// Nothing starts, grilling included, until the goals it waits for
 		// have landed: its branch then starts from them (ADR 0003).
 		return &schedule.Goal{}, nil
-	}
-	if err := h.catchUpAfter(ctx, repo, g); err != nil {
-		return nil, err
 	}
 	switch {
 	case g.Name == queue.IntakeGoal:
@@ -472,7 +481,10 @@ func (h *Harness) loadGoal(
 			ready = append(ready, t)
 		}
 	}
-	sg := &schedule.Goal{Ready: ready, Unfinished: map[string]bool{}}
+	sg := &schedule.Goal{Unfinished: map[string]bool{}}
+	if err := h.sortReady(ctx, repo, g, sg, ready, tasks); err != nil {
+		return nil, err
+	}
 	for _, t := range tasks {
 		if t.State != queue.Done {
 			sg.Unfinished[t.ID] = true
@@ -486,23 +498,119 @@ func (h *Harness) loadGoal(
 	return sg, nil
 }
 
-// catchUpAfter merges into a goal that waited what the goals it waited for
-// landed, once for each, as it stops waiting. A branch made before they
-// landed, such as by the grilling that found the goal must wait, would
-// otherwise go on without them. A merge that conflicts goes to an agent, as
-// catching up before landing does.
-func (h *Harness) catchUpAfter(ctx context.Context, repo Repo, g *queue.Goal) error {
-	var fresh []string
-	for _, a := range g.After {
-		if !slices.Contains(g.CaughtUp, a) {
-			fresh = append(fresh, a)
+// sortReady sorts a goal's ready tasks into sg: the conflict tasks the
+// harness tries without an agent first, the rest for agents, and none in a
+// workstream mid-merge but the task finishing the merge, which it queues when
+// there is none.
+func (h *Harness) sortReady(
+	ctx context.Context,
+	repo Repo,
+	g *queue.Goal,
+	sg *schedule.Goal,
+	ready, tasks []*queue.Task,
+) error {
+	s := repo.Store
+	merging := map[string]bool{}
+	inMerge := func(ws string) bool {
+		in, ok := merging[ws]
+		if !ok {
+			in = (git.Repo{Dir: s.WorktreeDir(g.Name, ws)}).MergeInProgress(ctx)
+			merging[ws] = in
+		}
+		return in
+	}
+	var stuck []string
+	for _, t := range ready {
+		switch {
+		case !runnable[t.Kind]:
+			sg.Ready = append(sg.Ready, t)
+		case !inMerge(t.Workstream):
+			if t.Kind == queue.Conflict && strings.TrimSpace(repo.Config.Gate) != "" {
+				// Its merges may go through, as rerere settles conflicts
+				// resolved once, and need no agent.
+				sg.Mechanical = append(sg.Mechanical, t)
+			} else {
+				sg.Ready = append(sg.Ready, t)
+			}
+		case t.Kind == queue.Conflict || t.Kind == queue.GateRepair:
+			sg.Ready = append(sg.Ready, t)
+		case !slices.Contains(stuck, t.Workstream):
+			// Nothing else runs in a workstream until its merge is done.
+			stuck = append(stuck, t.Workstream)
 		}
 	}
-	if len(fresh) == 0 {
+	for _, ws := range stuck {
+		if err := h.remediate(ctx, s, g, ws, tasks); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// remediate queues a conflict task for a workstream left mid-merge with no
+// task to finish it, such as by a merge made by hand, unless one is already
+// queued: an agent finishes the merge, and the gate passes before it is
+// committed.
+func (h *Harness) remediate(
+	ctx context.Context,
+	s *queue.Store,
+	g *queue.Goal,
+	ws string,
+	tasks []*queue.Task,
+) error {
+	if slices.ContainsFunc(tasks, func(t *queue.Task) bool {
+		return t.Workstream == ws && t.State != queue.Done &&
+			(t.Kind == queue.Conflict || t.Kind == queue.GateRepair)
+	}) {
+		return nil
+	}
+	wt := git.Repo{Dir: s.WorktreeDir(g.Name, ws)}
+	unmerged, err := wt.Unmerged(ctx)
+	if err != nil {
+		return err
+	}
+	merging, _ := wt.Run(ctx, "log", "-1", "--format=%h %s", "MERGE_HEAD")
+	body := fmt.Sprintf("A merge of %s into this workstream is in progress, which diatom didn't "+
+		"start, such as one made by hand. Nothing else runs in the workstream until it is "+
+		"finished. ", merging)
+	if len(unmerged) > 0 {
+		body += "Resolve every conflicted file, keeping the intent of both sides:\n\n- " +
+			strings.Join(unmerged, "\n- ")
+	} else {
+		body += "No file is left conflicted: check the merge and make the gate pass."
+	}
+	h.log().Warn("a workstream is mid-merge with nothing to finish it: queuing a task",
+		"goal", g.Name, "workstream", ws, "merging", merging, "unmerged", len(unmerged))
+	return s.AddTask(g.Name, &queue.Task{
+		Title: "Finish the merge in progress", Kind: queue.Conflict, Workstream: ws,
+		Created: h.now(), Origin: queue.Origin{Type: "harness"}, Body: body,
+	})
+}
+
+// catchUpAfter takes each goal a goal waits for off its list once it has
+// finished, so the list names only what still holds it up, and merges what
+// it landed into the goal's branch. A branch made before it landed, such as
+// by the grilling that found the goal must wait, would otherwise go on
+// without it. A merge that conflicts goes to an agent, as catching up before
+// landing does. A goal that no longer exists is only taken off.
+func (h *Harness) catchUpAfter(ctx context.Context, repo Repo, g *queue.Goal) error {
+	var fresh, left []string
+	for _, a := range g.After {
+		o, err := repo.Store.Goal(a)
+		switch {
+		case slices.Contains(g.CaughtUp, a):
+			// Merged in by an older diatom, which kept the list whole.
+		case err != nil || o.State == queue.GoalFinished:
+			fresh = append(fresh, a)
+		default:
+			left = append(left, a)
+		}
+	}
+	if len(left) == len(g.After) {
 		return nil
 	}
 	main := git.Repo{Dir: repo.Store.Repo()}
-	if main.BranchExists(ctx, g.IntegrationBranch()) {
+	if len(fresh) > 0 && main.BranchExists(ctx, g.IntegrationBranch()) {
 		unlock := h.lockRepo(main.Dir)
 		up, err := finish.CatchUp(ctx, repo.Store, g, "origin", h.now())
 		unlock()
@@ -513,10 +621,10 @@ func (h *Harness) catchUpAfter(ctx context.Context, repo Repo, g *queue.Goal) er
 				err,
 			)
 		}
-		h.log().Info("a goal that waited took in what it waited for", "goal", g.Name,
-			"after", fresh, "clean", up)
+		h.log().Info("a goal that waits took in what finished", "goal", g.Name,
+			"finished", fresh, "waitsFor", left, "clean", up)
 	}
-	g.CaughtUp = append(g.CaughtUp, fresh...)
+	g.After, g.CaughtUp = left, nil
 	return repo.Store.SaveGoal(g)
 }
 

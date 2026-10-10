@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/queue"
@@ -46,29 +47,19 @@ func Load(ctx context.Context, s *queue.Store, goal string) ([]Item, error) {
 		}
 	}
 	repo := git.Repo{Dir: s.Repo()}
-	type commit struct {
-		sha, subject string
-		time         int64
-	}
 	commits := make([]commit, 0, len(shas))
 	for _, sha := range shas {
-		out, err := repo.Run(ctx, "show", "-s", "--format=%ct%x00%s", sha)
+		c, err := loadCommit(ctx, repo, sha)
 		if err != nil {
 			return nil, err
 		}
-		ts, subject, _ := strings.Cut(out, "\x00")
-		t, _ := strconv.ParseInt(ts, 10, 64)
-		commits = append(commits, commit{sha, subject, t})
+		commits = append(commits, c)
 	}
 	slices.SortStableFunc(commits, func(a, b commit) int { return cmp.Compare(a.time, b.time) })
 
 	store := Store{Dir: s.GoalDir(goal)}
 	var items []Item
 	for _, c := range commits {
-		hunks, err := Hunks(ctx, repo, c.sha)
-		if err != nil {
-			return nil, err
-		}
 		rec, err := store.Load(c.sha)
 		if err != nil {
 			return nil, err
@@ -79,7 +70,7 @@ func Load(ctx context.Context, s *queue.Store, goal string) ([]Item, error) {
 				revision = t
 			}
 		}
-		for _, h := range hunks {
+		for _, h := range c.hunks {
 			items = append(items, Item{
 				Hunk: h, Subject: c.subject, Record: rec.Hunks[h.ID],
 				Tasks: byCommit[c.sha], Revision: revision,
@@ -87,6 +78,40 @@ func Load(ctx context.Context, s *queue.Store, goal string) ([]Item, error) {
 		}
 	}
 	return items, nil
+}
+
+// commit is what Load reads of a commit.
+type commit struct {
+	sha, subject string
+	time         int64
+	hunks        []Hunk
+}
+
+// commits holds each commit Load has read, by repo and SHA. A commit never
+// changes, so the review reloading after each decision reads only the
+// decisions again, not every commit's diff.
+var commits sync.Map
+
+func loadCommit(ctx context.Context, repo git.Repo, sha string) (commit, error) {
+	key := repo.Dir + "\x00" + sha
+	if v, ok := commits.Load(key); ok {
+		if c, ok := v.(commit); ok {
+			return c, nil
+		}
+	}
+	out, err := repo.Run(ctx, "show", "-s", "--format=%ct%x00%s", sha)
+	if err != nil {
+		return commit{}, err
+	}
+	ts, subject, _ := strings.Cut(out, "\x00")
+	t, _ := strconv.ParseInt(ts, 10, 64)
+	hunks, err := Hunks(ctx, repo, sha)
+	if err != nil {
+		return commit{}, err
+	}
+	c := commit{sha: sha, subject: subject, time: t, hunks: hunks}
+	commits.Store(key, c)
+	return c, nil
 }
 
 // Pending returns the items left to review: every unreviewed hunk, then the

@@ -673,9 +673,9 @@ func TestConflictBetweenWorkstreams(t *testing.T) {
 		t.Fatalf("tasks = %+v, want a conflict task for the workstream that landed second", tasks)
 	}
 
-	if got := f.step(); len(got) != 1 || got[0].Kind != queue.Conflict {
-		t.Fatalf("conflict step = %+v", got)
-	}
+	// The harness merges first, and leaves the conflict in progress for an
+	// agent.
+	f.mergesThenAgent(conflict)
 	if got := f.task(conflict.ID); got.State != queue.Done {
 		t.Errorf("conflict task = %s", got.State)
 	}
@@ -721,9 +721,6 @@ func TestCatchingUpWithMainGoesToAnAgent(t *testing.T) {
 	if up, err := finish.CatchUp(ctx, f.store, g, "", time.Now()); err != nil || up {
 		t.Fatalf("catching up = %v, %v", up, err)
 	}
-	if got := f.step(); len(got) != 1 || got[0].Kind != queue.Conflict {
-		t.Fatalf("catch-up step = %+v", got)
-	}
 	tasks, _ := f.store.Tasks("set")
 	var merge *queue.Task
 	for _, task := range tasks {
@@ -731,6 +728,11 @@ func TestCatchingUpWithMainGoesToAnAgent(t *testing.T) {
 			merge = task
 		}
 	}
+	if merge == nil {
+		t.Fatal("no catch-up task")
+	}
+	f.mergesThenAgent(merge)
+	merge = f.task(merge.ID)
 	if merge == nil || merge.State != queue.Done || len(merge.Commits) != 1 {
 		t.Fatalf("the catch-up task = %+v", merge)
 	}
@@ -744,6 +746,136 @@ func TestCatchingUpWithMainGoesToAnAgent(t *testing.T) {
 	hunks, err := review.Hunks(ctx, f.main, merge.Commits[0])
 	if err != nil || len(hunks) == 0 {
 		t.Errorf("the resolution's hunks = %+v, %v", hunks, err)
+	}
+}
+
+// mergesThenAgent steps twice: the harness tries the conflict task's merges
+// itself and leaves them in progress, then an agent resolves them.
+func (f *fixture) mergesThenAgent(conflict *queue.Task) {
+	f.t.Helper()
+	sessions := f.agent.sessions
+	if got := f.step(); len(got) != 1 || !got[0].Mechanical || got[0].Tasks[0].ID != conflict.ID {
+		f.t.Fatalf("merge step = %+v", got)
+	}
+	wt := git.Repo{Dir: f.store.WorktreeDir("set", conflict.Workstream)}
+	if f.agent.sessions != sessions || f.task(conflict.ID).State != queue.Pending ||
+		!wt.MergeInProgress(context.Background()) {
+		f.t.Fatal("the harness's merge didn't leave its conflict in progress for an agent")
+	}
+	if got := f.step(); len(got) != 1 || got[0].Kind != queue.Conflict || got[0].Mechanical {
+		f.t.Fatalf("conflict step = %+v", got)
+	}
+}
+
+// TestMergesRunBesideSessions pins that a conflict task whose merges go
+// through needs no agent, and takes no session: it runs beside the only one.
+func TestMergesRunBesideSessions(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	writeFile(t, f.store.Repo(), ".diatom/config.toml", "gate = \"check\"\nmaxSessions = 1\n")
+	f.agent.act = func(t *testing.T, wt string, s agentSession) {
+		for _, id := range s.spec.Tasks {
+			writeFile(t, wt, s.spec.Workstream+".txt", id+"\n")
+			s.report(session.EntryDone, id, "")
+		}
+	}
+	f.add("cards", "Cards edit")
+	f.step()
+	landed := f.commitOn("main", "other.txt", "landed\n", "feat: another goal")
+	f.add("engine", "Engine edit")
+	merge := &queue.Task{
+		Title: "Merge main into the goal", Kind: queue.Conflict, Workstream: "cards",
+		Merge: "main", Origin: queue.Origin{Type: "harness"},
+	}
+	if err := f.store.AddTask("set", merge); err != nil {
+		t.Fatal(err)
+	}
+	// While engine's session takes the only one, the merge still runs.
+	busy := []schedule.Running{{Repo: f.h.Roots[0], Goal: "set", Workstream: "engine"}}
+	if got, _, err := f.h.plan(ctx, busy); err != nil || len(got) != 1 || !got[0].Mechanical {
+		t.Fatalf("planned beside a session %+v, %v", got, err)
+	}
+	sessions := f.agent.sessions
+	got := f.step()
+	if len(got) != 2 || !got[0].Mechanical || got[0].Workstream != "cards" ||
+		got[1].Workstream != "engine" {
+		t.Fatalf("step = %+v, want the merge beside engine's session", got)
+	}
+	if f.agent.sessions != sessions+1 {
+		t.Errorf("agent sessions = %d, want engine's only", f.agent.sessions-sessions)
+	}
+	if f.task(merge.ID).State != queue.Done {
+		t.Errorf("the merge task = %s", f.task(merge.ID).State)
+	}
+	if in, _ := f.main.IsAncestor(ctx, landed, "diatom/set/ws/cards"); !in {
+		t.Error("cards lacks what landed on main")
+	}
+}
+
+// TestAMergeLeftInProgressGetsATask pins that a workstream left mid-merge
+// with no task to finish it, as a merge made by hand leaves it, gets a
+// conflict task once, and that its other work waits without taking a session.
+func TestAMergeLeftInProgressGetsATask(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	f.agent.act = func(t *testing.T, wt string, s agentSession) {
+		for _, id := range s.spec.Tasks {
+			writeFile(t, wt, s.spec.Workstream+".txt", id+"\n")
+			s.report(session.EntryDone, id, "")
+		}
+	}
+	f.add("cards", "Cards edit")
+	f.step()
+	// By hand: main and cards change the same file, and main is merged in.
+	theirs := f.commitOn("main", "shared.txt", "main\n", "feat: main's change")
+	wt := git.Repo{Dir: f.store.WorktreeDir("set", "cards")}
+	writeFile(t, wt.Dir, "shared.txt", "cards\n")
+	if _, err := wt.StageAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wt.Commit(ctx, "feat: cards' change"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wt.Run(ctx, "merge", theirs); err == nil {
+		t.Fatal("the hand merge didn't conflict")
+	}
+	waiting := f.add("cards", "Cards again")
+	f.add("engine", "Engine edit")
+
+	if got, _, err := f.h.plan(ctx, nil); err != nil || len(got) != 1 ||
+		got[0].Workstream != "engine" {
+		t.Fatalf("planned %+v, %v; want engine's alone", got, err)
+	}
+	f.agent.act = func(t *testing.T, wt string, s agentSession) {
+		writeFile(t, wt, "shared.txt", "both\n")
+		for _, id := range s.spec.Tasks {
+			s.report(session.EntryDone, id, "")
+		}
+	}
+	busy := []schedule.Running{{Repo: f.h.Roots[0], Goal: "set", Workstream: "engine"}}
+	got, repos, err := f.h.plan(ctx, busy)
+	if err != nil || len(got) != 1 || got[0].Kind != queue.Conflict || got[0].Mechanical {
+		t.Fatalf("planned %+v, %v; want the fix for an agent", got, err)
+	}
+	tasks, _ := f.store.Tasks("set")
+	var fixes []*queue.Task
+	for _, task := range tasks {
+		if task.Kind == queue.Conflict {
+			fixes = append(fixes, task)
+		}
+	}
+	if len(fixes) != 1 || fixes[0].Workstream != "cards" ||
+		!strings.Contains(fixes[0].Body, "- shared.txt") {
+		t.Fatalf("fix tasks = %+v, want one for cards naming shared.txt", fixes)
+	}
+	if err := f.h.RunBatch(ctx, repos[f.h.Roots[0]], got[0]); err != nil {
+		t.Fatal(err)
+	}
+	if wt.MergeInProgress(ctx) || f.show("diatom/set/integration", "shared.txt") != "both" {
+		t.Error("the hand merge wasn't finished and integrated")
+	}
+	if f.task(waiting.ID).State != queue.Pending {
+		t.Errorf("the waiting task = %s", f.task(waiting.ID).State)
 	}
 }
 
@@ -1130,8 +1262,8 @@ func TestBudgetHoldsNewSessions(t *testing.T) {
 }
 
 // TestAGoalThatWaitedTakesInWhatLanded pins that a goal whose branch was made
-// before the goals it waited for landed, as grilling makes it, merges their
-// work in once as it stops waiting.
+// before the goals it waits for landed, as grilling makes it, merges each
+// one's work in once, as it finishes, and takes it off the list.
 func TestAGoalThatWaitedTakesInWhatLanded(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
@@ -1141,8 +1273,13 @@ func TestAGoalThatWaitedTakesInWhatLanded(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
+	if err := f.store.CreateGoal(
+		&queue.Goal{Name: "slow", Title: "Slow", State: queue.GoalActive, Base: "main"},
+	); err != nil {
+		t.Fatal(err)
+	}
 	late := &queue.Goal{Name: "late", Title: "Late", State: queue.GoalPlanning, Base: "main",
-		After: []string{"early"}}
+		After: []string{"early", "slow"}}
 	if err := f.store.CreateGoal(late); err != nil {
 		t.Fatal(err)
 	}
@@ -1164,9 +1301,10 @@ func TestAGoalThatWaitedTakesInWhatLanded(t *testing.T) {
 	if in, err := f.main.IsAncestor(ctx, landed, late.IntegrationBranch()); err != nil || !in {
 		t.Fatalf("the goal's branch lacks what landed: %v, %v", in, err)
 	}
+	// Only what still holds it up stays listed.
 	g, _ := f.store.Goal("late")
-	if !slices.Equal(g.CaughtUp, []string{"early"}) {
-		t.Errorf("caught up = %v", g.CaughtUp)
+	if !slices.Equal(g.After, []string{"slow"}) {
+		t.Errorf("waits for %v, want slow alone", g.After)
 	}
 	// Once only: later work on main isn't merged in on every pass.
 	writeFile(t, f.main.Dir, "later.txt", "later\n")
@@ -1181,6 +1319,38 @@ func TestAGoalThatWaitedTakesInWhatLanded(t *testing.T) {
 		t.Fatal(err)
 	}
 	if in, _ := f.main.IsAncestor(ctx, later, late.IntegrationBranch()); in {
+		t.Error("main was merged in again")
+	}
+}
+
+// TestAGoalCaughtUpByAnOlderDiatomDropsItsBlockers pins that the goals an
+// older diatom merged in, keeping them listed, come off the list without
+// being merged again.
+func TestAGoalCaughtUpByAnOlderDiatomDropsItsBlockers(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	if err := f.store.CreateGoal(
+		&queue.Goal{Name: "early", Title: "Early", State: queue.GoalFinished, Base: "main"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	late := &queue.Goal{Name: "late", Title: "Late", State: queue.GoalPlanning, Base: "main",
+		After: []string{"early"}, CaughtUp: []string{"early"}}
+	if err := f.store.CreateGoal(late); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.main.CreateBranch(ctx, late.IntegrationBranch(), "main"); err != nil {
+		t.Fatal(err)
+	}
+	newer := f.commitOn("main", "newer.txt", "newer\n", "feat: newer")
+	if _, _, err := f.h.plan(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	g, _ := f.store.Goal("late")
+	if len(g.After) != 0 || len(g.CaughtUp) != 0 {
+		t.Errorf("waits for %v, caught up %v; want neither", g.After, g.CaughtUp)
+	}
+	if in, _ := f.main.IsAncestor(ctx, newer, late.IntegrationBranch()); in {
 		t.Error("main was merged in again")
 	}
 }

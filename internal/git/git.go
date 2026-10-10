@@ -304,6 +304,15 @@ func (r Repo) MergeInProgress(ctx context.Context) bool {
 	return err == nil
 }
 
+// Unmerged lists the files a merge in progress has left conflicted.
+func (r Repo) Unmerged(ctx context.Context) ([]string, error) {
+	out, err := r.Run(ctx, "diff", "--name-only", "--diff-filter=U")
+	if err != nil || out == "" {
+		return nil, err
+	}
+	return strings.Split(out, "\n"), nil
+}
+
 // AbortMerge undoes a merge in progress.
 func (r Repo) AbortMerge(ctx context.Context) error {
 	_, err := r.Run(ctx, "merge", "--abort")

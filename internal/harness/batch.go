@@ -31,7 +31,7 @@ import (
 // it is retried with more effort, the same as a gate that keeps failing.
 const maxIncomplete = 2
 
-// RunBatch runs one batch to its end:
+// RunBatch runs one batch to its end, a mechanical one only to step 1:
 //
 //  1. Merge the integration branch into the workstream (ADR 0003).
 //  2. Run the agent session, whose Stop hook runs the gate (ADR 0005).
@@ -87,8 +87,16 @@ func (h *Harness) runBatch(ctx context.Context, repo Repo, b schedule.Batch) err
 	if err != nil {
 		return err
 	}
+	if b.Mechanical {
+		h.log().Info("merging without an agent", "goal", g.Name, "workstream", b.Workstream)
+	}
 	if run, err := h.prepare(ctx, repo, g, b, wt); err != nil || !run {
 		return err
+	}
+	if b.Mechanical {
+		// The merge is left in progress: the next pass gives it to an agent.
+		h.log().Info("a merge needs an agent", "goal", g.Name, "workstream", b.Workstream)
+		return nil
 	}
 
 	for _, t := range b.Tasks {

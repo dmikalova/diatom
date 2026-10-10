@@ -57,6 +57,33 @@ func TestNextPriorityOrder(t *testing.T) {
 	}
 }
 
+func TestNextMechanicalTakesNoSession(t *testing.T) {
+	g := &Goal{Repo: "vex", Name: "set",
+		Ready: []*queue.Task{task("1", queue.Planned, "engine"), task("2", queue.Planned, "web")},
+		Mechanical: []*queue.Task{
+			task("3", queue.Conflict, "cards"), task("4", queue.Conflict, "cards"),
+			task("5", queue.Conflict, "engine"), task("6", queue.Conflict, "docs"),
+		},
+	}
+	lim := Limits{Repos: map[string]RepoLimits{"vex": {Sessions: 1}}}
+	running := []Running{
+		{Repo: "vex", Goal: "set", Workstream: "docs"},
+		{Repo: "vex", Goal: "set", Workstream: "old", Mechanical: true},
+	}
+	got := Next([]*Goal{g}, running, lim)
+	if len(got) != 2 || !got[0].Mechanical || got[0].Workstream != "cards" ||
+		!slices.Equal(ids(got[0]), []string{"3", "4"}) || !got[1].Mechanical ||
+		got[1].Workstream != "engine" {
+		t.Fatalf("Next = %+v, want cards' and engine's merges, and no session", got)
+	}
+	// Mechanical work running takes no session either.
+	running = running[1:]
+	got = Next([]*Goal{g}, running, lim)
+	if len(got) != 4 || got[3].Mechanical || got[3].Workstream != "web" {
+		t.Errorf("Next = %+v, want the merges, then web's session", got)
+	}
+}
+
 func TestNextBatchesSameKindAndProfile(t *testing.T) {
 	strong := task("3", queue.Revision, "engine")
 	strong.Profile = "planning"

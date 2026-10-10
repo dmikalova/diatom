@@ -8,6 +8,10 @@
 // workstream, then the chain of tasks that wait only on them there, the
 // session moving up to the more capable profile a task of the chain needs. A
 // workstream runs one session at a time, because a session owns its worktree.
+//
+// Work the harness does without an agent, such as merging a goal's base into
+// a workstream, runs beside the sessions: it takes its workstream but no
+// session, so it never waits for an agent's slot.
 package schedule
 
 import (
@@ -67,11 +71,17 @@ type Goal struct {
 	// to one that waits only on it, in the same workstream.
 	Later      []*queue.Task
 	Unfinished map[string]bool
+	// Mechanical are its ready tasks the harness tries without an agent
+	// first: conflict tasks whose merges haven't been tried in the
+	// workstream yet.
+	Mechanical []*queue.Task
 }
 
-// Running is a session already in progress.
+// Running is a session, or mechanical work, already in progress.
 type Running struct {
 	Repo, Goal, Workstream string
+	// Mechanical is work without an agent, which takes no session.
+	Mechanical bool
 }
 
 // Limits caps how much runs at once.
@@ -103,7 +113,13 @@ type Batch struct {
 	// Effort overrides the profile's effort level when its tasks are retries.
 	Effort string
 	Tasks  []*queue.Task
+	// Mechanical is a batch the harness runs without an agent, from
+	// Goal.Mechanical.
+	Mechanical bool
 }
+
+// wsKey is a workstream of a goal in a repo.
+type wsKey struct{ repo, goal, ws string }
 
 type candidate struct {
 	goal *Goal
@@ -111,7 +127,8 @@ type candidate struct {
 }
 
 // Next returns the batches to start now, given the ready work and the
-// sessions already running: the priority order first, then the older goal,
+// sessions already running: the mechanical batches first, in every
+// workstream not busy, and taking no session, then the priority order, then the older goal,
 // then the task's own priority and id. A batch goes on, in order, to tasks
 // that wait only on tasks done or already in it, so a chain of dependent
 // tasks in a workstream runs in one session, on the most capable profile
@@ -125,16 +142,18 @@ func Next(goals []*Goal, running []Running, lim Limits) []Batch {
 	}
 	slices.SortStableFunc(cands, compare)
 
-	type wsKey struct{ repo, goal, ws string }
 	busy := map[wsKey]bool{}
 	perRepo := map[string]int{}
+	total := 0
 	for _, r := range running {
 		busy[wsKey{r.Repo, r.Goal, r.Workstream}] = true
-		perRepo[r.Repo]++
+		if !r.Mechanical {
+			perRepo[r.Repo]++
+			total++
+		}
 	}
-	total := len(running)
 
-	var batches []Batch
+	batches := mechanical(goals, busy)
 	taken := map[*queue.Task]bool{}
 	for _, c := range cands {
 		key := wsKey{c.goal.Repo, c.goal.Name, c.task.Workstream}
@@ -166,6 +185,34 @@ func Next(goals []*Goal, running []Running, lim Limits) []Batch {
 		busy[key] = true
 		perRepo[key.repo]++
 		total++
+	}
+	return batches
+}
+
+// mechanical returns a batch for each workstream not busy of the goals'
+// mechanical tasks there, and marks those workstreams busy.
+func mechanical(goals []*Goal, busy map[wsKey]bool) []Batch {
+	var batches []Batch
+	at := map[wsKey]int{}
+	for _, g := range goals {
+		for _, t := range g.Mechanical {
+			key := wsKey{g.Repo, g.Name, t.Workstream}
+			if i, ok := at[key]; ok {
+				batches[i].Tasks = append(batches[i].Tasks, t)
+				continue
+			}
+			if busy[key] {
+				continue
+			}
+			at[key] = len(batches)
+			batches = append(batches, Batch{
+				Repo: g.Repo, Goal: g.Name, Workstream: t.Workstream, Kind: t.Kind,
+				Tasks: []*queue.Task{t}, Mechanical: true,
+			})
+		}
+	}
+	for key := range at {
+		busy[key] = true
 	}
 	return batches
 }

@@ -89,10 +89,11 @@ type Goal struct {
 	Workstreams []Workstream `yaml:"workstreams,omitempty"`
 	// After names the goals this one waits for: none of its work starts,
 	// grilling included, until each is finished, merged upstream with its
-	// checks passing (ADR 0003).
+	// checks passing (ADR 0003). Each comes off once it has finished and
+	// what it landed is merged into the goal's branch.
 	After []string `yaml:"after,omitempty"`
-	// CaughtUp names the goals of After whose landed work has been merged
-	// into the goal's branches, once each, as the goal stopped waiting.
+	// CaughtUp names goals of After an older diatom merged in while keeping
+	// them listed; the scheduler takes them off After and clears it.
 	CaughtUp []string `yaml:"caughtUp,omitempty"`
 }
 
