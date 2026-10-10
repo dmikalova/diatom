@@ -38,7 +38,7 @@ func TestReviewSendsItsImages(t *testing.T) {
 	}
 	a, _ := newApp(t, f)
 	openGoal(t, a, "set")
-	a.openReview("set")
+	a.openReview(a.env.Store, "set")
 	// Past the ward's hunk to the dot's.
 	a.review.Key(tea.KeyPressMsg{Code: 'a', Text: "a"})
 	if seq := a.images(); !strings.Contains(seq, "\x1b_Ga=T,U=1") {

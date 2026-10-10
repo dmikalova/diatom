@@ -17,6 +17,7 @@ import (
 
 	"github.com/dmikalova/diatom/internal/commitmsg"
 	"github.com/dmikalova/diatom/internal/config"
+	"github.com/dmikalova/diatom/internal/finish"
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/plan"
 	"github.com/dmikalova/diatom/internal/queue"
@@ -325,7 +326,8 @@ func (h *Harness) newSession(
 		return "", session.Spec{}, err
 	}
 	spec := session.Spec{
-		ID: id, Repo: s.Repo(), Goal: g.Name, Workstream: b.Workstream, Worktree: wt.Dir,
+		ID: id, Repo: s.Repo(), State: s.Root, Key: s.Key(), Goal: g.Name,
+		Workstream: b.Workstream, Worktree: wt.Dir,
 		Kind: b.Kind, Profile: b.Profile, Effort: b.Effort,
 		Gate: cfg.SessionGate(), GateAttempts: cfg.GateAttempts, GateTimeout: cfg.GateTimeout,
 		ChainContext: cfg.ChainContext,
@@ -372,6 +374,13 @@ func (h *Harness) newSession(
 	}
 	var prompt string
 	if planningKind(b.Kind) {
+		if b.Kind == queue.Triage {
+			// Triage places a goal in any repo of the workspace, so it sees
+			// them all.
+			if in.Repos, err = h.workspace(); err != nil {
+				return "", spec, err
+			}
+		}
 		if prompt, err = h.planningPrompt(repo, g, in); err != nil {
 			return "", spec, err
 		}
@@ -601,6 +610,39 @@ func appendSummaries(s *queue.Store, goal string, report session.Report) error {
 	return nil
 }
 
+// note files one note twice: in its task's body, which is what the next
+// session of that task reads, and as a note of its own, which is what the
+// human reads in Next. Neither reader sees the other's copy.
+func (h *Harness) note(s *queue.Store, goal string, e session.Entry) error {
+	if strings.TrimSpace(e.Text) == "" {
+		return nil
+	}
+	if err := s.AppendNote(goal, e.Task, "Note", e.Text); err != nil {
+		return err
+	}
+	return s.AddNote(goal, &queue.Note{Task: e.Task, Text: e.Text, Created: h.now()})
+}
+
+// applyNotes files a session's notes and its records. A record goes only to
+// its task's body, for the task's later sessions and for the reviewer; only
+// a note reaches the human's Next.
+func (h *Harness) applyNotes(s *queue.Store, goal string, report session.Report) error {
+	for _, n := range report.Notes {
+		if err := h.note(s, goal, n); err != nil {
+			return err
+		}
+	}
+	for _, r := range report.Records {
+		if strings.TrimSpace(r.Text) == "" {
+			continue
+		}
+		if err := s.AppendNote(goal, r.Task, "Record", r.Text); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // nestedGuides lists the AGENTS.md files below the worktree's root, which
 // the prompt names for the agent to read before working in their directory.
 func nestedGuides(ctx context.Context, wt git.Repo) ([]string, error) {
@@ -653,10 +695,8 @@ func (h *Harness) finish(
 	if err != nil {
 		return err
 	}
-	for _, n := range report.Notes {
-		if err := s.AppendNote(g.Name, n.Task, "Note", n.Text); err != nil {
-			return err
-		}
+	if err := h.applyNotes(s, g.Name, report); err != nil {
+		return err
 	}
 	if err := appendSummaries(s, g.Name, report); err != nil {
 		return err
@@ -684,7 +724,11 @@ func (h *Harness) finish(
 			asked[task] = true
 			return s.AddQuestion(g.Name, &queue.Question{Task: task, Text: text, Created: h.now()})
 		}
-		if err := h.startGoals(ctx, repo, report.Goals, nil,
+		ws, err := h.workspace()
+		if err != nil {
+			return err
+		}
+		if err := h.startGoals(ctx, ws, repo, report.Goals, nil,
 			queue.Origin{Type: "goal", Ref: g.Name}, ask); err != nil {
 			return err
 		}
@@ -712,7 +756,27 @@ func (h *Harness) finish(
 		return err
 	}
 	// The checks run on the goal's branch, so the work has to be on it first.
-	return h.applyCI(ctx, repo, g, report)
+	if err := h.applyCI(ctx, repo, g, report); err != nil {
+		return err
+	}
+	return h.applyDrops(ctx, repo, g, report)
+}
+
+// applyDrops gives up on the goal when a task reported that it is not
+// wanted. It comes last, so the session's own work is settled first. The
+// intake goal is never dropped: its tasks belong to triage, not to a goal.
+func (h *Harness) applyDrops(
+	ctx context.Context,
+	repo Repo,
+	g *queue.Goal,
+	report session.Report,
+) error {
+	if len(report.Drops) == 0 || g.Over() || g.Name == queue.IntakeGoal {
+		return nil
+	}
+	e := report.Drops[len(report.Drops)-1]
+	h.log().Info("a task dropped its goal", "goal", g.Name, "task", e.Task, "why", e.Text)
+	return finish.Drop(ctx, repo.Store, g, e.Text, h.now())
 }
 
 // settleTasks moves each task of a session whose work is committed on: its
@@ -1058,9 +1122,9 @@ func (h *Harness) requeue(
 
 // noGate is the question a task without a gate to pass waits on.
 const noGate = "No gate is configured for this repo, so diatom can't check or commit any work. " +
-	"Set `gate` in .diatom/config.toml to the command every commit must pass, such as " +
-	"`gate = \"mage ci:check\"`, or set one for every repo of its kind under `[gates]` in " +
-	"~/.config/diatom/config.toml, then answer this to carry on."
+	"Set `gate` in the repo's block of ~/.config/diatom/config.toml to the command every " +
+	"commit must pass, such as `gate = \"mage ci:check\"`, or set one for every repo of its " +
+	"kind under `[gates]` at the top of that file, then answer this to carry on."
 
 // askAll blocks each task on a question saying why none of them can run.
 func (h *Harness) askAll(s *queue.Store, goal string, tasks []*queue.Task, text string) error {

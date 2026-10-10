@@ -44,12 +44,10 @@ go build -o ~/.local/bin/diatom ./cmd/diatom      # from the checkout
 scheduler puts its own executable on each agent's `PATH` as the task tool, and
 `go run` deletes the binary when it exits.
 
-diatom keeps its state in `.diatom/` inside each repo, which must be ignored
-through the global excludes file:
-
-```bash
-echo '.diatom/' >> ~/.config/git/ignore
-```
+diatom keeps nothing in a repo. Its state lives in `~/.local/share/diatom`,
+under a directory named after the repo's origin, so no repo has to ignore it.
+A repo with no origin cannot be worked on, because diatom has no name for its
+state.
 
 ## Use
 
@@ -163,16 +161,28 @@ Stopping never loses work. Each agent stops within seconds with its files as
 they are, and the next time diatom opens it carries the agent's own Claude
 session on where it stopped.
 
-Each workstream gets a worktree under `.diatom/goals/<goal>/worktrees/` on the
+Each workstream gets a worktree under
+`~/.local/share/diatom/<host>/<owner>/<repo>/goals/<goal>/worktrees/` on the
 branch `diatom/<goal>/ws/<workstream>`. Every commit that passes the gate merges
 into `diatom/<goal>/integration`.
 
 ## Configure
 
-Config is TOML, merged from `.diatom/config.toml` in the repo and each parent
-directory up to your home, then `~/.config/diatom/config.toml`. The closest file
-wins. The built-in defaults are in
+Config is TOML, in one file: `~/.config/diatom/config.toml`. The top of the
+file is what every repo gets. A `[repos."<prefix>"]` block below it covers the
+repos whose name starts with that prefix, and the longest prefix wins:
+
+```toml
+[repos."github.com/goodship-io"]       # every repo of the organisation
+[repos."github.com/goodship-io/web"]   # that one repo
+```
+
+`profiles` and `autoUpdate` are yours, not a repo's, so they are set once, at
+the top of the file. diatom writes this file itself and explains every lever in
+it. The built-in defaults are in
 [`internal/config/defaults.toml`](internal/config/defaults.toml).
+
+Clicking a repo's heading in the nav opens a page that sets its levers for you.
 
 diatom reads the config once, when it starts. A change takes effect the next
 time it starts, which `U` does without losing any running session, so a
@@ -183,7 +193,7 @@ Every repo needs a gate, the check every commit must pass. A repo that sets
 none gets the one `[gates]` names for its kind of project: go (a `go.mod`),
 node (`package.json`), deno (`deno.json`), rust (`Cargo.toml`) or python
 (`pyproject.toml`). With neither, diatom asks for one when it opens and saves
-it in the repo's `.diatom/config.toml`.
+it in that repo's block.
 
 ```toml
 gate = "mage ci:check"            # this repo's gate

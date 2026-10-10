@@ -11,24 +11,25 @@ Run `mage ci:fix && mage ci:check` before calling work done. It must print
 
 ## Layout
 
-| Package                  | Role                                                     |
-| ------------------------ | -------------------------------------------------------- |
-| `cmd/diatom`             | Opening the window, the task tool and the hooks          |
-| `internal/harness`       | The scheduler loop and the lifecycle of one batch        |
-| `internal/schedule`      | Pure priority and batching decisions (ADR 0004)          |
-| `internal/queue`         | Goals, tasks and questions as files (ADR 0002)           |
-| `internal/session`       | The files one agent session shares with the harness      |
-| `internal/git`           | Every git operation the harness owns (ADRs 0003, 0005)   |
-| `internal/hook`          | PreToolUse's blocks and the Stop gate (ADR 0005)         |
-| `internal/roster`        | The repo's goals as agents see them (ADR 0011)           |
-| `internal/runner`        | The runner interface, and `claude/` its first backend    |
-| `internal/commitmsg`     | Commit messages on the cheapest profile (ADR 0005)       |
-| `internal/review`        | Hunks, review decisions and the review queue (ADR 0001)  |
-| `internal/reviewui`      | The native reviewer, part of the window (ADR 0008)       |
-| `internal/ui`            | The window: nav, Next, goal pages, intake (ADR 0007)     |
-| `internal/intake`        | Free-form input waiting for triage (ADR 0009)            |
-| `internal/tui`           | Styling in the terminal's own 16 colors                  |
-| `internal/config`        | The config walk-up (ADR 0007)                            |
+| Package              | Role                                                     |
+| -------------------- | -------------------------------------------------------- |
+| `cmd/diatom`         | Opening the window, the task tool and the hooks          |
+| `internal/harness`   | The scheduler loop and the lifecycle of one batch        |
+| `internal/schedule`  | Pure priority and batching decisions (ADR 0004)          |
+| `internal/queue`     | Goals, tasks, problems and questions as files (ADR 0002) |
+| `internal/state`     | Where a repo's state lives, outside it (ADR 0013)        |
+| `internal/session`   | The files one agent session shares with the harness      |
+| `internal/git`       | Every git operation the harness owns (ADRs 0003, 0005)   |
+| `internal/hook`      | PreToolUse's blocks and the Stop gate (ADR 0005)         |
+| `internal/roster`    | The repo's goals as agents see them (ADR 0011)           |
+| `internal/runner`    | The runner interface, and `claude/` its first backend    |
+| `internal/commitmsg` | Commit messages on the cheapest profile (ADR 0005)       |
+| `internal/review`    | Hunks, review decisions and the review queue (ADR 0001)  |
+| `internal/reviewui`  | The native reviewer, part of the window (ADR 0008)       |
+| `internal/ui`        | The window: nav, Next, goal pages, intake (ADR 0007)     |
+| `internal/intake`    | Free-form input waiting for triage (ADR 0009)            |
+| `internal/tui`       | Styling in the terminal's own 16 colors                  |
+| `internal/config`    | The one config file and its repo blocks (ADR 0013)       |
 
 ## Rules
 

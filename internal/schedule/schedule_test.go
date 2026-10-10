@@ -109,6 +109,31 @@ func TestNextRespectsCaps(t *testing.T) {
 	}
 }
 
+// TestNextKeepsASlotForEachRepo pins that a busy repo doesn't starve a quiet
+// one: with two repos capped at two sessions each and the machine at three,
+// the first takes two and the third is left for the second.
+func TestNextKeepsASlotForEachRepo(t *testing.T) {
+	now := time.Now()
+	vex := &Goal{Repo: "vex", Name: "set", Created: now, Ready: []*queue.Task{
+		task("1", queue.Planned, "engine"), task("2", queue.Planned, "cards"),
+		task("3", queue.Planned, "web"),
+	}}
+	dots := &Goal{Repo: "dotfiles", Name: "zsh", Created: now.Add(time.Hour), Ready: []*queue.Task{
+		task("1", queue.Planned, "shell"),
+	}}
+	lim := Limits{Machine: 3, Repos: map[string]RepoLimits{
+		"vex": {Sessions: 3}, "dotfiles": {Sessions: 3},
+	}}
+	got := Next([]*Goal{vex, dots}, nil, lim)
+	per := map[string]int{}
+	for _, b := range got {
+		per[b.Repo]++
+	}
+	if len(got) != 3 || per["vex"] != 2 || per["dotfiles"] != 1 {
+		t.Errorf("Next = %+v, want two vex batches and one dotfiles", got)
+	}
+}
+
 func TestNextOrdersWithinKind(t *testing.T) {
 	late := task("1", queue.Planned, "a")
 	late.Priority = 2

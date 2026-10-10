@@ -197,8 +197,9 @@ const maxReportPushes = 2
 
 // StopPlanning is the Stop hook of triage and grilling sessions, which have
 // no gate. It sends the agent back when a task has no report, because a
-// question or plan left in a reply reaches nobody: grilling must ask or hand
-// in a plan, and triage must ask or finish.
+// question or plan left in a reply reaches nobody: grilling must ask, hand
+// in a plan, or close the task by marking it done or dropping its goal, and
+// triage must ask or finish.
 func StopPlanning(dir string, spec session.Spec, out io.Writer) error {
 	report, err := session.ReadReport(dir)
 	if err != nil {
@@ -212,11 +213,14 @@ func StopPlanning(dir string, spec session.Spec, out io.Writer) error {
 	for _, p := range report.Plans {
 		planned[p.Task] = true
 	}
+	// A drop closes the whole goal, so it reports for every task of it.
+	dropped := len(report.Drops) > 0
 	var missing []string
 	for _, id := range spec.Tasks {
-		reported := asked[id] || report.Done[id]
+		reported := dropped || asked[id] || report.Done[id]
 		if spec.Kind == queue.Grilling {
-			reported = asked[id] || planned[id]
+			// Grilling done without a plan is sent back, so it reports nothing.
+			reported = dropped || asked[id] || planned[id]
 		}
 		if !reported {
 			missing = append(missing, id)
@@ -238,7 +242,8 @@ func StopPlanning(dir string, spec session.Spec, out io.Writer) error {
 	}
 	what := "mark it done with `diatom task done <id>` once it is sorted"
 	if spec.Kind == queue.Grilling {
-		what = "hand in the plan with `diatom task plan <id> < plan.yaml`"
+		what = "hand in the plan with `diatom task plan <id> < plan.yaml`, or close the goal with " +
+			"`diatom task drop <id> \"<why>\"` when it is not worth doing"
 	}
 	reason := fmt.Sprintf(
 		"You are ending the session without reporting on task %s. Nobody reads your replies, "+

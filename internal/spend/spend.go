@@ -183,7 +183,7 @@ type Totals struct{ Day, Week, Month float64 }
 // Repo adds up what every goal's sessions cost in the days up to now: the
 // finished goals', and triage's, too.
 func (t *Tally) Repo(s *queue.Store, now time.Time) Totals {
-	return Sum(t.Days(s, now), now)
+	return Sum(t.Days(now, s), now)
 }
 
 // Sum adds up days into what was spent today, over the last 7 days and over
@@ -215,6 +215,9 @@ type Day struct {
 // GoalDay is what one goal's sessions spent on a day, and each session's,
 // the most first.
 type GoalDay struct {
+	// Repo is the root of the repo the goal is in, which a workspace needs
+	// to read the goal back.
+	Repo     string
 	Goal     string
 	USD      float64
 	Sessions []SessionDay
@@ -226,40 +229,59 @@ type SessionDay struct {
 	USD     float64
 }
 
-// Days is what the repo's sessions spent on each of the last 30 days up to
-// now that they spent anything, the latest first.
-func (t *Tally) Days(s *queue.Store, now time.Time) []Day {
+// goalKey is one goal of one repo, which is what a day's spending is
+// grouped by: two repos may hold goals of the same name.
+type goalKey struct{ repo, goal string }
+
+// addSession files what one session spent into the days it spent it on,
+// keeping only the days from month to midnight.
+func addSession(
+	byDay map[int64]map[goalKey]*GoalDay,
+	key goalKey, c Session, month, midnight time.Time,
+) {
+	loc := midnight.Location()
+	spent := map[int64]float64{}
+	for _, p := range c.Parts {
+		at := p.At.In(loc)
+		day := time.Date(at.Year(), at.Month(), at.Day(), 0, 0, 0, 0, loc)
+		if !day.Before(month) && !day.After(midnight) {
+			spent[day.Unix()] += p.USD
+		}
+	}
+	for day, usd := range spent {
+		goals := byDay[day]
+		if goals == nil {
+			goals = map[goalKey]*GoalDay{}
+			byDay[day] = goals
+		}
+		g := goals[key]
+		if g == nil {
+			g = &GoalDay{Repo: key.repo, Goal: key.goal}
+			goals[key] = g
+		}
+		g.USD += usd
+		g.Sessions = append(g.Sessions, SessionDay{Session: c, USD: usd})
+	}
+}
+
+// Days is what the stores' sessions spent on each of the last 30 days up to
+// now that they spent anything, the latest first. Several stores are the
+// repos of one workspace, added up together (ADR 0007).
+func (t *Tally) Days(now time.Time, stores ...*queue.Store) []Day {
 	midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	month := midnight.AddDate(0, 0, -29)
-	// Each day is keyed by when its midnight is, in seconds.
-	byDay := map[int64]map[string]*GoalDay{}
-	entries, _ := os.ReadDir(filepath.Join(s.Root, "goals"))
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		for _, c := range t.Goal(s, e.Name()) {
-			spent := map[int64]float64{}
-			for _, p := range c.Parts {
-				at := p.At.In(now.Location())
-				day := time.Date(at.Year(), at.Month(), at.Day(), 0, 0, 0, 0, now.Location())
-				if !day.Before(month) && !day.After(midnight) {
-					spent[day.Unix()] += p.USD
-				}
+	// Each day is keyed by when its midnight is, in seconds, and each goal
+	// of a day by its repo and name.
+	byDay := map[int64]map[goalKey]*GoalDay{}
+	for _, s := range stores {
+		entries, _ := os.ReadDir(filepath.Join(s.Root, "goals"))
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
 			}
-			for day, usd := range spent {
-				goals := byDay[day]
-				if goals == nil {
-					goals = map[string]*GoalDay{}
-					byDay[day] = goals
-				}
-				g := goals[e.Name()]
-				if g == nil {
-					g = &GoalDay{Goal: e.Name()}
-					goals[e.Name()] = g
-				}
-				g.USD += usd
-				g.Sessions = append(g.Sessions, SessionDay{Session: c, USD: usd})
+			key := goalKey{s.Repo(), e.Name()}
+			for _, c := range t.Goal(s, e.Name()) {
+				addSession(byDay, key, c, month, midnight)
 			}
 		}
 	}
@@ -275,7 +297,11 @@ func (t *Tally) Days(s *queue.Store, now time.Time) []Day {
 			d.Goals = append(d.Goals, *g)
 		}
 		slices.SortFunc(d.Goals, func(a, b GoalDay) int {
-			return cmp.Or(cmp.Compare(b.USD, a.USD), cmp.Compare(a.Goal, b.Goal))
+			return cmp.Or(
+				cmp.Compare(b.USD, a.USD),
+				cmp.Compare(a.Repo, b.Repo),
+				cmp.Compare(a.Goal, b.Goal),
+			)
 		})
 		days = append(days, d)
 	}

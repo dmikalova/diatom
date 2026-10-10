@@ -33,10 +33,22 @@ import (
 // EnvVar names the session directory in the agent's environment.
 const EnvVar = "DIATOM_SESSION"
 
+// Store is the queue the session's repo keeps, where the spec says it is.
+func (s Spec) Store() *queue.Store {
+	if s.State != "" {
+		return queue.At(s.Repo, s.State, s.Key)
+	}
+	return queue.Open(s.Repo)
+}
+
 // Spec is what a session is for.
 type Spec struct {
-	ID         string     `json:"id"`
-	Repo       string     `json:"repo"`
+	ID   string `json:"id"`
+	Repo string `json:"repo"`
+	// State is where the repo's queue is, outside the repo (ADR 0013), and
+	// Key names the repo by its origin.
+	State      string     `json:"state,omitempty"`
+	Key        string     `json:"key,omitempty"`
 	Goal       string     `json:"goal"`
 	Workstream string     `json:"workstream"`
 	Worktree   string     `json:"worktree"`
@@ -57,8 +69,7 @@ type Spec struct {
 	GateTimeout time.Duration `json:"gateTimeout,omitempty"`
 	// ChainContext is the context, in tokens, past which marking a task
 	// done releases the session's other tasks to fresh sessions; 0 never.
-	ChainContext int `json:"chainContext,omitempty"`
-	// Connectors are the repo's catalog names, which bound what the session
+	ChainContext int `json:"chainContext,omitempty"` // Connectors are the repo's catalog names, which bound what the session
 	// may ask for, and Attached the ones it already has (ADR 0013).
 	Connectors []string `json:"connectors,omitempty"`
 	Attached   []string `json:"attached,omitempty"`
@@ -121,6 +132,9 @@ type Entry struct {
 	Workstream  string   `json:"workstream,omitempty"`
 	After       []string `json:"after,omitempty"`
 	Profile     string   `json:"profile,omitempty"`
+	// Repo is the repo of the workspace a new goal belongs in, by name. It
+	// is empty when the workspace holds one repo (ADR 0007).
+	Repo string `json:"repo,omitempty"`
 	// Plan is the plan of a goal triage starts with its work already
 	// decided, as YAML, for the human to sign off without grilling.
 	Plan string `json:"plan,omitempty"`
@@ -136,6 +150,9 @@ const (
 	EntryDone = "done"
 	EntryAsk  = "ask"
 	EntryNote = "note"
+	// EntryRecord keeps something for the task's later sessions and for the
+	// reviewer. It never reaches the human's Next, as a note does.
+	EntryRecord = "record"
 	// EntryManual gives the human steps to do by hand, a question whose
 	// answer says they are done.
 	EntryManual = "manual"
@@ -158,6 +175,9 @@ const (
 	// EntryCI asks diatom to open the goal's pull request and bring back its
 	// checks. The session ends and the task waits for them (ADR 0014).
 	EntryCI = "ci"
+	// EntryDrop gives up on the task's goal: Text says why. Nothing of the
+	// goal lands and its work is closed (ADR 0003).
+	EntryDrop = "drop"
 )
 
 // Append adds an entry to the session's report, after checking that it names
@@ -198,8 +218,10 @@ type Report struct {
 	// Questions are the questions the agent asked, and the manual steps it
 	// gave, in order.
 	Questions []Entry
-	// Notes are the notes the agent added, in order.
+	// Notes are the notes the agent left for the human, in order.
 	Notes []Entry
+	// Records are what the agent kept for later sessions, in order.
+	Records []Entry
 	// Adds, Feedback, Goals, Afters and Plans are what triage and grilling
 	// handed in, in order.
 	Adds, Feedback, Goals, Afters, Plans []Entry
@@ -207,6 +229,8 @@ type Report struct {
 	Connects []Entry
 	// CI are the asks for the goal's pull request and its checks, in order.
 	CI []Entry
+	// Drops are the asks to give up on the goal, in order.
+	Drops []Entry
 	// Released are the tasks handed back unstarted, for fresh sessions.
 	Released map[string]bool
 }
@@ -253,6 +277,8 @@ func ReadReport(dir string) (Report, error) {
 			r.Questions = append(r.Questions, e)
 		case EntryNote:
 			r.Notes = append(r.Notes, e)
+		case EntryRecord:
+			r.Records = append(r.Records, e)
 		case EntryAdd:
 			r.Adds = append(r.Adds, e)
 		case EntryFeedback:
@@ -269,6 +295,8 @@ func ReadReport(dir string) (Report, error) {
 			r.Connects = append(r.Connects, e)
 		case EntryCI:
 			r.CI = append(r.CI, e)
+		case EntryDrop:
+			r.Drops = append(r.Drops, e)
 		}
 	}
 	return r, sc.Err()

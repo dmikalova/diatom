@@ -5,6 +5,7 @@
 package ui
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -38,33 +39,72 @@ const refreshEvery = 3 * time.Second
 
 // Env is what the window reads and writes.
 type Env struct {
-	// Store is the repo's; a window shows one repo (ADR 0007).
+	// Store is the workspace's first repo: what the window shows when it is
+	// not about one goal, such as the log and the title.
 	Store *queue.Store
+	// Repos are every repo of the workspace, Store first. Empty means the
+	// window works in Store alone.
+	Repos []*queue.Store
+	// Root is the directory the window is over: the repo itself, or the
+	// directory holding them. Empty means the first repo.
+	Root  string
 	Paths config.Paths
-	Now   func() time.Time
-	// Config is the repo's config, read once when diatom starts: a change
-	// to it takes effect on the next start. Nil reads it afresh each time.
+	// Config is the first repo's config, read once when diatom starts: a
+	// change to it takes effect on the next start. Nil reads it afresh each
+	// time. Each other repo's is read as it is needed.
 	Config *config.Config
+	Now    func() time.Time
+}
+
+// stores are the repos the window works in, in the order it lists them.
+func (e Env) stores() []*queue.Store {
+	if len(e.Repos) > 0 {
+		return e.Repos
+	}
+	return []*queue.Store{e.Store}
+}
+
+// many reports whether the window is over more than one repo, which is when
+// a goal is worth naming with its repo.
+func (e Env) many() bool { return len(e.Repos) > 1 }
+
+// root is the directory the window is over.
+func (e Env) root() string {
+	if e.Root != "" {
+		return e.Root
+	}
+	return e.Store.Repo()
 }
 
 // reviewer opens a goal's review, with the editor its o opens.
-func (e Env) reviewer(ctx context.Context, goal string) (*reviewui.Model, error) {
-	rv, err := reviewui.New(ctx, e.Store, goal)
+func (e Env) reviewer(
+	ctx context.Context,
+	store *queue.Store,
+	goal string,
+) (*reviewui.Model, error) {
+	rv, err := reviewui.New(ctx, store, goal)
 	if err != nil {
 		return nil, err
 	}
-	if cfg, err := e.config(); err == nil {
+	if cfg, err := e.configFor(store); err == nil {
 		rv.Editor = strings.Fields(cfg.Editor)
 	}
 	return rv, nil
 }
 
-// config is the repo's config.
-func (e Env) config() (*config.Config, error) {
-	if e.Config != nil {
+// config is the first repo's config.
+func (e Env) config() (*config.Config, error) { return e.configFor(e.Store) }
+
+// configFor is a repo's config, read afresh for every repo but the first:
+// only the first's is held, and the walk-up means they mostly agree anyway.
+func (e Env) configFor(store *queue.Store) (*config.Config, error) {
+	if e.Config != nil && (store == nil || store == e.Store) {
 		return e.Config, nil
 	}
-	return config.Load(e.Store.Repo(), e.Paths)
+	if store == nil {
+		store = e.Store
+	}
+	return config.Load(store.Repo(), e.Paths.For(store.Key()))
 }
 
 // now is the window's clock.
@@ -83,6 +123,8 @@ func tick() tea.Cmd {
 
 // goalRow is one goal in the status pane.
 type goalRow struct {
+	// store is the repo the goal is in, and repo that repo's root.
+	store  *queue.Store
 	repo   string
 	goal   *queue.Goal
 	counts map[queue.State]int
@@ -90,6 +132,8 @@ type goalRow struct {
 	// that are steps for the human to do by hand.
 	questions, manual int
 	toReview          int
+	// unread counts the notes the agents left that the human hasn't read.
+	unread int
 	// notes counts the comments on hunks of the goal the human approved,
 	// which triage hasn't sorted yet: it may add work to the goal, so they
 	// hold its landing up.
@@ -102,6 +146,9 @@ type goalRow struct {
 	// as its finishing does.
 	landingReview int
 	activeWork    []string
+	// problems are what diatom hit on the goal in the background and could
+	// not get past. Any open one parks the goal (ADR 0014).
+	problems []*queue.Problem
 	// plan is the plan waiting for sign-off, and grilling the grilling
 	// task's state, for a goal in planning.
 	plan     *plan.Plan
@@ -175,7 +222,7 @@ type Status struct {
 	// openReview opens a goal's review, where the window has one, and
 	// answering is the goal whose questions the human asked to answer, for
 	// the window to open in Next.
-	openReview func(goal string)
+	openReview func(store *queue.Store, goal string)
 	answering  string
 
 	width, height int
@@ -197,18 +244,31 @@ func NewStatus(ctx context.Context, env Env) *Status {
 
 func (s *Status) reload() {
 	s.loadErr = nil
-	store := s.env.Store
-	s.health = health(store)
-	s.days = s.spent.Days(store, s.env.now())
+	s.health = health(s.env)
+	s.days = s.spent.Days(s.env.now(), s.env.stores()...)
 	s.totals = spend.Sum(s.days, s.env.now())
-	land := ""
 	if cfg, err := s.env.config(); err == nil {
-		s.budget, land = cfg.Budget, cfg.Land
+		s.budget = cfg.Budget
+	}
+	var rows []goalRow
+	for _, store := range s.env.stores() {
+		rows = append(rows, s.repoRows(store)...)
+	}
+	s.rows = rows
+	s.reloadDetail()
+}
+
+// repoRows are one repo's rows: what the human sent it first, while triage
+// has any of it, then its goals that aren't over.
+func (s *Status) repoRows(store *queue.Store) []goalRow {
+	land := ""
+	if cfg, err := s.env.configFor(store); err == nil {
+		land = cfg.Land
 	}
 	goals, err := store.Goals()
 	if err != nil {
 		s.loadErr = err
-		return
+		return nil
 	}
 	notes := map[string]int{}
 	if pending, err := intake.Pending(intake.Dir(store.Repo())); err == nil {
@@ -219,7 +279,6 @@ func (s *Status) reload() {
 		}
 	}
 	var rows []goalRow
-	// What the human sent comes first, while triage has any of it.
 	if g, err := store.Goal(queue.IntakeGoal); err == nil {
 		row, err := s.row(store, g)
 		if err != nil {
@@ -229,7 +288,7 @@ func (s *Status) reload() {
 		rows = append(rows, row)
 	}
 	for _, g := range goals {
-		if g.State == queue.GoalFinished {
+		if g.Over() {
 			continue
 		}
 		row, err := s.row(store, g)
@@ -240,12 +299,27 @@ func (s *Status) reload() {
 		row.notes, row.land = notes[g.Name], land
 		rows = append(rows, row)
 	}
-	s.rows = rows
-	s.reloadDetail()
+	// A goal whose pull requests are open waits on the human outside diatom,
+	// so it sinks below the goals still worth looking at.
+	slices.SortStableFunc(rows, func(a, b goalRow) int {
+		return cmp.Compare(boolInt(awaitingMerge(a)), boolInt(awaitingMerge(b)))
+	})
+	return rows
+}
+
+// awaitingMerge reports whether the goal's pull requests are open and
+// waiting for the human to merge them, with nothing left for diatom to do.
+func awaitingMerge(r goalRow) bool {
+	if r.intake || r.goal.State != queue.GoalDone || r.landing == nil {
+		return false
+	}
+	l := r.landing.Landing
+	return l != nil && l.How == finish.PRs && l.Merged == ""
 }
 
 func (s *Status) row(store *queue.Store, g *queue.Goal) (goalRow, error) {
 	row := goalRow{
+		store:   store,
 		repo:    store.Repo(),
 		goal:    g,
 		counts:  map[queue.State]int{},
@@ -276,6 +350,14 @@ func (s *Status) row(store *queue.Store, g *queue.Goal) (goalRow, error) {
 			}
 		}
 	}
+	unread, err := store.Notes(g.Name, queue.NoteOpen)
+	if err != nil {
+		return row, err
+	}
+	row.unread = len(unread)
+	if row.problems, err = store.Problems(g.Name, queue.ProblemOpen); err != nil {
+		return row, err
+	}
 	if row.toReview, err = s.toReview(store, g.Name, commits); err != nil {
 		return row, err
 	}
@@ -297,7 +379,7 @@ func (s *Status) row(store *queue.Store, g *queue.Goal) (goalRow, error) {
 			row.settling = append(row.settling, ws)
 		}
 	}
-	row.cost, row.taskCost = s.goalCost(g.Name)
+	row.cost, row.taskCost = s.goalCost(store, g.Name)
 	if g.State == queue.GoalActive && len(row.waiting) == 0 {
 		for _, t := range schedule.Ready(tasks) {
 			if !slices.Contains(row.activeWork, t.Workstream) {
@@ -359,9 +441,9 @@ func stage(store *queue.Store, row *goalRow) error {
 // task: a session's cost goes to its tasks by the model calls made for each,
 // or evenly for a session that logged none. A session still running counts
 // what its runs that ended cost.
-func (s *Status) goalCost(goal string) (float64, map[string]float64) {
+func (s *Status) goalCost(store *queue.Store, goal string) (float64, map[string]float64) {
 	total, perTask := 0.0, map[string]float64{}
-	for _, c := range s.spent.Goal(s.env.Store, goal) {
+	for _, c := range s.spent.Goal(store, goal) {
 		total += c.USD
 		for _, t := range c.Tasks {
 			perTask[t] += c.Share(t)
@@ -416,7 +498,7 @@ func prepare(
 	if err != nil || res != nil && res.Failing() == nil {
 		return res, err
 	}
-	cfg, err := env.config()
+	cfg, err := env.configFor(s)
 	if err != nil {
 		return nil, err
 	}
@@ -454,7 +536,7 @@ func (s *Status) act(row *goalRow, key string) (tea.Cmd, bool) {
 		if s.openReview == nil || row.intake {
 			return nil, false
 		}
-		s.openReview(row.goal.Name)
+		s.openReview(row.store, row.goal.Name)
 		return nil, true
 	case "a":
 		if row.questions == 0 && !planReady(row) {
@@ -513,9 +595,25 @@ func landActions(r *goalRow) []action {
 		a = append(a, action{"P", "Merge it into " + r.goal.Base})
 	}
 	if r.land != config.LandMerge {
-		a = append(a, action{"F", "Open its stacked pull requests"})
+		a = append(a, action{"F", prAction(r)})
 	}
 	return a
+}
+
+// prAction names F for how many pull requests the goal will be. A built
+// layout knows; before one, only the workstreams hint at it, so the count
+// is left out until it is certain.
+func prAction(r *goalRow) string {
+	if l := r.landing; l != nil && len(l.Stack) > 0 {
+		if len(l.Stack) == 1 {
+			return "Open its pull request"
+		}
+		return fmt.Sprintf("Open its %d stacked pull requests", len(l.Stack))
+	}
+	if len(r.goal.Workstreams) <= 1 {
+		return "Open its pull request"
+	}
+	return "Open its stacked pull requests"
 }
 
 // landsBy reports whether the goal may land by key, P or F, and says why not
@@ -548,6 +646,11 @@ func (s *Status) confirmed(key, name, prompt string) bool {
 	}
 	s.confirm = ""
 	return true
+}
+
+// confirming reports whether the goal's key waits for a second press.
+func (s *Status) confirming(row *goalRow, key string) bool {
+	return row != nil && s.confirm == key+" "+row.repo+"/"+row.goal.Name
 }
 
 // jobMsg ends a background job.
@@ -630,7 +733,12 @@ func (s *Status) finishKey(row *goalRow, key string) tea.Cmd {
 
 // start runs a job in the background, on the goal as it stands now.
 func (s *Status) start(j job) tea.Cmd {
-	store := queue.Open(j.repo)
+	store := s.env.Store
+	for _, st := range s.env.stores() {
+		if st.Repo() == j.repo {
+			store = st
+		}
+	}
 	g, err := store.Goal(j.goal)
 	if err != nil {
 		return func() tea.Msg { return jobMsg{err: err} }
@@ -731,7 +839,15 @@ func runFinish(
 	case "F":
 		say("Pushing its branches and opening its pull requests")
 		urls, err := finish.Land(ctx, s, g, res, finish.PRs, remote, finish.RunGH)
-		return fmt.Sprintf("opened %s", strings.Join(urls, " ")), err
+		if err != nil || len(urls) == 0 {
+			return fmt.Sprintf("opened %s", strings.Join(urls, " ")), err
+		}
+		them := "it"
+		if len(urls) > 1 {
+			them = "them"
+		}
+		return fmt.Sprintf("opened %s · merge %s yourself: %s finishes once %s lands on %s",
+			strings.Join(urls, " "), them, g.Name, them, g.Base), nil
 	case "P":
 		say("Merging it into %s/%s", remote, g.Base)
 		if _, err := finish.Land(ctx, s, g, res, finish.Push, remote, nil); err != nil {
@@ -764,7 +880,7 @@ func (s *Status) toggleParked(row *goalRow) {
 }
 
 func (s *Status) save(row *goalRow, what string) {
-	if err := queue.Open(row.repo).SaveGoal(row.goal); err != nil {
+	if err := row.store.SaveGoal(row.goal); err != nil {
 		s.err = err
 		return
 	}
@@ -772,8 +888,23 @@ func (s *Status) save(row *goalRow, what string) {
 }
 
 // health says what keeps the scheduler from starting work, or "" when
-// nothing does.
-func health(store *queue.Store) string {
+// nothing does. Over a workspace it reports the first repo that is held up,
+// named, since one scheduler covers them all.
+func health(env Env) string {
+	for _, store := range env.stores() {
+		h := repoHealth(store)
+		if h == "" {
+			continue
+		}
+		if env.many() {
+			return filepath.Base(store.Repo()) + ": " + h
+		}
+		return h
+	}
+	return ""
+}
+
+func repoHealth(store *queue.Store) string {
 	if _, err := store.Scheduler(); errors.Is(err, queue.ErrNotRunning) {
 		return "no scheduler: reopen diatom to start work"
 	}
@@ -845,6 +976,9 @@ func (s *Status) renderRow(b *strings.Builder, r goalRow) {
 	if r.questions > 0 {
 		b.WriteString(" · " + tui.Color(fmt.Sprintf("%d questions", r.questions), tui.Magenta))
 	}
+	if r.unread > 0 {
+		b.WriteString(" · " + tui.Color(fmt.Sprintf("%d notes", r.unread), tui.Cyan))
+	}
 	if r.toReview > 0 {
 		b.WriteString(" · " + tui.Color(fmt.Sprintf("%d to review", r.toReview), tui.Yellow))
 	}
@@ -867,7 +1001,14 @@ func landingLine(r goalRow) string {
 	case l == nil:
 		return tui.Color(line, tui.Yellow)
 	case l.Landing == nil || l.Landing.How == "":
-		return tui.Color(line+" · P merge into "+r.goal.Base+" · F open PRs", tui.Green)
+		var keys []string
+		if r.land != config.LandPRs {
+			keys = append(keys, "P merge into "+r.goal.Base)
+		}
+		if r.land != config.LandMerge {
+			keys = append(keys, "F open PRs")
+		}
+		return tui.Color(strings.Join(append([]string{line}, keys...), " · "), tui.Green)
 	case l.Landing.Checks == finish.ChecksFailed || l.Landing.Error != "":
 		return tui.Color(line, tui.Red)
 	}
@@ -901,6 +1042,10 @@ func goalState(r goalRow) string {
 // reviewing once every task is done while hunks are left to review; with
 // those reviewed too it is ready to finish.
 func goalStatus(r goalRow) (string, int) {
+	if len(r.problems) > 0 {
+		// Nothing of the goal runs while diatom is stuck on it (ADR 0014).
+		return "stuck", tui.Red
+	}
 	if len(r.waiting) > 0 &&
 		(r.goal.State == queue.GoalActive || r.goal.State == queue.GoalPlanning) {
 		// Opening the goal says which goals it waits for.

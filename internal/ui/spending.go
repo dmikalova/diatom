@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -76,7 +77,7 @@ func (a *App) budgetLine() string {
 		}
 	}
 	if len(caps) == 0 {
-		return tui.Dim("No budget: [budget] in .diatom/config.toml caps the day, week or month.")
+		return tui.Dim("No budget: a [budget] table in the config caps the day, week or month.")
 	}
 	return "Budget: " + strings.Join(caps, " · ")
 }
@@ -99,17 +100,20 @@ func (a *App) totalsLine() string {
 // landedWeeks is how many weeks the landed lines show.
 const landedWeeks = 6
 
-// landedLines show what the repo's landed goals came to, from the ledger
-// that outlasts their sessions: lines of code, those added to code and test
-// files, for each dollar their sessions spent, over all time and for each
-// of the last weeks.
+// landedLines show what the workspace's landed goals came to, from the
+// ledger that outlasts their sessions: lines of code, those added to code
+// and test files, for each dollar their sessions spent, over all time and
+// for each of the last weeks.
 func (a *App) landedLines(w int) []string {
 	all, err := ledger.Load(ledger.Path(a.env.Paths))
 	if err != nil {
 		return []string{tui.Color("the ledger of landed goals: "+err.Error(), tui.Red), ""}
 	}
-	repo := a.env.Store.Repo()
-	all = slices.DeleteFunc(all, func(l ledger.Landed) bool { return l.Repo != repo })
+	repos := map[string]bool{}
+	for _, s := range a.env.stores() {
+		repos[s.Repo()] = true
+	}
+	all = slices.DeleteFunc(all, func(l ledger.Landed) bool { return !repos[l.Repo] })
 	if len(all) == 0 {
 		return nil
 	}
@@ -161,9 +165,9 @@ func (a *App) renderSpendDay(d spend.Day, w, h int) string {
 	}
 	var lines []string
 	for _, g := range d.Goals {
-		lines = append(lines, tui.Bold(a.goalTitle(g.Goal))+"  "+fmt.Sprintf("$%.2f", g.USD))
+		lines = append(lines, tui.Bold(a.goalTitle(g))+"  "+fmt.Sprintf("$%.2f", g.USD))
 		for _, s := range g.Sessions {
-			lines = append(lines, "  "+ansi.Truncate(a.sessionLine(g.Goal, s), max(w-2, 10), "…"))
+			lines = append(lines, "  "+ansi.Truncate(a.sessionLine(g, s), max(w-2, 10), "…"))
 		}
 		lines = append(lines, "")
 	}
@@ -172,21 +176,34 @@ func (a *App) renderSpendDay(d spend.Day, w, h int) string {
 	return strings.Join(append(head, lines[a.spendTop:min(a.spendTop+room, len(lines))]...), "\n")
 }
 
-// goalTitle is a goal's title, or its name when it has none.
-func (a *App) goalTitle(name string) string {
-	if name == queue.IntakeGoal {
-		return "Triage"
+// spendStore is the store of the repo a day's goal is in.
+func (a *App) spendStore(g spend.GoalDay) *queue.Store {
+	for _, s := range a.env.stores() {
+		if s.Repo() == g.Repo {
+			return s
+		}
 	}
-	g, err := a.env.Store.Goal(name)
-	if err != nil || g.Title == "" {
-		return name
+	return a.env.Store
+}
+
+// goalTitle is a goal's title, or its name when it has none, named with its
+// repo over a workspace.
+func (a *App) goalTitle(g spend.GoalDay) string {
+	title := g.Goal
+	if g.Goal == queue.IntakeGoal {
+		title = "Triage"
+	} else if goal, err := a.spendStore(g).Goal(g.Goal); err == nil && goal.Title != "" {
+		title = goal.Title
 	}
-	return g.Title
+	if a.env.many() {
+		return filepath.Base(g.Repo) + " · " + title
+	}
+	return title
 }
 
 // sessionLine says what a session was and what it spent on the day: its
 // workstream, its kind, and the tasks it worked on.
-func (a *App) sessionLine(goal string, s spend.SessionDay) string {
+func (a *App) sessionLine(g spend.GoalDay, s spend.SessionDay) string {
 	ws := s.Session.Workstream
 	if ws == "" {
 		ws = "planning"
@@ -196,9 +213,10 @@ func (a *App) sessionLine(goal string, s spend.SessionDay) string {
 		parts = append(parts, string(s.Session.Kind))
 	}
 	parts = append(parts, fmt.Sprintf("$%.2f", s.USD))
+	store := a.spendStore(g)
 	var tasks []string
 	for _, id := range s.Session.Tasks {
-		if t, err := a.env.Store.Task(goal, id); err == nil {
+		if t, err := store.Task(g.Goal, id); err == nil {
 			tasks = append(tasks, id+" "+t.Title)
 		} else {
 			tasks = append(tasks, id)

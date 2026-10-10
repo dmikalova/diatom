@@ -12,8 +12,12 @@
 //	  goal.yaml                  the goal's state, branches and workstreams
 //	  tasks/<state>/<id>.md      pending, active, blocked or done
 //	  questions/<state>/<id>.md  open or closed
+//	  notes/<state>/<id>.md      open or read
 //	  sessions/<id>/             one agent session's spec, report and log
 //	  worktrees/<workstream>/    one git worktree per workstream
+//
+// The repo also keeps `.diatom/landing/`, the one worktree every goal is
+// laid out and gated in.
 package queue
 
 import (
@@ -45,6 +49,9 @@ const (
 	// GoalFinished is a done goal merged into its base branch upstream, with
 	// the checks there passing.
 	GoalFinished GoalState = "finished"
+	// GoalDropped is a goal given up on: none of its work lands, and its
+	// files stay only so what it cost is still counted.
+	GoalDropped GoalState = "dropped"
 )
 
 // IntakeGoal holds the repo's triage tasks and their questions: triage
@@ -75,8 +82,10 @@ type Goal struct {
 	// lint titles take it (ADR 0014).
 	Ticket  string    `yaml:"ticket,omitempty"`
 	Created time.Time `yaml:"created"`
-	// Finished is when the goal was found landed upstream.
-	Finished    time.Time    `yaml:"finished,omitempty"`
+	// Finished is when the goal was found landed upstream, or was dropped.
+	Finished time.Time `yaml:"finished,omitempty"`
+	// Reason is why a dropped goal was given up on.
+	Reason      string       `yaml:"reason,omitempty"`
 	Workstreams []Workstream `yaml:"workstreams,omitempty"`
 	// After names the goals this one waits for: none of its work starts,
 	// grilling included, until each is finished, merged upstream with its
@@ -107,6 +116,10 @@ func ParseTicket(s string) (string, bool) {
 
 // IntegrationBranch is the branch that collects all of a goal's work.
 func (g *Goal) IntegrationBranch() string { return "diatom/" + g.Name + "/integration" }
+
+// Over reports whether the goal's life is done, whether it landed or was
+// dropped: nothing more happens on it, and nothing waits for it.
+func (g *Goal) Over() bool { return g.State == GoalFinished || g.State == GoalDropped }
 
 // WorkstreamBranch is the branch one workstream commits on.
 func (g *Goal) WorkstreamBranch(ws string) string { return "diatom/" + g.Name + "/ws/" + ws }
@@ -262,19 +275,128 @@ type Question struct {
 	Text string `yaml:"-"`
 }
 
-// Store is the `.diatom/` directory of one repository.
-type Store struct {
-	// Root is the repository's `.diatom/` directory.
-	Root string
+// NoteState is whether a note still waits for the human to read it.
+type NoteState string
+
+// The note states.
+const (
+	NoteOpen NoteState = "open"
+	NoteRead NoteState = "read"
+)
+
+// Note is something an agent wants the human to know and needs no answer
+// for. It waits in Next until they have read it, and never blocks its task
+// (ADR 0009).
+type Note struct {
+	ID      string    `yaml:"id"`
+	Task    string    `yaml:"task"`
+	Created time.Time `yaml:"created"`
+
+	State NoteState `yaml:"-"`
+	// Text is the note, the file's body.
+	Text string `yaml:"-"`
 }
 
-// Open returns the store of the repository rooted at repo.
+// ProblemState is whether a problem still holds its goal up.
+type ProblemState string
+
+// The problem states.
+const (
+	ProblemOpen ProblemState = "open"
+	ProblemDone ProblemState = "done"
+)
+
+// ProblemKind says what failed, which decides what the human may do about it
+// beyond retrying, giving up and replying (ADR 0014).
+type ProblemKind string
+
+// The problem kinds. Each one a goal's work can hit in the background, and
+// each repo-level one, which lives on the intake goal.
+const (
+	// ProblemCommit is the harness failing to commit or stash a session's
+	// work, ProblemLand failing to merge or push a goal, and ProblemPR
+	// failing to open or update its pull requests.
+	ProblemCommit ProblemKind = "commit"
+	ProblemLand   ProblemKind = "land"
+	ProblemPR     ProblemKind = "pr"
+	// ProblemPRClosed is a pull request of a done goal closed without being
+	// merged: the goal can go no further until the human says how.
+	ProblemPRClosed ProblemKind = "pr-closed"
+	// ProblemWorktree is a worktree whose repo is gone, ProblemRepo a repo
+	// diatom can't key because it has no origin, and ProblemCheckout a
+	// second checkout of a repo diatom already works in (ADR 0014).
+	ProblemWorktree  ProblemKind = "worktree"
+	ProblemRepo      ProblemKind = "repo"
+	ProblemCheckout  ProblemKind = "checkout"
+	ProblemConfigKey ProblemKind = "config-key"
+)
+
+// Problem is something diatom itself hit in the background, where no human
+// was watching to see it fail. It holds its goal up until the human deals
+// with it, as a question holds up its task (ADR 0014).
+type Problem struct {
+	ID   string      `yaml:"id"`
+	Kind ProblemKind `yaml:"kind"`
+	// What is the one line the human reads first: what diatom was doing and
+	// how it went wrong.
+	What string `yaml:"what"`
+	// Op is what diatom was doing, which with the goal keys the problem: the
+	// same failure hit again replaces this one and bumps Count, rather than
+	// filling the queue with copies.
+	Op      string    `yaml:"op"`
+	Count   int       `yaml:"count"`
+	Created time.Time `yaml:"created"`
+	Last    time.Time `yaml:"last"`
+	// Reply is what the human told the agent to do about it, and Replied
+	// when. The harness turns a reply into a task of the goal's.
+	Reply   string    `yaml:"reply,omitempty"`
+	Replied time.Time `yaml:"replied,omitempty"`
+	// Fix is a value a kind's own action took, such as the URL of the pull
+	// request that replaced a closed one.
+	Fix string `yaml:"fix,omitempty"`
+
+	State ProblemState `yaml:"-"`
+	// Text is the whole output of what failed, the file's body. It can be
+	// long: Next shows its tail and the editor opens the rest.
+	Text string `yaml:"-"`
+}
+
+// Store is one repository's queue: its goals, their tasks, and everything
+// diatom keeps about them. The directory it is in is not in the repository
+// (ADR 0013): Root says where it is and repo which repository it is of.
+type Store struct {
+	// Root is the directory the store is in.
+	Root string
+	// repo is the repository Root is the queue of, empty for the old layout
+	// where Root was the repository's own `.diatom/` directory.
+	repo string
+	// key names the repository by its origin, which is what the config's
+	// per-repo blocks are keyed by (ADR 0013).
+	key string
+}
+
+// Open returns the store in the repository's own `.diatom/` directory: the
+// layout before ADR 0013, which the migration reads and tests still use.
 func Open(repo string) *Store {
 	return &Store{Root: filepath.Join(repo, ".diatom")}
 }
 
+// At returns the store of the repository rooted at repo, kept in root
+// outside it. key names the repository by its origin.
+func At(repo, root, key string) *Store {
+	return &Store{Root: root, repo: repo, key: key}
+}
+
+// Key names the repository by its origin, "" when it is not known.
+func (s *Store) Key() string { return s.key }
+
 // Repo is the repository the store belongs to.
-func (s *Store) Repo() string { return filepath.Dir(s.Root) }
+func (s *Store) Repo() string {
+	if s.repo != "" {
+		return s.repo
+	}
+	return filepath.Dir(s.Root)
+}
 
 // GoalDir is the directory of the named goal.
 func (s *Store) GoalDir(goal string) string { return filepath.Join(s.Root, "goals", goal) }
@@ -283,6 +405,11 @@ func (s *Store) GoalDir(goal string) string { return filepath.Join(s.Root, "goal
 func (s *Store) WorktreeDir(goal, ws string) string {
 	return filepath.Join(s.GoalDir(goal), "worktrees", ws)
 }
+
+// LandingDir is the worktree every goal is laid out and gated in. It is one
+// per repo and it is kept between landings, so what the gate builds there,
+// such as installed dependencies, is still there the next time.
+func (s *Store) LandingDir() string { return filepath.Join(s.Root, "landing") }
 
 // SessionsDir holds the goal's agent sessions.
 func (s *Store) SessionsDir(goal string) string {
@@ -556,6 +683,147 @@ func (s *Store) CloseQuestion(goal string, q *Question) error {
 		return err
 	}
 	q.State = QuestionClosed
+	return nil
+}
+
+func (s *Store) notePath(goal string, state NoteState, id string) string {
+	return filepath.Join(s.GoalDir(goal), "notes", string(state), id+".md")
+}
+
+// AddNote assigns n the next id and writes it unread.
+func (s *Store) AddNote(goal string, n *Note) error {
+	dir := filepath.Join(s.GoalDir(goal), "notes", string(NoteOpen))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	n.State = NoteOpen
+	return createNext(
+		filepath.Join(s.GoalDir(goal), "notes"),
+		dir,
+		func(id string) ([]byte, error) {
+			n.ID = id
+			return marshal(n, n.Text)
+		},
+	)
+}
+
+// Notes reads a goal's notes in the given state, in id order.
+func (s *Store) Notes(goal string, state NoteState) ([]*Note, error) {
+	files, err := list(filepath.Join(s.GoalDir(goal), "notes", string(state)))
+	if err != nil {
+		return nil, err
+	}
+	notes := make([]*Note, 0, len(files))
+	for _, f := range files {
+		n := &Note{State: state}
+		body, err := readFront(f, n)
+		if err != nil {
+			return nil, err
+		}
+		n.Text = body
+		notes = append(notes, n)
+	}
+	return notes, nil
+}
+
+// ReadNote moves a note the human has read out of their way.
+func (s *Store) ReadNote(goal string, n *Note) error {
+	dst := s.notePath(goal, NoteRead, n.ID)
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	if err := os.Rename(s.notePath(goal, n.State, n.ID), dst); err != nil {
+		return err
+	}
+	n.State = NoteRead
+	return nil
+}
+
+func (s *Store) problemPath(goal string, state ProblemState, id string) string {
+	return filepath.Join(s.GoalDir(goal), "problems", string(state), id+".md")
+}
+
+// ProblemFile is where a problem is written, for an editor to open.
+func (s *Store) ProblemFile(goal string, state ProblemState, id string) string {
+	return s.problemPath(goal, state, id)
+}
+
+// Problems reads a goal's problems in the given state, in id order.
+func (s *Store) Problems(goal string, state ProblemState) ([]*Problem, error) {
+	files, err := list(filepath.Join(s.GoalDir(goal), "problems", string(state)))
+	if err != nil {
+		return nil, err
+	}
+	ps := make([]*Problem, 0, len(files))
+	for _, f := range files {
+		p := &Problem{State: state}
+		body, err := readFront(f, p)
+		if err != nil {
+			return nil, err
+		}
+		p.Text = body
+		ps = append(ps, p)
+	}
+	return ps, nil
+}
+
+// HitProblem records that diatom hit p on the goal. The same failure, by
+// kind and op, replaces the open one and bumps its count: a loop the human
+// hasn't looked at yet is one problem, not a hundred.
+func (s *Store) HitProblem(goal string, p *Problem) error {
+	open, err := s.Problems(goal, ProblemOpen)
+	if err != nil {
+		return err
+	}
+	p.State, p.Last = ProblemOpen, p.Created
+	if i := slices.IndexFunc(open, func(o *Problem) bool {
+		return o.Kind == p.Kind && o.Op == p.Op
+	}); i >= 0 {
+		p.ID, p.Count, p.Created = open[i].ID, open[i].Count+1, open[i].Created
+		// A reply the human already gave was for the try that just failed
+		// again, so it is spent.
+		b, err := marshal(p, p.Text)
+		if err != nil {
+			return err
+		}
+		return writeAtomic(s.problemPath(goal, ProblemOpen, p.ID), b)
+	}
+	dir := filepath.Join(s.GoalDir(goal), "problems", string(ProblemOpen))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	p.Count = 1
+	return createNext(
+		filepath.Join(s.GoalDir(goal), "problems"),
+		dir,
+		func(id string) ([]byte, error) {
+			p.ID = id
+			return marshal(p, p.Text)
+		},
+	)
+}
+
+// SaveProblem writes an open problem back, as when the human replies to it
+// or hands it the value its kind asked for.
+func (s *Store) SaveProblem(goal string, p *Problem) error {
+	b, err := marshal(p, p.Text)
+	if err != nil {
+		return err
+	}
+	return writeAtomic(s.problemPath(goal, ProblemOpen, p.ID), b)
+}
+
+// CloseProblem moves a problem the human has dealt with out of the way, so
+// the goal runs again.
+func (s *Store) CloseProblem(goal string, p *Problem) error {
+	dst := s.problemPath(goal, ProblemDone, p.ID)
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	if err := os.Rename(s.problemPath(goal, p.State, p.ID), dst); err != nil {
+		return err
+	}
+	p.State = ProblemDone
 	return nil
 }
 

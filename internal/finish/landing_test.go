@@ -2,6 +2,7 @@ package finish
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -24,6 +25,10 @@ func (f *fixture) withRemote() git.Repo {
 	return bare
 }
 
+// errNoPR is what gh says when a branch has no pull request, which is the
+// one failure OpenPRs may read as "open one".
+var errNoPR = errors.New("gh pr view: exit status 1: no pull requests found for branch \"x\"")
+
 // fakeGH answers gh with the pull request's state and the check runs on
 // main upstream, and counts the calls.
 type fakeGH struct {
@@ -37,7 +42,7 @@ func (g *fakeGH) run(_ context.Context, _ string, args ...string) (string, error
 	case args[0] == "api":
 		return g.runs, nil
 	case args[1] == "view" && args[4] == "url": // looking for an open one by branch
-		return "", context.Canceled
+		return "", errNoPR
 	case args[1] == "view":
 		return `{"state":"` + g.prState + `","statusCheckRollup":[` +
 			`{"name":"ci","status":"COMPLETED","conclusion":"SUCCESS"},{"context":"lint","state":"PENDING"}]}`, nil
@@ -113,7 +118,7 @@ func TestWatchFinishesOnceMergedAndPassing(t *testing.T) {
 	if got := Summary(
 		f.goal,
 		&Result{Stack: res.Stack, Landing: l},
-	); got != "pull requests #7 open …" {
+	); got != "pull requests #7 open … · waiting for you to merge" {
 		t.Errorf("summary = %q", got)
 	}
 	calls := gh.calls

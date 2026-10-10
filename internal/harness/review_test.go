@@ -254,7 +254,7 @@ func TestFixupTarget(t *testing.T) {
 
 func TestAutoApprovedFilesSkipReview(t *testing.T) {
 	f := newFixture(t)
-	writeFile(t, f.store.Repo(), ".diatom/config.toml",
+	writeFile(t, f.h.Paths.XDG, "config.toml",
 		"gate = \"check\"\nmaxSessions = 2\nautoApprove = [\"*_test.go\"]\n")
 	task := f.add("engine", "Add ward")
 	f.agent.act = func(t *testing.T, wt string, s agentSession) {

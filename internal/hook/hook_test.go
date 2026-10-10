@@ -416,4 +416,21 @@ func TestStopPlanning(t *testing.T) {
 		!bytes.Contains(out.Bytes(), []byte("diatom task plan")) {
 		t.Errorf("stop after grilling done without a plan = %q, %v", out.String(), err)
 	}
+
+	// Dropping the goal closes every task of it, so the session may end.
+	dir5 := t.TempDir()
+	if err := session.Create(dir5, spec); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.Append(
+		dir5,
+		spec,
+		session.Entry{Type: session.EntryDrop, Task: "0001", Text: "a duplicate"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := StopPlanning(dir5, spec, &out); err != nil || out.Len() != 0 {
+		t.Errorf("stop after a drop = %q, %v", out.String(), err)
+	}
 }

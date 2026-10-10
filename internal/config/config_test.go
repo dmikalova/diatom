@@ -1,6 +1,8 @@
 package config
 
 import (
+	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,16 +10,35 @@ import (
 	"time"
 )
 
-// tree lays out home/Code/org/repo with an XDG directory beside it.
+// tree lays out home/Code/org/repo with an XDG directory beside it, and the
+// key the config names that repo by.
 func tree(t *testing.T) (root string, paths Paths) {
 	t.Helper()
 	base := t.TempDir()
-	paths = Paths{Home: filepath.Join(base, "home"), XDG: filepath.Join(base, "xdg", "diatom")}
+	paths = Paths{
+		Home: filepath.Join(base, "home"),
+		XDG:  filepath.Join(base, "xdg", "diatom"),
+		Key:  "github.com/org/repo",
+	}
 	root = filepath.Join(paths.Home, "Code", "org", "repo")
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return root, paths
+}
+
+// block is a [repos."<prefix>"] block of the config file. A table inside it
+// is written out in full, as TOML otherwise reads it as a table of its own.
+func block(prefix, body string) string {
+	head := fmt.Sprintf("[repos.%q]", prefix)
+	var out []string
+	for line := range strings.SplitSeq(body, "\n") {
+		if rest, ok := strings.CutPrefix(line, "["); ok {
+			line = fmt.Sprintf("[repos.%q.%s", prefix, rest)
+		}
+		out = append(out, line)
+	}
+	return "\n" + head + "\n" + strings.Join(out, "\n")
 }
 
 func write(t *testing.T, dir, body string) {
@@ -48,16 +69,14 @@ func TestLoadDefaults(t *testing.T) {
 	}
 }
 
-func TestLoadClosestWins(t *testing.T) {
+// TestTheLongestBlockWins pins that a repo's own block is read over its
+// organisation's, which is read over the top of the file (ADR 0013).
+func TestTheLongestBlockWins(t *testing.T) {
 	root, paths := tree(t)
 	write(t, paths.XDG, "gate = \"xdg-gate\"\nmaxSessions = 4\nautoUpdate = true\n"+
-		"[profiles.implementation]\nmodel = \"sonnet\"\n")
-	write(
-		t,
-		filepath.Join(paths.Home, "Code", "org", DirName),
-		"gate = \"org-gate\"\ncommitCheck = \"lint\"\n",
-	)
-	write(t, filepath.Join(root, DirName), "gate = \"mage check\"\n[adr]\ndir = \"docs/adr\"\n")
+		"[profiles.implementation]\nmodel = \"sonnet\"\n"+
+		block("github.com/org", "gate = \"org-gate\"\ncommitCheck = \"lint\"\n")+
+		block("github.com/org/repo", "gate = \"mage check\"\n[adr]\ndir = \"docs/adr\"\n"))
 
 	c, err := Load(root, paths)
 	if err != nil {
@@ -67,10 +86,10 @@ func TestLoadClosestWins(t *testing.T) {
 		t.Errorf("Gate = %q, want the repo's", c.Gate)
 	}
 	if c.CommitCheck != "lint" {
-		t.Errorf("CommitCheck = %q, want the org directory's", c.CommitCheck)
+		t.Errorf("CommitCheck = %q, want the organisation's", c.CommitCheck)
 	}
 	if c.MaxSessions != 4 {
-		t.Errorf("MaxSessions = %d, want the XDG file's", c.MaxSessions)
+		t.Errorf("MaxSessions = %d, want the top of the file's", c.MaxSessions)
 	}
 	if c.ADR.Dir != "docs/adr" {
 		t.Errorf("ADR.Dir = %q", c.ADR.Dir)
@@ -80,41 +99,41 @@ func TestLoadClosestWins(t *testing.T) {
 		t.Errorf("implementation = %+v, want the model overridden and the rest kept", p)
 	}
 	if !c.AutoUpdate {
-		t.Error("AutoUpdate from the XDG file was lost")
+		t.Error("AutoUpdate from the top of the file was lost")
 	}
 }
 
-func TestLoadStopsAtHome(t *testing.T) {
+// TestABlockOfAnotherRepoIsNotRead pins that a prefix only covers the repos
+// under it.
+func TestABlockOfAnotherRepoIsNotRead(t *testing.T) {
 	root, paths := tree(t)
-	write(t, filepath.Join(filepath.Dir(paths.Home), DirName), "gate = \"above-home\"\n")
+	write(t, paths.XDG, block("github.com/other", "gate = \"theirs\"\n")+
+		block("github.com/org/repository", "gate = \"nearly\"\n"))
 	c, err := Load(root, paths)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if c.Gate != "" {
-		t.Errorf("Gate = %q, want the file above home ignored", c.Gate)
+		t.Errorf("Gate = %q, want neither block read", c.Gate)
 	}
 }
 
 func TestLoadErrors(t *testing.T) {
 	tests := []struct {
-		name, dir, body, want string
+		name, body, want string
 	}{
-		{"home-only key in a repo", "repo", "[profiles]\n", "profiles is only read from"},
-		{"unknown key", "repo", "gaet = \"x\"\n", "unknown setting gaet"},
-		{"unknown nested key", "repo", "[adr]\nfolder = \"x\"\n", "unknown setting adr.folder"},
-		{"invalid TOML", "xdg", "gate = [\n", "config.toml"},
-		{"bad autoApprove pattern", "repo", "autoApprove = [\"[\"]\n", "autoApprove \"[\""},
-		{"unknown kind", "repo", "[gates]\ncobol = \"make\"\n", "gates.cobol: no such kind"},
+		{"home-only key in a block", block("github.com/org", "[profiles]\n"),
+			"which is yours and not a repo's"},
+		{"unknown key", "gaet = \"x\"\n", "unknown setting gaet"},
+		{"unknown nested key", "[adr]\nfolder = \"x\"\n", "unknown setting adr.folder"},
+		{"invalid TOML", "gate = [\n", "config.toml"},
+		{"bad autoApprove pattern", "autoApprove = [\"[\"]\n", "autoApprove \"[\""},
+		{"unknown kind", "[gates]\ncobol = \"make\"\n", "gates.cobol: no such kind"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			root, paths := tree(t)
-			dir := filepath.Join(root, DirName)
-			if tt.dir == "xdg" {
-				dir = paths.XDG
-			}
-			write(t, dir, tt.body)
+			write(t, paths.XDG, tt.body)
 			_, err := Load(root, paths)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("Load error = %v, want it to contain %q", err, tt.want)
@@ -153,9 +172,9 @@ func TestPathsExpand(t *testing.T) {
 
 func TestLoadContextDefaults(t *testing.T) {
 	root, paths := tree(t)
-	write(t, paths.XDG, "skills = [\"grill-me\", \"grilling\"]\n")
-	write(t, filepath.Join(root, DirName),
-		"[mcpServers.docs]\ncommand = \"docs-mcp\"\npurpose = \"the API docs\"\n")
+	write(t, paths.XDG, "skills = [\"grill-me\", \"grilling\"]\n"+
+		block("github.com/org/repo",
+			"[mcpServers.docs]\ncommand = \"docs-mcp\"\npurpose = \"the API docs\"\n"))
 	c, err := Load(root, paths)
 	if err != nil {
 		t.Fatal(err)
@@ -187,8 +206,8 @@ func TestCatalogComesFromTheReposMCPFile(t *testing.T) {
 			`"docs":{"command":"docs-mcp"}}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	write(t, filepath.Join(root, DirName),
-		"[mcpServers.linear]\npurpose = \"the tickets\"\n")
+	write(t, paths.XDG,
+		block("github.com/org/repo", "[mcpServers.linear]\npurpose = \"the tickets\"\n"))
 	c, err := Load(root, paths)
 	if err != nil {
 		t.Fatal(err)
@@ -228,7 +247,8 @@ func TestTimeouts(t *testing.T) {
 	if err != nil || cfg.CommandTimeout != 2*time.Minute || cfg.GateTimeout != 5*time.Minute {
 		t.Fatalf("defaults = %v and %v, %v", cfg.CommandTimeout, cfg.GateTimeout, err)
 	}
-	write(t, filepath.Join(root, DirName), "commandTimeout = \"1m\"\ngateTimeout = \"3m30s\"\n")
+	write(t, paths.XDG,
+		block("github.com/org/repo", "commandTimeout = \"1m\"\ngateTimeout = \"3m30s\"\n"))
 	if cfg, err := Load(root, paths); err != nil || cfg.CommandTimeout != time.Minute ||
 		cfg.GateTimeout != 210*time.Second {
 		t.Errorf("repo override = %v and %v, %v", cfg.CommandTimeout, cfg.GateTimeout, err)
@@ -253,11 +273,11 @@ func TestGateByKind(t *testing.T) {
 	if _, err := Load(root, paths); err == nil || !strings.Contains(err.Error(), "set its own in") {
 		t.Errorf("a Go and node repo = %v, want it told to set its own gate", err)
 	}
-	if err := SetGate(root, "make check"); err != nil {
+	if err := Set(paths, paths.Key, map[string]any{"gate": "make check"}); err != nil {
 		t.Fatal(err)
 	}
 	if cfg, err := Load(root, paths); err != nil || cfg.Gate != "make check" {
-		t.Errorf("after SetGate = %q, %v", cfg.Gate, err)
+		t.Errorf("after Set = %q, %v", cfg.Gate, err)
 	}
 }
 
@@ -276,44 +296,125 @@ func TestFixByKind(t *testing.T) {
 	}
 }
 
-func TestSetGateKeepsTheRest(t *testing.T) {
+// TestSetKeepsTheRest pins that writing one lever leaves the rest of the
+// repo's block alone (ADR 0013).
+func TestSetKeepsTheRest(t *testing.T) {
 	root, paths := tree(t)
-	write(t, filepath.Join(root, DirName), "maxSessions = 2\n\n[adr]\ndir = \"docs/adr\"\n")
-	if err := SetGate(root, `mage "ci:check"`); err != nil {
+	write(t, paths.XDG,
+		block("github.com/org/repo", "maxSessions = 2\n[adr]\ndir = \"docs/adr\"\n"))
+	if err := Set(paths, paths.Key, map[string]any{"gate": `mage "ci:check"`}); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := Load(root, paths)
 	if err != nil || cfg.Gate != `mage "ci:check"` || cfg.MaxSessions != 2 ||
 		cfg.ADR.Dir != "docs/adr" {
-		t.Errorf("after SetGate = %+v, %v", cfg, err)
+		t.Fatalf("after Set = %+v, %v", cfg, err)
+	}
+	own, err := Own(paths, paths.Key)
+	if err != nil || own["gate"] != `mage "ci:check"` {
+		t.Errorf("the repo's own keys = %v, %v", own, err)
+	}
+	if err := Set(paths, paths.Key, map[string]any{"gate": nil}); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, err := Load(root, paths); err != nil || cfg.Gate != "" || cfg.MaxSessions != 2 {
+		t.Errorf("after clearing the gate = %+v, %v", cfg, err)
 	}
 }
 
-func TestOldYAMLIsAnError(t *testing.T) {
-	root, paths := tree(t)
-	dir := filepath.Join(root, DirName)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+// TestSetRefusesAHomeKeyInABlock pins that what is the human's is set once,
+// at the top of the file (ADR 0013).
+func TestSetRefusesAHomeKeyInABlock(t *testing.T) {
+	_, paths := tree(t)
+	err := Set(paths, paths.Key, map[string]any{"autoUpdate": true})
+	if err == nil || !strings.Contains(err.Error(), "is yours, not a repo's") {
+		t.Errorf("Set of a home key in a block = %v", err)
+	}
+}
+
+// TestEnsureWritesTheFileOnce pins that diatom writes the config the first
+// time, annotated, and leaves an existing one alone (ADR 0013).
+func TestEnsureWritesTheFileOnce(t *testing.T) {
+	_, paths := tree(t)
+	if err := Ensure(paths); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(
-		filepath.Join(dir, "config.yaml"),
-		[]byte("gate: x\n"),
-		0o644,
-	); err != nil {
+	b, err := os.ReadFile(File(paths))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(root, paths); err == nil || !strings.Contains(err.Error(), "TOML now") {
-		t.Errorf("Load = %v", err)
+	if !bytes.Contains(b, []byte("[repos.\"<prefix>\"]")) {
+		t.Errorf("the written config does not explain the blocks:\n%s", b)
+	}
+	if err := Set(paths, paths.Key, map[string]any{"gate": "check"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Ensure(paths); err != nil {
+		t.Fatal(err)
+	}
+	own, err := Own(paths, paths.Key)
+	if err != nil || own["gate"] != "check" {
+		t.Errorf("Ensure overwrote the file: %v, %v", own, err)
+	}
+}
+
+// TestUnknownKeysAreKept pins that a key diatom does not know survives a
+// write, rather than being quietly dropped (ADR 0013).
+func TestUnknownKeysAreKept(t *testing.T) {
+	_, paths := tree(t)
+	write(t, paths.XDG, block("github.com/org/repo", "gaet = \"x\"\n"))
+	if err := Set(paths, paths.Key, map[string]any{"gate": "check"}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(File(paths))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(b, []byte("does not know these keys")) ||
+		!bytes.Contains(b, []byte("gaet")) {
+		t.Errorf("the unknown key was dropped:\n%s", b)
+	}
+}
+
+// TestValueNamesALever pins that the window can ask what any lever is.
+func TestValueNamesALever(t *testing.T) {
+	c := &Config{Gate: "check", MaxSessions: 3}
+	if v, ok := c.Value("gate"); !ok || v != "check" {
+		t.Errorf("Value(gate) = %v, %v", v, ok)
+	}
+	if v, ok := c.Value("maxSessions"); !ok || v != 3 {
+		t.Errorf("Value(maxSessions) = %v, %v", v, ok)
+	}
+	if _, ok := c.Value("nope"); ok {
+		t.Error("Value of a key that is not a lever said it was one")
 	}
 }
 
 func TestBudget(t *testing.T) {
 	root, paths := tree(t)
-	write(t, paths.XDG, "[budget]\nmonth = 2000\n")
-	write(t, filepath.Join(root, DirName), "[budget]\nday = 220\nweek = 800.5\n")
+	write(t, paths.XDG, "[budget]\nmonth = 2000\n"+
+		block("github.com/org/repo", "[budget]\nday = 220\nweek = 800.5\n"))
 	cfg, err := Load(root, paths)
 	if err != nil || cfg.Budget != (Budget{Day: 220, Week: 800.5, Month: 2000}) {
 		t.Errorf("budget = %+v, %v", cfg.Budget, err)
+	}
+}
+
+// TestCoversIsByPrefix pins which repos a block covers.
+func TestCoversIsByPrefix(t *testing.T) {
+	for _, tt := range []struct {
+		prefix, key string
+		want        bool
+	}{
+		{"github.com/org", "github.com/org/repo", true},
+		{"github.com/org/repo", "github.com/org/repo", true},
+		{"github.com/org/", "github.com/org/repo", true},
+		{"github.com/org/rep", "github.com/org/repo", false},
+		{"github.com/other", "github.com/org/repo", false},
+	} {
+		if got := covers(tt.prefix, tt.key); got != tt.want {
+			t.Errorf("covers(%q, %q) = %v", tt.prefix, tt.key, got)
+		}
 	}
 }
 
@@ -349,11 +450,11 @@ func TestCovers(t *testing.T) {
 
 func TestLand(t *testing.T) {
 	root, paths := tree(t)
-	write(t, filepath.Join(root, DirName), "land = \"merge\"\n")
+	write(t, paths.XDG, block("github.com/org/repo", "land = \"merge\"\n"))
 	if cfg, err := Load(root, paths); err != nil || cfg.Land != LandMerge {
 		t.Errorf("land = %+v, %v", cfg, err)
 	}
-	write(t, filepath.Join(root, DirName), "land = \"push\"\n")
+	write(t, paths.XDG, block("github.com/org/repo", "land = \"push\"\n"))
 	if _, err := Load(root, paths); err == nil || !strings.Contains(err.Error(), "land") {
 		t.Errorf("land = push loaded: %v", err)
 	}

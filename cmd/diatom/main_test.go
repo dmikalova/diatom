@@ -22,6 +22,7 @@ func inRepo(t *testing.T) string {
 	r := git.Repo{Dir: dir}
 	for _, args := range [][]string{
 		{"init", "--initial-branch=main"}, {"config", "user.name", "T"}, {"config", "user.email", "t@example.com"},
+		{"remote", "add", "origin", "git@github.com:org/repo.git"},
 		{"commit", "--allow-empty", "-m", "chore: start"},
 	} {
 		if _, err := r.Run(ctx, args...); err != nil {
@@ -39,6 +40,7 @@ func inRepo(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	// Never the real home config.
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Chdir(dir)
@@ -52,16 +54,16 @@ func diatom(t *testing.T, stdin string, args ...string) (code int, stdout, stder
 	return code, out.String(), errOut.String()
 }
 
-func TestStateMustBeIgnored(t *testing.T) {
+// TestARepoWithNoOriginIsLeftOut pins that diatom names a repo's state by
+// its origin, so a repo without one cannot be worked on (ADR 0013).
+func TestARepoWithNoOriginIsLeftOut(t *testing.T) {
 	repo := inRepo(t)
-	if err := os.WriteFile(filepath.Join(repo, ".git", "info", "exclude"), nil, 0o644); err != nil {
+	r := git.Repo{Dir: repo}
+	if _, err := r.Run(context.Background(), "remote", "remove", "origin"); err != nil {
 		t.Fatal(err)
 	}
-	// The developer's own global excludes would still ignore .diatom/.
-	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "none"))
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	code, _, stderr := diatom(t, "", "task", "goals")
-	if code != 1 || !strings.Contains(stderr, "not ignored") {
+	if code != 1 || !strings.Contains(stderr, "has no origin remote") {
 		t.Errorf("task goals = %d %q", code, stderr)
 	}
 }
@@ -75,6 +77,7 @@ func TestTaskTool(t *testing.T) {
 	t.Setenv(session.EnvVar, dir)
 	for _, args := range [][]string{
 		{"task", "note", "0001", "found", "it"},
+		{"task", "record", "0001", "the", "reasoning"},
 		{"task", "ask", "0001", "Which?"},
 		{"task", "done", "0001"},
 	} {
@@ -83,7 +86,8 @@ func TestTaskTool(t *testing.T) {
 		}
 	}
 	r, _ := session.ReadReport(dir)
-	if !r.Done["0001"] || r.Notes[0].Text != "found it" || r.Questions[0].Text != "Which?" {
+	if !r.Done["0001"] || r.Notes[0].Text != "found it" || r.Questions[0].Text != "Which?" ||
+		len(r.Records) != 1 || r.Records[0].Text != "the reasoning" {
 		t.Errorf("report = %+v", r)
 	}
 	if code, _, _ := diatom(t, "", "task", "note", "0001"); code != 2 {
@@ -406,7 +410,7 @@ func TestOutsideARepo(t *testing.T) {
 			t,
 			"x",
 			cmd...); code != 1 ||
-			!strings.Contains(stderr, "not in a git repository") {
+			!strings.Contains(stderr, "is not a git repository and holds none") {
 			t.Errorf("%s outside a repo = %d %q", cmd[0], code, stderr)
 		}
 	}

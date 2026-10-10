@@ -130,6 +130,36 @@ func Land(
 	return urls, Save(s.GoalDir(g.Name), res)
 }
 
+// Replace points a done goal at the pull request that took over from the
+// one that was closed, so the scheduler watches that one land instead.
+func Replace(s *queue.Store, g *queue.Goal, url string) error {
+	res, err := Load(s.GoalDir(g.Name))
+	if err != nil || res == nil {
+		return err
+	}
+	l := res.landing()
+	for i := range l.PRs {
+		if l.PRs[i].State == "CLOSED" {
+			l.PRs[i] = PRState{URL: url, State: "OPEN"}
+			break
+		}
+	}
+	l.Checked, l.Error = time.Time{}, ""
+	return Save(s.GoalDir(g.Name), res)
+}
+
+// Reopen forgets that a done goal's pull requests were ever opened, so the
+// window offers to open them again.
+func Reopen(s *queue.Store, g *queue.Goal) error {
+	res, err := Load(s.GoalDir(g.Name))
+	if err != nil || res == nil {
+		return err
+	}
+	l := res.landing()
+	*l = Landing{Remote: l.Remote}
+	return Save(s.GoalDir(g.Name), res)
+}
+
 // Watch checks, at most every WatchEvery, whether a done goal has landed:
 // all of its changes are on its base branch upstream, and the checks there
 // pass. A landed goal is finished. It reports whether the goal is finished.

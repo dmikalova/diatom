@@ -194,6 +194,36 @@ func TestGoalPage(t *testing.T) {
 	}
 }
 
+// TestGoalPageOpensAQuestion pins that a goal's questions are navigable from
+// its page, which is the only place an answered one can be read again.
+func TestGoalPageOpensAQuestion(t *testing.T) {
+	f := newFixture(t)
+	if err := f.store.Answer("set", "0001", "Yes, it stacks.", time.Unix(2000, 0)); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := newApp(t, f)
+	openGoal(t, a, "set")
+	if out := plain(a.render()); !strings.Contains(out, "─── questions") ||
+		!strings.Contains(out, "? Does ward stack?") {
+		t.Fatalf("the goal's page lacks its questions:\n%s", out)
+	}
+	// The questions come last on the page.
+	a.status.detail.sel = a.status.detailItems() - 1
+	key(a, "enter")
+	out := plain(a.render())
+	for _, want := range []string{
+		"question 0001", "task 0001", "It matters for poison.", "─── answer", "Yes, it stacks.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the question lacks %q:\n%s", want, out)
+		}
+	}
+	key(a, "esc")
+	if d := a.status.detail; d == nil || d.question != nil {
+		t.Errorf("esc from the question didn't go back to the goal: %+v", d)
+	}
+}
+
 func TestNavScrolls(t *testing.T) {
 	f := newFixture(t)
 	for i := range 20 {
@@ -918,7 +948,7 @@ func TestLandingOnAFailingGateGoesToAnAgent(t *testing.T) {
 		map[string][]byte{"poison.go": []byte("package poison\n")}, "feat: poison"); err != nil {
 		t.Fatal(err)
 	}
-	write(t, filepath.Join(f.repo, ".diatom", "config.toml"),
+	write(t, filepath.Join(f.env.Paths.XDG, "config.toml"),
 		"gate = \"echo 'lint: poison is unused' >&2; exit 1\"\n")
 	makeReady(t, f)
 	a, _ := newApp(t, f)

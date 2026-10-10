@@ -18,7 +18,7 @@ import (
 func TestSpendingByDay(t *testing.T) {
 	f := newFixture(t)
 	f.env.Now = time.Now
-	write(t, filepath.Join(f.repo, ".diatom", "config.toml"), "[budget]\nday = 3\nweek = 100\n")
+	write(t, filepath.Join(f.env.Paths.XDG, "config.toml"), "[budget]\nday = 3\nweek = 100\n")
 	// Today: a session of the set's, on its first task, and triage's.
 	dir := filepath.Join(f.store.SessionsDir("set"), "20260927T100000Z-engine")
 	if err := session.Create(dir, session.Spec{Workstream: "engine", Kind: queue.Planned,

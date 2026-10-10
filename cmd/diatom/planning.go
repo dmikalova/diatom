@@ -19,7 +19,7 @@ import (
 //
 //	diatom task add-task <id> -goal <goal> -ws <workstream> -title <title> [-after ids] [-profile p] < body
 //	diatom task feedback <id> -goal <goal> < text
-//	diatom task new-goal <id> -title <title> -description <line> [-after goals] [-plan plan.yaml] < brief
+//	diatom task new-goal <id> -title <title> -description <line> [-repo <repo>] [-after goals] [-plan plan.yaml] < brief
 //	diatom task after <id> -goal <goal> [-after goals]
 //	diatom task plan <id> < plan.yaml
 func planningReport(sub string, args []string, stdin io.Reader, stdout io.Writer) error {
@@ -34,6 +34,7 @@ func planningReport(sub string, args []string, stdin io.Reader, stdout io.Writer
 	profile := fs.String("profile", "", "the profile, instead of the kind's default")
 	branch := fs.String("branch", "", "the branch a new goal's pull request lives on")
 	ticket := fs.String("ticket", "", "a new goal's ticket in the repo's tracker, such as DIP-4117")
+	repo := fs.String("repo", "", "the repo of the workspace a new goal belongs in")
 	pos, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
@@ -60,7 +61,7 @@ func planningReport(sub string, args []string, stdin io.Reader, stdout io.Writer
 		if err := triageEntry(&e, sub, entryFlags{
 			goal: *goal, title: *title, description: *description, ws: *ws,
 			after: *after, profile: *profile, planFile: *planFile, branch: *branch,
-			ticket: *ticket, tracker: spec.Tickets,
+			ticket: *ticket, tracker: spec.Tickets, repo: *repo,
 		}); err != nil {
 			return err
 		}
@@ -123,6 +124,8 @@ func planningReport(sub string, args []string, stdin io.Reader, stdout io.Writer
 // entryFlags are the flags of what a triage session hands in.
 type entryFlags struct {
 	goal, title, description, ws, after, profile, planFile, branch, ticket string
+	// repo is the repo of the workspace a new goal goes in, by name.
+	repo string
 	// tracker is the repo's ticket tracker, when every goal must carry a
 	// ticket from one.
 	tracker string
@@ -170,6 +173,7 @@ func triageEntry(e *session.Entry, sub string, f entryFlags) error {
 	e.Type, e.Title, e.Description, e.After = session.EntryGoal, title, description, splitList(
 		after,
 	)
+	e.Repo = strings.TrimSpace(f.repo)
 	e.Branch = strings.TrimSpace(f.branch)
 	var err error
 	if e.Ticket, err = goalTicket(f); err != nil {

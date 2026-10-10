@@ -14,7 +14,7 @@
 //
 // Inside an agent session:
 //
-//	diatom task done|note|ask|manual <id> [text]
+//	diatom task done|note|record|ask|manual <id> [text]
 //	diatom task connect <id> <connector> <why>
 //	diatom task ci <id> [--label <name>]... <why>
 //	diatom task goals [<goal>]
@@ -91,9 +91,11 @@ const usage = `Usage:
 
 Inside an agent session, reporting on the task you were given:
   diatom task done <id> [what you did]
-  diatom task note <id> <text>             add to the task's body
+  diatom task note <id> <text>             tell the human something; it waits in Next
+  diatom task record <id> <text>           keep it for later sessions and the reviewer
   diatom task ask <id> <question>          park the task on a question
   diatom task manual <id> <steps>          park it on steps only the human can do
+  diatom task drop <id> <why>              give up on the goal: nothing of it lands
   diatom task connect <id> <connector> <why>
                                            ask for one of the repo's MCP servers;
                                            the session ends and runs again with it

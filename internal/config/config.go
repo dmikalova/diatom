@@ -262,14 +262,22 @@ func (c *Config) Profile(name string) (Profile, error) {
 	return p, nil
 }
 
-// Paths are the directories the walk-up uses. The zero value reads them from
-// the environment.
+// Paths say where diatom's one config file is, and which repo is being
+// configured. The zero value reads them from the environment.
 type Paths struct {
-	// Home is the directory the walk-up stops at, after reading it.
+	// Home is the user's home directory, which a leading ~ expands to.
 	Home string
 	// XDG is the diatom directory under XDG_CONFIG_HOME.
 	XDG string
+	// Key names the repo being configured, as state.Key makes it:
+	// github.com/goodship-io/nextjs. The config file's [repos."<prefix>"]
+	// blocks that cover it are read over its top level (ADR 0013). Empty
+	// reads no block.
+	Key string
 }
+
+// For is the paths with the repo key set, for loading one repo's config.
+func (p Paths) For(key string) Paths { p.Key = key; return p }
 
 // DefaultPaths returns the user's home and XDG config directories.
 func DefaultPaths() (Paths, error) {
@@ -296,13 +304,16 @@ func (p Paths) Expand(path string) string {
 }
 
 // StateDir is where diatom keeps what it must remember across repos and
-// restarts, such as the window's layout and the ledger of landed goals:
-// $XDG_STATE_HOME/diatom, or ~/.local/state/diatom. A state directory, not a
-// cache, as nothing clears it.
+// restarts, such as the window's layout and the ledger of landed goals. It
+// is the one root every repo's queue sits under too (ADR 0013):
+// $XDG_DATA_HOME/diatom, or ~/.local/share/diatom.
 func (p Paths) StateDir() string {
-	dir := os.Getenv("XDG_STATE_HOME")
+	if dir := os.Getenv("DIATOM_STATE"); dir != "" {
+		return dir
+	}
+	dir := os.Getenv("XDG_DATA_HOME")
 	if dir == "" {
-		dir = filepath.Join(p.Home, ".local", "state")
+		dir = filepath.Join(p.Home, ".local", "share")
 	}
 	return filepath.Join(dir, "diatom")
 }
@@ -403,35 +414,12 @@ func kindCommand(root, table string, gates map[string]string) (string, error) {
 		case g == "":
 		case gate != "" && g != gate:
 			return "", fmt.Errorf("config: %s is both a %s and a %s project, whose %s differ: "+
-				"set its own in %s", root, from, k, table, filepath.Join(root, DirName, FileName))
+				"set its own in the config's block for it", root, from, k, table)
 		default:
 			gate, from = g, k
 		}
 	}
 	return gate, nil
-}
-
-// SetGate saves gate as the gate of the repo at root, in its own config
-// file.
-func SetGate(root, gate string) error {
-	path := filepath.Join(root, DirName, FileName)
-	old, err := os.ReadFile(path)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
-	var b bytes.Buffer
-	if err := toml.NewEncoder(&b).Encode(map[string]string{"gate": gate}); err != nil {
-		return err
-	}
-	// A top-level key has to come before any table, so it goes first.
-	body := append(b.Bytes(), old...)
-	if _, err := parse(body, path); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, body, 0o644)
 }
 
 func kindNames() string {
@@ -443,43 +431,75 @@ func kindNames() string {
 }
 
 // walk returns the config layers for root, furthest (the defaults) first.
+//
+// There is one config file (ADR 0013): the defaults, then the file's top
+// level, then every [repos."<prefix>"] block whose prefix the repo's key
+// starts with, shortest prefix first, so a block for one repo refines the
+// block for its organisation. The repo's own .mcp.json is the one file
+// diatom still reads out of a repository, and it is nearest of all.
 func walk(root string, paths Paths) ([]map[string]any, error) {
 	base, err := parse(defaults, "defaults.toml")
 	if err != nil {
 		return nil, err
 	}
-	xdg, err := read(filepath.Join(paths.XDG, FileName))
+	path := filepath.Join(paths.XDG, FileName)
+	file, err := read(path)
 	if err != nil {
 		return nil, err
 	}
-	var near []map[string]any // closest first
-	for dir := root; dir != ""; {
-		path := filepath.Join(dir, DirName, FileName)
-		layer, err := read(path)
-		if err != nil {
-			return nil, err
+	blocks, err := overrides(file, path, paths.Key)
+	if err != nil {
+		return nil, err
+	}
+	servers, err := readMCP(filepath.Join(root, MCPFileName))
+	if err != nil {
+		return nil, err
+	}
+	delete(file, reposKey)
+	layers := append([]map[string]any{base, file}, blocks...)
+	return append(layers, servers), nil
+}
+
+// reposKey holds the per-repo overrides in the config file.
+const reposKey = "repos"
+
+// overrides are the [repos."<prefix>"] blocks that cover key, shortest
+// prefix first. A block that sets a key only the file's top level may set is
+// an error: a profile is the human's, not the repository's.
+func overrides(file map[string]any, path, key string) ([]map[string]any, error) {
+	repos, ok := file[reposKey].(map[string]any)
+	if !ok {
+		return nil, nil
+	}
+	var prefixes []string
+	for prefix := range repos {
+		if key != "" && covers(prefix, key) {
+			prefixes = append(prefixes, prefix)
+		}
+	}
+	slices.SortFunc(prefixes, func(a, b string) int { return len(a) - len(b) })
+	var out []map[string]any
+	for _, prefix := range prefixes {
+		block, ok := repos[prefix].(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("%s: [%s.%q] is not a table", path, reposKey, prefix)
 		}
 		for _, k := range homeOnly {
-			if _, ok := layer[k]; ok {
-				return nil, fmt.Errorf("%s: %s is only read from %s", path, k,
-					filepath.Join(paths.XDG, FileName))
+			if _, set := block[k]; set {
+				return nil, fmt.Errorf("%s: [%s.%q] sets %s, which is yours and not a repo's: "+
+					"move it to the top of the file", path, reposKey, prefix, k)
 			}
 		}
-		servers, err := readMCP(filepath.Join(dir, MCPFileName))
-		if err != nil {
-			return nil, err
-		}
-		// Diatom's own file is nearer than the .mcp.json beside it, so it
-		// can give a server a purpose without redeclaring it.
-		near = append(near, layer, servers)
-		parent := filepath.Dir(dir)
-		if dir == paths.Home || parent == dir {
-			break
-		}
-		dir = parent
+		out = append(out, block)
 	}
-	slices.Reverse(near)
-	return append([]map[string]any{base, xdg}, near...), nil
+	return out, nil
+}
+
+// covers reports whether prefix names key: the whole key, or a run of its
+// path elements from the start.
+func covers(prefix, key string) bool {
+	prefix = strings.Trim(prefix, "/")
+	return key == prefix || strings.HasPrefix(key, prefix+"/")
 }
 
 // readMCP parses Claude Code's .mcp.json at path into a config layer. A

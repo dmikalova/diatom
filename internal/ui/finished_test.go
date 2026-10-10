@@ -131,7 +131,7 @@ func TestSpendingShowsTheBudget(t *testing.T) {
 	f := newFixture(t)
 	// What was spent counts up to now.
 	f.env.Now = time.Now
-	write(t, filepath.Join(f.repo, ".diatom", "config.toml"), "[budget]\nday = 1\nmonth = 100\n")
+	write(t, filepath.Join(f.env.Paths.XDG, "config.toml"), "[budget]\nday = 1\nmonth = 100\n")
 	if err := recordSession(f.store.SessionsDir("set"), time.Now(), "mechanical",
 		runner.Result{Usage: runner.Usage{CostUSD: 2}}); err != nil {
 		t.Fatal(err)

@@ -58,6 +58,9 @@ const (
 	entryNext entryKind = iota
 	entryIntake
 	entryGoal
+	// entryRepo is a repo's heading over a workspace, which opens the page
+	// its config is set on (ADR 0013).
+	entryRepo
 	// entrySpending breaks down what sessions cost by day, entryFinished
 	// lists the finished goals, and entryLog is the scheduler's log, all in
 	// the menu at the nav's foot.
@@ -75,8 +78,11 @@ type entry struct {
 }
 
 func (e entry) key() string {
+	if e.kind == entryRepo && e.row != nil {
+		return "repo " + e.row.repo
+	}
 	if e.row != nil {
-		return e.row.goal.Name
+		return e.row.repo + "/" + e.row.goal.Name
 	}
 	return "entry " + strconv.Itoa(int(e.kind))
 }
@@ -118,6 +124,8 @@ type App struct {
 	quitting, atOnce bool
 	// review is the review of a goal opened from its page.
 	review *reviewui.Model
+	// repo is the repo config page, as the nav's heading last opened it.
+	repo *repoPage
 	// navW is the nav's width, which dragging its edge changes, and
 	// navHidden hides it; dragging is set while the edge is held.
 	navW                int
@@ -171,8 +179,8 @@ func NewApp(ctx context.Context, env Env, sched Scheduler) *App {
 }
 
 // openReview shows a goal's review in place of its page.
-func (a *App) openReview(goal string) {
-	rv, err := a.env.reviewer(a.ctx, goal)
+func (a *App) openReview(store *queue.Store, goal string) {
+	rv, err := a.env.reviewer(a.ctx, store, goal)
 	if err != nil {
 		a.status.err = err
 		return
@@ -207,11 +215,25 @@ func (a *App) reload() {
 // entries are the nav's lines: Next, the intake, the goals being worked on,
 // and the menu: the finished goals and the scheduler's log.
 func (a *App) entries() []entry {
-	es := []entry{{kind: entryNext}, {kind: entryIntake}}
+	es := []entry{{kind: entryNext}}
+	// Over one repo the intake is Next's neighbour; over a workspace each
+	// repo's intake leads that repo's goals instead.
+	if !a.env.many() {
+		es = append(es, entry{kind: entryIntake})
+	}
 	for i := range a.status.rows {
 		r := &a.status.rows[i]
+		if a.env.many() && (len(es) == 1 || es[len(es)-1].row == nil ||
+			es[len(es)-1].row.repo != r.repo) {
+			// The repo's heading is a line of its own, and opens its config.
+			es = append(es, entry{kind: entryRepo, row: r})
+		}
 		if r.intake {
-			es[1].row = r
+			if !a.env.many() {
+				es[1].row = r
+				continue
+			}
+			es = append(es, entry{kind: entryIntake, row: r})
 			continue
 		}
 		es = append(es, entry{kind: entryGoal, row: r})
@@ -230,6 +252,7 @@ func (a *App) selected() entry {
 // show points the main pane at the selected entry, when it isn't already.
 func (a *App) show() {
 	e := a.selected()
+	a.aimIntake(e)
 	if e.key() == a.shown {
 		return
 	}
@@ -238,9 +261,20 @@ func (a *App) show() {
 	a.status.detail, a.review, a.logBack, a.finishedTop = nil, nil, 0, 0
 	a.spendSel, a.spendTop, a.spendOpen = 0, 0, false
 	a.clearNotices()
-	if e.row != nil {
+	if e.row != nil && e.kind != entryRepo {
 		a.status.openDetail(e.row)
 	}
+}
+
+// aimIntake points the intake box at the repo the nav has selected, so over
+// a workspace the text goes to the repo it is about. Next and the menu are
+// about no one repo, so they leave it where it was.
+func (a *App) aimIntake(e entry) {
+	if !a.env.many() || e.row == nil || e.row.store == a.intake.target {
+		return
+	}
+	a.intake.target = e.row.store
+	a.intake.reload()
 }
 
 // Init implements tea.Model.
@@ -637,6 +671,12 @@ func (a *App) mainKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return a, a.setFocus(partNav)
 		}
 		return a, nil
+	case entryRepo:
+		back, cmd := a.repoKey(a.selected(), key)
+		if back {
+			return a, a.setFocus(partNav)
+		}
+		return a, cmd
 	}
 	if a.asking != "" {
 		return a.askKey(msg)
@@ -658,7 +698,8 @@ func (a *App) mainKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// that only moves or scrolls costs nothing more.
 		return a, res.cmd
 	case entryIntake, entryGoal:
-		if a.status.detail == nil || back && a.status.detail.task == nil {
+		d := a.status.detail
+		if d == nil || back && d.task == nil && d.question == nil {
 			if a.fromNext {
 				return a, a.backToNext()
 			}
@@ -929,14 +970,14 @@ func (a *App) View() tea.View {
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	v.ReportFocus = true
-	v.WindowTitle = "diatom · " + filepath.Base(a.env.Store.Repo())
+	v.WindowTitle = "diatom · " + filepath.Base(a.env.root())
 	return v
 }
 
 func (a *App) render() string {
 	mw := a.mainWidth()
 	main := lipgloss.NewStyle().Width(mw).MaxWidth(mw).Height(a.height).MaxHeight(a.height).
-		Render(hangAll(a.renderMain(), mw))
+		Render(hangAll(tui.Linkify(a.renderMain()), mw))
 	// A selection is read from the pane as drawn, and shown over it.
 	a.mainLines = strings.Split(main, "\n")
 	lit := strings.Join(a.highlight(a.mainLines), "\n")
@@ -1015,7 +1056,16 @@ func (a *App) navLines() navLayout {
 			}
 			continue
 		}
-		if e.kind == entryGoal && (i == 0 || es[i-1].kind != entryGoal) {
+		// Over a workspace each repo is a heading, so the lines under it
+		// have the whole width for what the goal is.
+		if e.kind == entryRepo {
+			lay.list = append(lay.list, navLine{text: "", entry: rowNone})
+			for _, l := range a.navEntry(i, e) {
+				lay.list = append(lay.list, navLine{text: l, entry: i})
+			}
+			continue
+		}
+		if e.kind == entryGoal && (i == 0 || es[i-1].kind != entryGoal) && !a.env.many() {
 			lay.list = append(lay.list, navLine{text: "", entry: rowNone})
 		}
 		for _, l := range a.navEntry(i, e) {
@@ -1034,6 +1084,9 @@ func (a *App) navLines() navLayout {
 		}
 	}
 	label := "─ intake "
+	if a.env.many() {
+		label = "─ intake · " + filepath.Base(a.intake.store().Repo()) + " "
+	}
 	label += strings.Repeat("─", max(a.nw()-ansi.StringWidth(label), 0))
 	if a.focus == partIntake {
 		label = tui.SGR(1) + tui.Color(label, tui.Accent)
@@ -1086,10 +1139,24 @@ func (a *App) renderNav() string {
 	return strings.Join(out, "\n")
 }
 
+// navRepo is the heading one repo's goals sit under, which opens the page
+// its config is set on.
+func (a *App) navRepo(name string, sel bool) string {
+	head := " " + emoji("📁") + " " + ansi.Truncate(name, max(a.nw()-5, 4), "…") + " "
+	rule := strings.Repeat("─", max(a.nw()-ansi.StringWidth(head), 0))
+	if sel {
+		return tui.Color("▌", tui.Accent) + boldAll(tui.Color(head+rule, tui.Accent))
+	}
+	return tui.Dim(head + rule)
+}
+
 // navEntry renders one entry: a glyph for where it stands and its name cut
 // to fit, and for a goal or the intake, the thing about it that matters most
 // now on a line under it.
 func (a *App) navEntry(i int, e entry) []string {
+	if e.kind == entryRepo {
+		return []string{a.navRepo(filepath.Base(e.row.repo), i == a.sel)}
+	}
 	var glyph, name, under string
 	switch e.kind {
 	case entryNext:
@@ -1150,10 +1217,10 @@ func boldAll(s string) string {
 }
 
 // nextCounts sums up what waits across every goal: plans to approve, steps
-// to do by hand, questions, goals ready to finish, hunks to review, and
-// goals blocked.
+// to do by hand, questions, notes to read, goals ready to finish, hunks to
+// review, and goals blocked.
 func (a *App) nextCounts() string {
-	var plans, manual, questions, finishing, hunks, blocked int
+	var plans, manual, questions, notes, finishing, hunks, blocked int
 	for _, it := range a.next.items {
 		switch {
 		case it.kind == itemPlan:
@@ -1162,6 +1229,8 @@ func (a *App) nextCounts() string {
 			manual++
 		case it.kind == itemQuestion:
 			questions++
+		case it.kind == itemNote:
+			notes++
 		case it.kind == itemFinish:
 			finishing++
 		case it.kind == itemReview:
@@ -1177,7 +1246,8 @@ func (a *App) nextCounts() string {
 	for _, c := range []struct {
 		emoji string
 		n     int
-	}{{"📝", plans}, {"👤", manual}, {"❓", questions}, {"📩", finishing}, {"🔎", hunks}, {"🔗", blocked}} {
+	}{{"📝", plans}, {"👤", manual}, {"❓", questions}, {"\U0001F4CC", notes}, {"📩", finishing},
+		{"🔎", hunks}, {"🔗", blocked}} {
 		if c.n > 0 {
 			parts = append(parts, emoji(c.emoji)+" "+strconv.Itoa(c.n))
 		}
@@ -1397,6 +1467,8 @@ func (a *App) renderMain() string {
 		return a.renderFinished(a.mainWidth(), a.height)
 	case entrySpending:
 		return a.renderSpending(a.mainWidth(), a.height)
+	case entryRepo:
+		return a.renderRepo(e, a.mainWidth())
 	}
 	return ""
 }
@@ -1414,6 +1486,8 @@ func (a *App) onScreen() (goal, context string) {
 		return "", "the list of finished goals"
 	case entrySpending:
 		return "", "what the sessions spent, day by day"
+	case entryRepo:
+		return "", "the config of the repo " + filepath.Base(e.row.repo)
 	case entryGoal:
 		g := e.row.goal
 		context = fmt.Sprintf("goal %s (%q)", g.Name, g.Title)

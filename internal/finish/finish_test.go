@@ -2,6 +2,7 @@ package finish
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -214,8 +215,8 @@ func TestBuildStacksWorkstreams(t *testing.T) {
 		!engine.Gate.Passed {
 		t.Errorf("gated = %v, engine gate = %+v", gated, engine.Gate)
 	}
-	if _, err := os.Stat(f.store.WorktreeDir("set", worktreeName)); err == nil {
-		t.Error("the replay worktree was left behind")
+	if _, err := os.Stat(f.store.LandingDir()); err != nil {
+		t.Errorf("the landing worktree was not kept: %v", err)
 	}
 
 	saved, err := Load(f.store.GoalDir("set"))
@@ -226,6 +227,35 @@ func TestBuildStacksWorkstreams(t *testing.T) {
 	if pr := res.Stack[1]; pr.Branch != "diatom/set/pr/cards" || len(pr.Commits) != 1 ||
 		pr.Gate == nil || !pr.Gate.Passed {
 		t.Errorf("the second pull request = %+v", pr)
+	}
+}
+
+// TestBuildSkipsAGatePassedBefore pins that laying the same work out again
+// does not run the gate again: it costs minutes, and it depends only on the
+// files, which are the same tree.
+func TestBuildSkipsAGatePassedBefore(t *testing.T) {
+	f := newFixture(t)
+	ward := f.work("engine", "engine.txt", "ward\n", "feat: add ward")
+	f.task("engine", ward)
+
+	runs := 0
+	opts := Options{
+		Gate: "check",
+		RunGate: func(context.Context, string, string) (gate.Result, error) {
+			runs++
+			return gate.Result{Passed: true}, nil
+		},
+	}
+	first := f.build(opts)
+	if runs != 1 || first.Stack[0].Gate.Tree == "" {
+		t.Fatalf("the first layout ran the gate %d times, gate = %+v", runs, first.Stack[0].Gate)
+	}
+	second := f.build(opts)
+	if runs != 1 {
+		t.Errorf("laying it out again ran the gate %d times", runs)
+	}
+	if g := second.Stack[0].Gate; g == nil || !g.Passed || g.Tree != first.Stack[0].Gate.Tree {
+		t.Errorf("the second layout's gate = %+v", g)
 	}
 }
 
@@ -376,7 +406,7 @@ func TestPushAndOpenPRs(t *testing.T) {
 			if open[args[2]] {
 				return "https://example.com/pull/1", nil
 			}
-			return "", os.ErrNotExist
+			return "", errNoPR
 		case "create":
 			return "Creating…\nhttps://example.com/pull/2", nil
 		}
@@ -429,6 +459,39 @@ func TestPushAndOpenPRs(t *testing.T) {
 	if err := push(f.ctx, f.store, f.goal, res, "origin"); err == nil ||
 		!strings.Contains(err.Error(), "main on origin moved on") {
 		t.Errorf("push onto a moved main = %v", err)
+	}
+}
+
+// TestOpenPRsStopsOnARealGHFailure pins that only "no pull requests found"
+// sends OpenPRs on to open one. Any other gh failure, such as bad
+// credentials, must surface rather than look like a branch with no PR and
+// have diatom try to open a second one.
+func TestOpenPRsStopsOnARealGHFailure(t *testing.T) {
+	f := newFixture(t)
+	f.task("engine", f.work("engine", "engine.txt", "ward\n", "feat: ward"))
+	res := f.build(Options{})
+	remote := t.TempDir()
+	bare := git.Repo{Dir: remote}
+	if _, err := bare.Run(f.ctx, "init", "--bare", "--initial-branch=main"); err != nil {
+		t.Fatal(err)
+	}
+	f.git("remote", "add", "origin", remote)
+	f.git("push", "--quiet", "origin", "main")
+
+	var created bool
+	gh := func(_ context.Context, _ string, args ...string) (string, error) {
+		if args[1] == "create" {
+			created = true
+			return "https://example.com/pull/9", nil
+		}
+		return "", errors.New("gh pr view: exit status 1: HTTP 401: Bad credentials")
+	}
+	if _, err := OpenPRs(f.ctx, f.store, f.goal, res, "origin", gh); err == nil ||
+		!strings.Contains(err.Error(), "401") {
+		t.Errorf("OpenPRs through a broken gh = %v", err)
+	}
+	if created {
+		t.Error("a failed lookup was read as no pull request, and one was opened anyway")
 	}
 }
 

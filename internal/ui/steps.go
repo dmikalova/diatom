@@ -30,6 +30,8 @@ type taskView struct {
 	// view, to read the task's text.
 	read int
 	open *sessionView
+	// openQ is the question opened from the task's list of them.
+	openQ *questionView
 	// direct is set when the session was opened straight from the goal's
 	// page, which backing out of it goes back to.
 	direct bool
@@ -71,6 +73,70 @@ type step struct {
 	// done is set once a tool call has its result, after took.
 	done bool
 	took time.Duration
+}
+
+// questionView is one question opened from a goal's page or a task: what
+// was asked and the answer it got. A closed question is only readable here.
+type questionView struct {
+	q      *queue.Question
+	scroll int
+}
+
+// update handles a key while the question is open, and reports whether it
+// backs out of it.
+func (qv *questionView) update(key string) bool {
+	switch key {
+	case "esc", "left":
+		return true
+	case "j", "down":
+		qv.scroll++
+	case "k", "up":
+		qv.scroll = max(qv.scroll-1, 0)
+	case "pgdown", "space", " ":
+		qv.scroll += 10
+	case "pgup", "shift+space":
+		qv.scroll = max(qv.scroll-10, 0)
+	case "g", "home":
+		qv.scroll = 0
+	}
+	return false
+}
+
+// render shows the question and its answer in full, scrolled.
+func (qv *questionView) render(width, room int) string {
+	wrap := func(s string) []string {
+		return strings.Split(ansi.Wordwrap(strings.TrimRight(s, "\n"), max(width, 20), ""), "\n")
+	}
+	head := questionLine(qv.q, width)
+	if qv.q.Task != "" {
+		head += tui.Dim(" · task " + qv.q.Task)
+	}
+	lines := append([]string{head, ""}, wrap(qv.q.Text)...)
+	lines = append(lines, "", tui.Dim("─── answer"))
+	if a := strings.TrimSpace(qv.q.Answer); a != "" {
+		lines = append(lines, wrap(a)...)
+	} else {
+		lines = append(lines, tui.Dim("Not answered yet."))
+	}
+	qv.scroll = min(qv.scroll, max(len(lines)-room, 0))
+	shown := lines[qv.scroll:min(qv.scroll+room, len(lines))]
+	if qv.scroll > 0 {
+		shown = append([]string{tui.Dim("↑ more above")}, shown[1:]...)
+	}
+	if qv.scroll+room < len(lines) {
+		shown = append(shown[:len(shown)-1], tui.Dim("↓ more below"))
+	}
+	return strings.Join(shown, "\n")
+}
+
+// questionLine is one question in a list: what it asks, and whether it has
+// been answered.
+func questionLine(q *queue.Question, width int) string {
+	state := tui.Color("open", tui.Magenta) + tui.Dim(" since "+stamp(q.Created))
+	if q.Answer != "" {
+		state = tui.Dim("answered " + stamp(q.Answered))
+	}
+	return fmt.Sprintf("? %s %s", oneLine(q.Text, max(width-32, 20)), state)
 }
 
 // loadTask reads a task, its questions and the sessions that worked on it.
@@ -257,7 +323,10 @@ func (tv *taskView) keep(old *taskView) {
 	if len(tv.sessions) > len(old.sessions) && len(old.sessions) > 0 {
 		tv.sel += len(tv.sessions) - len(old.sessions)
 	}
-	tv.sel = min(tv.sel, max(len(tv.sessions)-1, 0))
+	tv.sel = min(tv.sel, max(len(tv.sessions)+len(tv.questions)-1, 0))
+	if old.openQ != nil {
+		tv.openQ = reopen(tv.questions, old.openQ)
+	}
 	if old.open == nil {
 		return
 	}
@@ -285,11 +354,17 @@ func (tv *taskView) update(s *Status, key string) bool {
 		}
 		return false
 	}
+	if qv := tv.openQ; qv != nil {
+		if qv.update(key) {
+			tv.openQ = nil
+		}
+		return false
+	}
 	switch key {
 	case "esc", "left":
 		return true
 	case "j", "down":
-		if tv.sel < len(tv.sessions)-1 {
+		if tv.sel < len(tv.sessions)+len(tv.questions)-1 {
 			tv.sel++
 		} else {
 			tv.read++
@@ -307,10 +382,22 @@ func (tv *taskView) update(s *Status, key string) bool {
 	case "enter", "space", " ", "right", "l":
 		if tv.sel < len(tv.sessions) {
 			tv.open = tv.sessions[tv.sel]
+		} else if i := tv.sel - len(tv.sessions); i < len(tv.questions) {
+			tv.openQ = &questionView{q: tv.questions[i]}
 		}
 	}
 	s.confirm = ""
 	return false
+}
+
+// reopen points a question view at the reread question of the same id, nil
+// once that question is gone.
+func reopen(qs []*queue.Question, old *questionView) *questionView {
+	i := slices.IndexFunc(qs, func(q *queue.Question) bool { return q.ID == old.q.ID })
+	if i < 0 {
+		return nil
+	}
+	return &questionView{q: qs[i], scroll: old.scroll}
 }
 
 // update handles a key while the session is open, and reports whether it
@@ -354,6 +441,9 @@ func (sv *sessionView) update(key string) bool {
 // crumbs names what is open inside the goal, for the header.
 func (tv *taskView) crumbs() string {
 	c := tui.Dim(" › ") + tui.Bold(tv.id) + " " + tv.task.Title
+	if qv := tv.openQ; qv != nil {
+		c += tui.Dim(" › ") + "question " + qv.q.ID
+	}
 	if sv := tv.open; sv != nil {
 		c += tui.Dim(" › ") + "Claude " + sv.started.Local().Format("15:04")
 		if sv.open >= 0 && sv.open < len(sv.steps) {
@@ -370,6 +460,9 @@ func (tv *taskView) render(s *Status, room int) string {
 			return sv.renderStep(sv.steps[sv.open], s.width, room)
 		}
 		return sv.render(s.width, room)
+	}
+	if qv := tv.openQ; qv != nil {
+		return qv.render(s.width, room)
 	}
 	t := tv.task
 	head := fmt.Sprintf("%s %s · %s", stateMark(t.State), t.Kind, t.State)
@@ -404,11 +497,11 @@ func (tv *taskView) render(s *Status, room int) string {
 		if i == 0 {
 			lines = append(lines, "", tui.Dim("─── questions"))
 		}
-		state := tui.Color("open", tui.Magenta) + tui.Dim(" since "+stamp(q.Created))
-		if q.Answer != "" {
-			state = tui.Dim("answered " + stamp(q.Answered))
+		mark := "  "
+		if len(tv.sessions)+i == tv.sel {
+			mark, sel = tui.Color("› ", tui.Accent), len(lines)
 		}
-		lines = append(lines, fmt.Sprintf("? %s %s", oneLine(q.Text, s.width-32), state))
+		lines = append(lines, mark+questionLine(q, s.width-4))
 	}
 	if body := strings.TrimSpace(t.Body); body != "" {
 		lines = append(lines, "", tui.Dim("─── task"))

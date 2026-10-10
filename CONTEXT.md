@@ -88,6 +88,14 @@ _Avoid_: manual task, chore
 The human's reply to a question. It makes the parked task ready again.
 _Avoid_: response, reply
 
+**Note**:
+Something an agent wants the human to know and needs no answer for. It waits in Next until they read it, and never blocks its task.
+_Avoid_: remark, FYI, alert
+
+**Record**:
+Something an agent keeps on its task for the task's later sessions and for the reviewer, such as what it found or why it chose what it chose. The human never reads one.
+_Avoid_: note, memo, scratchpad, working notes
+
 **Next**:
 Everything waiting on the human, across every goal, taken one item at a time: goals ready to finish and the hunks finishing them brought, plans to approve, questions, then the other hunks to review.
 _Avoid_: inbox, notifications, to-do

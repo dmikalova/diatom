@@ -168,7 +168,7 @@ func TestDays(t *testing.T) {
 	ended(t, s, "done", "c", now.Add(-3*time.Hour), 5, 0, true)
 	ended(t, s, "done", "d", now.AddDate(0, 0, -3), 7, 0, true)
 	ended(t, s, "done", "e", now.AddDate(0, 0, -40), 9, 0, true)
-	days := New().Days(s, now)
+	days := New().Days(now, s)
 	if len(days) != 2 || days[0].Date.Day() != 27 || days[1].Date.Day() != 24 {
 		t.Fatalf("days = %+v", days)
 	}
@@ -191,5 +191,31 @@ func TestDays(t *testing.T) {
 		tot.Month,
 	) != "45 52 52" {
 		t.Errorf("sum = %+v", tot)
+	}
+}
+
+// TestDaysAddsUpAWorkspace pins that several stores are one workspace: their
+// days are added together, and each goal says which repo it is in (ADR 0007).
+func TestDaysAddsUpAWorkspace(t *testing.T) {
+	one, two := queue.Open(t.TempDir()), queue.Open(t.TempDir())
+	now := time.Date(2026, 9, 27, 15, 0, 0, 0, time.Local)
+	ended(t, one, "set", "a", now.Add(-time.Hour), 10, 0, true)
+	ended(t, two, "set", "b", now.Add(-2*time.Hour), 30, 0, true)
+	ended(t, two, "deal", "c", now.AddDate(0, 0, -3), 7, 0, true)
+
+	days := New().Days(now, one, two)
+	if len(days) != 2 || fmt.Sprintf("%.0f", days[0].USD) != "40" {
+		t.Fatalf("days = %+v", days)
+	}
+	// A name the two repos share stays two goals, one per repo.
+	gs := days[0].Goals
+	if len(gs) != 2 || gs[0].Repo != two.Repo() || gs[1].Repo != one.Repo() {
+		t.Fatalf("today's goals = %+v", gs)
+	}
+	if gs[0].Goal != "set" || gs[1].Goal != "set" {
+		t.Errorf("today's goals aren't both set: %+v", gs)
+	}
+	if days[1].Goals[0].Repo != two.Repo() {
+		t.Errorf("the older day's goal = %+v", days[1].Goals[0])
 	}
 }

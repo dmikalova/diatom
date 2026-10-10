@@ -23,10 +23,6 @@ import (
 	"github.com/dmikalova/diatom/internal/queue"
 )
 
-// worktreeName is the worktree the commits are replayed in, removed again
-// once they are. It can't be a workstream's name.
-const worktreeName = "_finish"
-
 // fileName holds the last layout, in the goal's directory.
 const fileName = "finish.yaml"
 
@@ -63,7 +59,10 @@ type PR struct {
 
 // Gate is how the gate went on a pull request's tip.
 type Gate struct {
-	Passed bool   `yaml:"passed"`
+	Passed bool `yaml:"passed"`
+	// Tree is the files it ran on. The gate depends on nothing else, so a
+	// later layout reaching the same tree need not run it again.
+	Tree   string `yaml:"tree,omitempty"`
 	Output string `yaml:"output,omitempty"`
 }
 
@@ -214,14 +213,10 @@ func Build(ctx context.Context, s *queue.Store, g *queue.Goal, opts Options) (*R
 		return nil, err
 	}
 
-	wt := git.Repo{Dir: s.WorktreeDir(g.Name, worktreeName)}
+	wt := git.Repo{Dir: s.LandingDir()}
 	if err := repo.EnsureDetached(ctx, wt.Dir, base); err != nil {
 		return nil, err
 	}
-	defer func() {
-		// Nothing is kept in it; the branches hold the result.
-		_, _ = repo.Run(context.WithoutCancel(ctx), "worktree", "remove", "--force", wt.Dir)
-	}()
 
 	res := &Result{Base: base, Integration: integration, Final: FinalBranch(g)}
 	opts.step("Putting the goal's %d commits onto %s's tip", len(commits), g.Base)
@@ -270,8 +265,9 @@ func Build(ctx context.Context, s *queue.Store, g *queue.Goal, opts Options) (*R
 	stack[0].Branch = ReviewBranch(g)
 	res.Stack = stack
 
+	old, _ := Load(s.GoalDir(g.Name))
 	if opts.Gate != "" {
-		if err := runGates(ctx, wt, res, opts); err != nil {
+		if err := runGates(ctx, wt, res, passedTrees(old), opts); err != nil {
 			return nil, err
 		}
 	}
@@ -280,7 +276,7 @@ func Build(ctx context.Context, s *queue.Store, g *queue.Goal, opts Options) (*R
 	}
 	res.Built = now(opts)
 	// Where and how the goal lands outlives laying it out again.
-	if old, err := Load(s.GoalDir(g.Name)); err == nil && old != nil && old.Landing != nil {
+	if old != nil && old.Landing != nil {
 		res.Landing = &Landing{
 			Remote: old.Landing.Remote,
 			How:    old.Landing.How,
@@ -288,6 +284,21 @@ func Build(ctx context.Context, s *queue.Store, g *queue.Goal, opts Options) (*R
 		}
 	}
 	return res, Save(s.GoalDir(g.Name), res)
+}
+
+// passedTrees are the files an earlier layout of the goal already passed the
+// gate on.
+func passedTrees(old *Result) map[string]bool {
+	trees := map[string]bool{}
+	if old == nil {
+		return trees
+	}
+	for _, pr := range old.Stack {
+		if pr.Gate != nil && pr.Gate.Passed && pr.Gate.Tree != "" {
+			trees[pr.Gate.Tree] = true
+		}
+	}
+	return trees
 }
 
 // expectedTree is the files the laid-out goal must end with: the
@@ -754,8 +765,15 @@ func settled(ctx context.Context, wt git.Repo, c commit, err error, undo ...stri
 }
 
 // runGates runs the gate on each pull request's tip, so a pull request that
-// only passes with the ones after it shows before it is opened.
-func runGates(ctx context.Context, wt git.Repo, res *Result, opts Options) error {
+// only passes with the ones after it shows before it is opened. A tip whose
+// files an earlier layout already passed on is taken as passed.
+func runGates(
+	ctx context.Context,
+	wt git.Repo,
+	res *Result,
+	passed map[string]bool,
+	opts Options,
+) error {
 	run := gate.Within(opts.Timeout, opts.RunGate)
 	if opts.RunGate == nil {
 		gateRun := gate.Run
@@ -766,6 +784,15 @@ func runGates(ctx context.Context, wt git.Repo, res *Result, opts Options) error
 	}
 	for i := range res.Stack {
 		pr := &res.Stack[i]
+		tree, err := wt.Run(ctx, "rev-parse", pr.Tip+"^{tree}")
+		if err != nil {
+			return err
+		}
+		if passed[tree] {
+			opts.step("The gate already passed on %s's files", pr.Branch)
+			pr.Gate = &Gate{Passed: true, Tree: tree}
+			continue
+		}
 		opts.step("Running the gate on %s", pr.Branch)
 		if _, err := wt.Run(ctx, "checkout", "--detach", "--force", pr.Tip); err != nil {
 			return err
@@ -777,7 +804,7 @@ func runGates(ctx context.Context, wt git.Repo, res *Result, opts Options) error
 		if err != nil {
 			return err
 		}
-		pr.Gate = &Gate{Passed: r.Passed}
+		pr.Gate = &Gate{Passed: r.Passed, Tree: tree}
 		if !r.Passed {
 			pr.Gate.Output = r.Output
 		}

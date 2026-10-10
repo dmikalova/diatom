@@ -25,7 +25,7 @@ type Brief struct {
 	Done, Total int
 }
 
-// Briefs describes the repo's goals that aren't finished.
+// Briefs describes the repo's goals that aren't over.
 func Briefs(s *queue.Store) ([]Brief, error) {
 	goals, err := s.Goals()
 	if err != nil {
@@ -33,7 +33,7 @@ func Briefs(s *queue.Store) ([]Brief, error) {
 	}
 	var out []Brief
 	for _, g := range goals {
-		if g.State == queue.GoalFinished {
+		if g.Over() {
 			continue
 		}
 		b := Brief{Name: g.Name, Title: g.Title, State: g.State, After: g.After}

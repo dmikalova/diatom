@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -211,6 +212,118 @@ func TestNextOpensTheGoalAndComesBack(t *testing.T) {
 	}
 }
 
+// TestNextShowsWhatTheTaskRecorded pins that a question is read above the
+// last few things its task recorded, that the one picked can be moved and
+// read in full, and that n goes on to the next.
+func TestNextShowsWhatTheTaskRecorded(t *testing.T) {
+	f := newFixture(t)
+	for _, n := range [][2]string{
+		{"Answer 0009", "oldest"},
+		{"Note", "second"},
+		{"Note", "third"},
+		{"Note", "newest"},
+	} {
+		if err := f.store.AppendNote("set", "0001", n[0], n[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a, _ := newApp(t, f)
+	a.setFocus(partMain)
+	out := plain(a.render())
+	for _, want := range []string{
+		"Does ward stack?", "› context · Note: newest", "context · Note: second",
+		"enter reads the context picked",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the question lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "oldest") {
+		t.Errorf("the whole record showed at once:\n%s", out)
+	}
+	// The context takes the keyboard, and the pick runs down to the oldest.
+	a.next.setArea(areaContext)
+	key(a, "j", "j", "j")
+	if out = plain(a.render()); !strings.Contains(out, "› context · Answer 0009: oldest") ||
+		strings.Contains(out, "newest") {
+		t.Errorf("the pick didn't run down the record:\n%s", out)
+	}
+	key(a, "enter")
+	if out = plain(a.render()); !strings.Contains(out, "Answer 0009") ||
+		!strings.Contains(out, "oldest") || strings.Contains(out, "Does ward stack?") {
+		t.Errorf("enter didn't read the context picked:\n%s", out)
+	}
+	key(a, "p")
+	if out = plain(a.render()); !strings.Contains(out, "third") {
+		t.Errorf("p didn't go to the previous entry:\n%s", out)
+	}
+	key(a, "esc")
+	if a.next.reading || a.next.area != areaContext {
+		t.Errorf("esc didn't go back to the context: %v %d", a.next.reading, a.next.area)
+	}
+}
+
+// TestNextReadsANoteBeforeItsQuestion pins that a note waits in Next of its
+// own accord, just before the question of the task that left it.
+func TestNextReadsANoteBeforeItsQuestion(t *testing.T) {
+	f := newFixture(t)
+	if err := f.store.AddNote("set", &queue.Note{
+		Task: "0001", Text: "The write-up is in the goal's adr folder.",
+		Created: time.Unix(1000, 0),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := newApp(t, f)
+	a.setFocus(partMain)
+	var got []string
+	for _, it := range a.next.items {
+		got = append(got, it.id())
+	}
+	if want := "set note 0001,set question 0001"; !strings.Contains(strings.Join(got, ","), want) {
+		t.Fatalf("items = %v, want %s in order", got, want)
+	}
+	a.next.cur = "set note 0001"
+	out := plain(a.render())
+	for _, want := range []string{"Noted by task 0001: Add ward",
+		"The write-up is in the goal's adr folder.", "enter marks it read", "📌 1"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the note lacks %q:\n%s", want, out)
+		}
+	}
+	key(a, "enter")
+	read, err := f.store.Notes("set", queue.NoteRead)
+	if err != nil || len(read) != 1 {
+		t.Fatalf("enter left the note unread: %v %v", read, err)
+	}
+	if it := a.next.shown(); it == nil || it.kind != itemQuestion {
+		t.Errorf("reading the note didn't move on to the question: %+v", it)
+	}
+}
+
+// TestNextOpensTheWorktree pins that o on a question opens the editor in the
+// worktree of the task that asked.
+func TestNextOpensTheWorktree(t *testing.T) {
+	f := newFixture(t)
+	a, _ := newApp(t, f)
+	it := a.next.shown()
+	if it == nil || it.kind != itemQuestion {
+		t.Fatalf("the question isn't shown: %+v", it)
+	}
+	// With no worktree yet, the editor opens the repo itself.
+	cmd := a.next.openCommand(*it)
+	if cmd == nil || cmd.Dir != f.store.Repo() {
+		t.Fatalf("with no worktree the editor ran %v in %q", cmd, cmd.Dir)
+	}
+	wt := f.store.WorktreeDir("set", "engine")
+	if err := os.MkdirAll(wt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd = a.next.openCommand(*it)
+	if cmd == nil || cmd.Dir != wt || strings.Join(cmd.Args, " ") != "nvim" {
+		t.Errorf("the editor ran %v in %q, want nvim in %q", cmd.Args, cmd.Dir, wt)
+	}
+}
+
 func TestNextScrollsTheQuestion(t *testing.T) {
 	f := newFixture(t)
 	var long strings.Builder
@@ -353,7 +466,7 @@ func TestNextOffersToFinishAGoal(t *testing.T) {
 	a.next.cur = finish.id()
 	out := plain(a.render())
 	for _, want := range []string{"All its work is done and reviewed", "Finishing unblocks: poison",
-		"› P  Merge it into main", "F  Open its stacked pull requests",
+		"› P  Merge it into main", "F  Open its pull request",
 		"d  Mark it done, to land later"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the finish item lacks %q:\n%s", want, out)

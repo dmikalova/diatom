@@ -11,7 +11,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/dmikalova/diatom/internal/config"
 	"github.com/dmikalova/diatom/internal/gate"
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/hook"
@@ -19,28 +18,39 @@ import (
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/roster"
 	"github.com/dmikalova/diatom/internal/session"
+	"github.com/dmikalova/diatom/internal/workspace"
 )
 
 // here opens the store of the repository the current directory is in,
-// anywhere in it, a goal's worktree included. diatom works in one repo at a
-// time (ADR 0007), and only in a repo that ignores its state.
+// anywhere in it, a goal's worktree included. Only a repo that ignores its
+// state is opened. Most commands work in one repo; the window works in the
+// whole workspace (ADR 0007).
 func here(ctx context.Context) (*queue.Store, error) {
+	w, err := hereWorkspace(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s := w.One()
+	if s == nil {
+		names := make([]string, 0, len(w.Repos))
+		for _, r := range w.Repos {
+			names = append(names, workspace.Name(r))
+		}
+		return nil, fmt.Errorf(
+			"%s holds %d repos (%s): run this in one of them",
+			w.Root, len(w.Repos), strings.Join(names, ", "))
+	}
+	return s, nil
+}
+
+// hereWorkspace is the workspace the working directory is in: the one repo
+// around it, or every repo under it.
+func hereWorkspace(ctx context.Context) (*workspace.Workspace, error) {
 	wd, err := os.Getwd()
 	if err != nil {
 		return nil, err
 	}
-	root, err := git.Root(ctx, wd)
-	if err != nil {
-		return nil, errors.New("not in a git repository: diatom works in the repo it runs in")
-	}
-	if !(git.Repo{Dir: root}).IsIgnored(ctx, config.DirName+"/") {
-		return nil, fmt.Errorf(
-			"%s/ is not ignored in %s: add it to the global excludes file (~/.config/git/ignore)",
-			config.DirName,
-			root,
-		)
-	}
-	return queue.Open(root), nil
+	return workspace.Open(ctx, wd)
 }
 
 // parseInterspersed parses flags that may come after positional arguments.
@@ -77,7 +87,8 @@ func cmdTask(ctx context.Context, args []string, stdin io.Reader, stdout io.Writ
 	case "help", "-h", "--help":
 		_, _ = fmt.Fprintln(stdout, usage)
 		return nil
-	case session.EntryDone, session.EntryNote, session.EntryAsk, session.EntryManual:
+	case session.EntryDone, session.EntryNote, session.EntryRecord, session.EntryAsk,
+		session.EntryManual, session.EntryDrop:
 		return taskReport(ctx, sub, rest, stdout)
 	case session.EntryConnect:
 		return taskConnect(rest, stdout)
@@ -258,8 +269,17 @@ func taskReport(ctx context.Context, typ string, args []string, stdout io.Writer
 				"Move on to the other tasks.\n",
 			e.Task,
 		)
+	case session.EntryDrop:
+		_, _ = fmt.Fprintf(
+			stdout,
+			"The goal is dropped once this session's work settles: its tasks close, its branches "+
+				"and worktrees go, and nothing of it lands. Mark task %s done and end the session.\n",
+			e.Task,
+		)
+	case session.EntryRecord:
+		_, _ = fmt.Fprintf(stdout, "Recorded on task %s, for its later sessions.\n", e.Task)
 	default:
-		_, _ = fmt.Fprintf(stdout, "Note added to task %s.\n", e.Task)
+		_, _ = fmt.Fprintln(stdout, "Your note is queued for the human to read.")
 	}
 	return nil
 }
@@ -305,7 +325,7 @@ func hookScope() hook.Scope {
 	if err != nil || spec.Repo == "" {
 		return hook.Scope{}
 	}
-	s := queue.Open(spec.Repo)
+	s := spec.Store()
 	goal := s.GoalDir(spec.Goal)
 	return hook.Scope{State: s.Root, Allowed: []string{
 		spec.Worktree,

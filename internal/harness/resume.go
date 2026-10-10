@@ -37,7 +37,19 @@ type Resumable struct {
 // a session resumed too often; their worktrees keep whatever was written,
 // and the next session carries on from there.
 func (h *Harness) Recover(ctx context.Context) ([]Resumable, error) {
-	s := queue.Open(h.Root)
+	var resumes []Resumable
+	for _, root := range h.Roots {
+		rs, err := h.recoverRepo(root)
+		if err != nil {
+			return nil, fmt.Errorf("repo %s: %w", root, err)
+		}
+		resumes = append(resumes, rs...)
+	}
+	return resumes, ctx.Err()
+}
+
+func (h *Harness) recoverRepo(root string) ([]Resumable, error) {
+	s := h.store(root)
 	goals, err := s.Goals()
 	if err != nil {
 		return nil, err
@@ -54,7 +66,7 @@ func (h *Harness) Recover(ctx context.Context) ([]Resumable, error) {
 		}
 		resumes = append(resumes, rs...)
 	}
-	return resumes, ctx.Err()
+	return resumes, nil
 }
 
 func (h *Harness) recoverGoal(s *queue.Store, goal string) ([]Resumable, error) {
@@ -154,7 +166,7 @@ func (h *Harness) resume(ctx context.Context, r Resumable) error {
 	if err != nil {
 		return err
 	}
-	repo := Repo{Store: queue.Open(r.Repo), Config: cfg}
+	repo := Repo{Store: h.store(r.Repo), Config: cfg}
 	g, err := repo.Store.Goal(r.Spec.Goal)
 	if err != nil {
 		return err

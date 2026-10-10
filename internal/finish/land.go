@@ -71,18 +71,11 @@ func OpenPRs(
 		if i > 0 {
 			base = res.Stack[i-1].Branch
 		}
-		if url, err := gh(
-			ctx,
-			repo.Dir,
-			"pr",
-			"view",
-			pr.Branch,
-			"--json",
-			"url",
-			"--jq",
-			".url",
-		); err == nil &&
-			url != "" {
+		url, err := gh(ctx, repo.Dir, "pr", "view", pr.Branch, "--json", "url", "--jq", ".url")
+		switch {
+		case err != nil && !noSuchPR(err):
+			return urls, err
+		case err == nil && url != "":
 			if _, err := gh(ctx, repo.Dir, "pr", "edit", pr.Branch, "--base", base); err != nil {
 				return urls, err
 			}
@@ -113,6 +106,13 @@ func OpenPRs(
 		urls = append(urls, lines[len(lines)-1])
 	}
 	return urls, nil
+}
+
+// noSuchPR reports whether gh failed only because the branch has no pull
+// request. Any other failure, such as bad credentials, must not be read as
+// "none open" and send diatom on to open a second one.
+func noSuchPR(err error) bool {
+	return strings.Contains(err.Error(), "no pull requests found")
 }
 
 func prTitle(g *queue.Goal, res *Result, i int) string {
@@ -167,7 +167,7 @@ func Summary(g *queue.Goal, res *Result) string {
 			prs = append(prs, fmt.Sprintf("%s %s%s", prName(pr.URL), strings.ToLower(pr.State),
 				checkMark(pr.Checks)))
 		}
-		line = "pull requests " + strings.Join(prs, ", ")
+		line = "pull requests " + strings.Join(prs, ", ") + " · waiting for you to merge"
 	default:
 		line = "pushed, waiting to show up on " + l.Upstream(g)
 	}

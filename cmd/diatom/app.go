@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -28,26 +29,34 @@ const logKeep = 10 << 20
 // errStoppedAtOnce is a quit that didn't wait for the sessions to suspend.
 var errStoppedAtOnce = errors.New("stopped at once; git work under way may be left half done")
 
-// cmdApp opens diatom on the repo: one window that runs the scheduler too
-// (ADR 0007). Quitting, or closing the terminal, suspends the running
+// cmdApp opens diatom on the workspace: one window over the repo it is in,
+// or over every repo under the directory it is in, which runs the scheduler
+// too (ADR 0007). Quitting, or closing the terminal, suspends the running
 // sessions, which carry on the next time diatom opens; nothing runs while it
-// is closed. With diatom open on the repo elsewhere, this one only views.
+// is closed. With diatom open on a repo elsewhere, this one only views.
 func cmdApp(ctx context.Context) error {
-	s, err := here(ctx)
+	w, err := hereWorkspace(ctx)
 	if err != nil {
 		return err
 	}
+	s := w.Repos[0]
 	paths, err := config.DefaultPaths()
 	if err != nil {
 		return err
 	}
-	if err := ensureGate(s, paths, os.Stdin, os.Stderr, terminal(os.Stdin)); err != nil {
+	if err := config.Ensure(paths); err != nil {
 		return err
+	}
+	for _, r := range w.Repos {
+		if err := ensureGate(r, paths.For(r.Key()), os.Stdin, os.Stderr,
+			terminal(os.Stdin)); err != nil {
+			return err
+		}
 	}
 	// The config is read once: a change to it takes effect when diatom
 	// next starts, as U does, and a mistake in it can't stop the running
 	// scheduler.
-	cfg, err := config.Load(s.Repo(), paths)
+	cfg, err := config.Load(s.Repo(), paths.For(s.Key()))
 	if err != nil {
 		return err
 	}
@@ -63,12 +72,15 @@ func cmdApp(ctx context.Context) error {
 		return update.Exec(bin)
 	}
 
-	sched, err := startScheduler(s, paths, cfg, log)
+	sched, err := startScheduler(w.Repos, paths, cfg, log)
 	if err != nil {
 		return err
 	}
 	defer sched.unlock()
-	env := ui.Env{Store: s, Paths: paths, Now: time.Now, Config: cfg}
+	env := ui.Env{
+		Store: s, Repos: w.Repos, Root: w.Root,
+		Paths: paths, Now: time.Now, Config: cfg,
+	}
 	app := ui.NewApp(ctx, env, sched.Scheduler)
 	p := tea.NewProgram(app, tea.WithoutSignalHandler())
 	sigs := make(chan os.Signal, 1)
@@ -116,24 +128,38 @@ type scheduler struct {
 	unlock func()
 }
 
-// startScheduler runs the repo's scheduler in the background, or when diatom
-// is open on the repo elsewhere, none: the app then only views.
+// startScheduler runs the workspace's scheduler in the background, or when
+// diatom is open on one of its repos elsewhere, none: the app then only
+// views. One scheduler covers every repo, so its session limit is shared.
 func startScheduler(
-	s *queue.Store,
+	repos []*queue.Store,
 	paths config.Paths,
 	cfg *config.Config,
 	log *slog.Logger,
 ) (*scheduler, error) {
-	unlock, err := s.LockScheduler()
-	if err != nil {
-		pid, perr := s.Scheduler()
-		if perr != nil {
-			return nil, err
+	var unlocks []func()
+	unlock := func() {
+		for _, u := range unlocks {
+			u()
 		}
-		return &scheduler{
-			Viewer: fmt.Sprintf("diatom is open on this repo in pid %d", pid),
-			unlock: func() {},
-		}, nil
+		unlocks = nil
+	}
+	roots := make([]string, 0, len(repos))
+	for _, s := range repos {
+		u, err := s.LockScheduler()
+		if err != nil {
+			unlock()
+			pid, perr := s.Scheduler()
+			if perr != nil {
+				return nil, err
+			}
+			return &scheduler{
+				Viewer: fmt.Sprintf("diatom is open on %s in pid %d", filepath.Base(s.Repo()), pid),
+				unlock: func() {},
+			}, nil
+		}
+		unlocks = append(unlocks, u)
+		roots = append(roots, s.Repo())
 	}
 	exe, err := self()
 	if err != nil {
@@ -152,9 +178,10 @@ func startScheduler(
 		drained()
 		suspended()
 	}
-	log.Info("diatom scheduler starting", "version", update.Version(), "repo", s.Repo())
+	log.Info("diatom scheduler starting", "version", update.Version(), "repos", roots)
 	h := &harness.Harness{
-		Paths: paths, Root: s.Repo(), Config: cfg, Runner: claude.Runner{}, Exe: exe, Log: log,
+		Paths: paths, Roots: roots, Stores: repos, Config: cfg, Runner: claude.Runner{},
+		Exe: exe, Log: log,
 	}
 	go func() {
 		defer close(done)

@@ -415,6 +415,44 @@ func TestGrillingDoneWithoutPlan(t *testing.T) {
 	}
 }
 
+// TestGrillingDropsItsGoal pins that grilling can close a goal that turns
+// out not to be worth doing, without handing in a plan first.
+func TestGrillingDropsItsGoal(t *testing.T) {
+	f := newFixture(t)
+	g, err := plan.NewGoal(
+		context.Background(),
+		f.store,
+		"next",
+		"Next set",
+		"",
+		"",
+		queue.Origin{},
+		time.Now(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.agent.act = func(_ *testing.T, _ string, s agentSession) {
+		s.report(session.EntryDrop, s.spec.Tasks[0], "DIP-4225 duplicates DIP-3999")
+		s.report(session.EntryDone, s.spec.Tasks[0], "")
+	}
+	f.step()
+	g, err = f.store.Goal(g.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.State != queue.GoalDropped || g.Reason != "DIP-4225 duplicates DIP-3999" {
+		t.Fatalf("goal after grilling dropped it = %+v", g)
+	}
+	tasks, _ := f.store.Tasks(g.Name)
+	if tasks[0].State != queue.Done || strings.Contains(tasks[0].Body, "## No plan") {
+		t.Errorf("grilling task after the drop = %s\n%s", tasks[0].State, tasks[0].Body)
+	}
+	if got := f.step(); len(got) != 0 {
+		t.Errorf("the dropped goal started %+v", got)
+	}
+}
+
 func TestPlanningPromptsSayOnlyTheToolReachesTheHuman(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()

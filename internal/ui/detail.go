@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -15,14 +16,23 @@ import (
 // detail is a goal, or the intake, opened from the status list: what can be
 // done with it and its tasks, and one task opened from those.
 type detail struct {
+	// store is the repo the goal is in, and repo its root: two repos of a
+	// workspace each have an intake, and may have a goal of the same name.
+	store *queue.Store
+	repo  string
 	goal  string
 	title string
 	tasks []*queue.Task
-	// sel runs over the goal's running sessions, its actions, then its
-	// tasks; top is the first line on screen.
+	// questions are the goal's, open and closed, in the order they were
+	// asked: the answered ones are only readable here.
+	questions []*queue.Question
+	// sel runs over the goal's running sessions, its actions, its tasks,
+	// then its questions; top is the first line on screen.
 	sel, top int
 	// task is the task opened; nil shows the goal.
 	task *taskView
+	// question is the question opened from the page's own list.
+	question *questionView
 	// head is how many rows of the page come before its menu, and rows what
 	// each of the menu's rows on screen picks for sel, -1 for nothing, both
 	// from the last render, for a click to find what it is on.
@@ -32,7 +42,7 @@ type detail struct {
 
 // openDetail opens a row of the status list.
 func (s *Status) openDetail(r *goalRow) {
-	s.detail = &detail{goal: r.goal.Name, title: r.goal.Title}
+	s.detail = &detail{store: r.store, repo: r.repo, goal: r.goal.Name, title: r.goal.Title}
 	if s.detail.title == "" {
 		s.detail.title = r.goal.Name
 	}
@@ -49,7 +59,7 @@ func (s *Status) reloadDetail() {
 	if d == nil {
 		return
 	}
-	store := s.env.Store
+	store := d.store
 	tasks, err := store.Tasks(d.goal)
 	if err != nil {
 		s.loadErr = err
@@ -61,6 +71,21 @@ func (s *Status) reloadDetail() {
 		func(a, b *queue.Task) int { return order[a.State] - order[b.State] },
 	)
 	d.tasks = tasks
+	d.questions = nil
+	for _, st := range []queue.QuestionState{queue.QuestionOpen, queue.QuestionClosed} {
+		qs, err := store.Questions(d.goal, st)
+		if err != nil {
+			s.loadErr = err
+			return
+		}
+		d.questions = append(d.questions, qs...)
+	}
+	slices.SortStableFunc(d.questions, func(a, b *queue.Question) int {
+		return strings.Compare(a.ID, b.ID)
+	})
+	if d.question != nil {
+		d.question = reopen(d.questions, d.question)
+	}
 	d.sel = min(d.sel, max(s.detailItems()-1, 0))
 	if d.task == nil {
 		return
@@ -84,16 +109,18 @@ func (s *Status) pageRunning() []string {
 }
 
 // detailItems counts what the page open can select: its running sessions,
-// its actions and its tasks.
+// its actions, its tasks and its questions.
 func (s *Status) detailItems() int {
-	return len(s.pageRunning()) + len(s.detailActions()) + len(s.detail.tasks)
+	return len(s.pageRunning()) + len(s.detailActions()) + len(s.detail.tasks) +
+		len(s.detail.questions)
 }
 
 // detailRow is the status row of the goal open, nil for the intake or a
 // goal gone from the list.
 func (s *Status) detailRow() *goalRow {
 	for i := range s.rows {
-		if !s.rows[i].intake && s.rows[i].goal.Name == s.detail.goal {
+		if !s.rows[i].intake && s.rows[i].goal.Name == s.detail.goal &&
+			s.rows[i].repo == s.detail.repo {
 			return &s.rows[i]
 		}
 	}
@@ -125,7 +152,7 @@ func (s *Status) jobLines(goal string, room int) []string {
 // pageRow is the row of the goal or intake open, nil when it is gone.
 func (s *Status) pageRow() *goalRow {
 	for i := range s.rows {
-		if s.rows[i].goal.Name == s.detail.goal {
+		if s.rows[i].goal.Name == s.detail.goal && s.rows[i].repo == s.detail.repo {
 			return &s.rows[i]
 		}
 	}
@@ -161,6 +188,12 @@ func (s *Status) detailActions() []action {
 func (s *Status) updateDetail(msg tea.KeyPressMsg) tea.Cmd {
 	d := s.detail
 	key := msg.String()
+	if d.question != nil {
+		if d.question.update(key) {
+			d.question = nil
+		}
+		return nil
+	}
 	if d.task != nil {
 		if d.task.update(s, key) {
 			d.task = nil
@@ -197,7 +230,7 @@ func (s *Status) choose(enter bool) tea.Cmd {
 	switch {
 	case i < len(running):
 		row := s.pageRow()
-		tv, err := openSession(s.env.Store, d.goal, row.sessions[running[i]])
+		tv, err := openSession(d.store, d.goal, row.sessions[running[i]])
 		if err != nil {
 			s.err = err
 			return nil
@@ -209,12 +242,14 @@ func (s *Status) choose(enter bool) tea.Cmd {
 			return cmd
 		}
 	case i-len(running)-len(acts) < len(d.tasks):
-		tv, err := loadTask(s.env.Store, d.goal, d.tasks[i-len(running)-len(acts)].ID)
+		tv, err := loadTask(d.store, d.goal, d.tasks[i-len(running)-len(acts)].ID)
 		if err != nil {
 			s.err = err
 			return nil
 		}
 		d.task = tv
+	case i-len(running)-len(acts)-len(d.tasks) < len(d.questions):
+		d.question = &questionView{q: d.questions[i-len(running)-len(acts)-len(d.tasks)]}
 	}
 	return nil
 }
@@ -222,7 +257,7 @@ func (s *Status) choose(enter bool) tea.Cmd {
 // clickDetail does what a click on row y of the page is on, as enter would.
 func (s *Status) clickDetail(y int) tea.Cmd {
 	d := s.detail
-	if d == nil || d.task != nil {
+	if d == nil || d.task != nil || d.question != nil {
 		return nil
 	}
 	r := y - d.head
@@ -244,17 +279,27 @@ func isEnter(key string) bool { return key == "enter" || key == "space" || key =
 func (s *Status) renderDetail() string {
 	d := s.detail
 	var b strings.Builder
-	b.WriteString(tui.Dim("‹ ") + tui.Bold(d.title))
+	b.WriteString(tui.Dim("‹ "))
+	if s.env.many() {
+		b.WriteString(tui.Dim(emoji("📁") + " " + filepath.Base(d.repo) + " › "))
+	}
+	b.WriteString(tui.Bold(d.title))
 	if d.task != nil {
 		b.WriteString(d.task.crumbs())
+	}
+	if d.question != nil {
+		b.WriteString(tui.Dim(" › ") + "question " + d.question.q.ID)
 	}
 	d.head = strings.Count(hangAll(b.String(), max(s.width, 1)), "\n") + 2
 	b.WriteString("\n\n")
 	foot := s.foot()
 	room := max(s.height-2-len(foot), 3)
-	if d.task != nil {
+	switch {
+	case d.question != nil:
+		b.WriteString(d.question.render(s.width, room))
+	case d.task != nil:
 		b.WriteString(d.task.render(s, room))
-	} else {
+	default:
 		b.WriteString(s.renderMenu(d, room))
 	}
 	if len(foot) > 0 {
@@ -314,6 +359,12 @@ func (s *Status) renderMenu(d *detail, room int) string {
 	}
 	for _, t := range d.tasks {
 		item(s.taskLine(d, t))
+	}
+	for i, q := range d.questions {
+		if i == 0 {
+			add(-1, "", tui.Dim("─── questions"))
+		}
+		item(questionLine(q, s.width-4))
 	}
 	out, rows := scrollRows(lines, pick, sel, sel, &d.top, room, s.width)
 	d.rows = rows

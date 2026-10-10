@@ -296,14 +296,33 @@ func slug(title string) string {
 	return s
 }
 
-func uniqueName(s *queue.Store, base string) string {
+// UniqueName is a goal name made from a title that no store given has taken.
+// A workspace's repos share one namespace, so a goal's name identifies it
+// wherever it is shown (ADR 0007).
+func UniqueName(stores []*queue.Store, title string) string {
+	base := slug(strings.TrimSpace(title))
 	name := base
 	for n := 2; ; n++ {
-		if _, err := os.Stat(s.GoalDir(name)); errors.Is(err, fs.ErrNotExist) {
+		if !slices.ContainsFunc(stores, func(s *queue.Store) bool { return taken(s, name) }) {
 			return name
 		}
 		name = fmt.Sprintf("%s-%d", base, n)
 	}
+}
+
+func uniqueName(s *queue.Store, base string) string {
+	name := base
+	for n := 2; ; n++ {
+		if !taken(s, name) {
+			return name
+		}
+		name = fmt.Sprintf("%s-%d", base, n)
+	}
+}
+
+func taken(s *queue.Store, name string) bool {
+	_, err := os.Stat(s.GoalDir(name))
+	return !errors.Is(err, fs.ErrNotExist)
 }
 
 // Approve signs a goal's plan off: the plan's workstreams join the goal, its

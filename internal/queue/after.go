@@ -76,7 +76,8 @@ func joinArrows(names []string) string {
 }
 
 // Waiting returns the goals a goal still waits for: those it is after that
-// aren't finished yet. A goal that no longer exists isn't waited for.
+// aren't over yet. A goal that no longer exists isn't waited for, and
+// neither is one that was dropped, which will never land.
 func (s *Store) Waiting(g *Goal) []string {
 	var waiting []string
 	for _, name := range g.After {
@@ -84,7 +85,7 @@ func (s *Store) Waiting(g *Goal) []string {
 		if err != nil {
 			continue
 		}
-		if o.State != GoalFinished {
+		if !o.Over() {
 			waiting = append(waiting, name)
 		}
 	}

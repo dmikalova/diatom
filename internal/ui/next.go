@@ -4,6 +4,9 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -21,10 +24,13 @@ import (
 	"github.com/dmikalova/diatom/internal/tui"
 )
 
-// itemKind is what an item of Next asks of the human. Next offers a goal
-// ready to finish first, as the work is done and the goals waiting for it
+// itemKind is what an item of Next asks of the human. Next offers a problem
+// first: diatom itself is stuck and the goal it is on runs no more. Then a
+// goal ready to finish, as the work is done and the goals waiting for it
 // can start once it lands; then a plan, which holds a whole goal up, and a
 // question, which holds a task; and a review, which holds up nothing, last.
+// A note holds up nothing either, but it comes with the question it is
+// about, so it is read before answering.
 type itemKind int
 
 const (
@@ -32,20 +38,30 @@ const (
 	itemQuestion
 	itemFinish
 	itemReview
+	itemNote
+	itemProblem
+	itemKinds
 )
 
 // item is one thing Next asks of the human.
 type item struct {
-	kind itemKind
-	row  *goalRow
-	q    *queue.Question
-	// task asked the question.
+	kind    itemKind
+	row     *goalRow
+	q       *queue.Question
+	note    *queue.Note
+	problem *queue.Problem
+	// task asked the question, or left the note.
 	task *queue.Task
 }
 
 func (it item) id() string {
-	if it.q != nil {
+	switch {
+	case it.q != nil:
 		return it.row.goal.Name + " question " + it.q.ID
+	case it.note != nil:
+		return it.row.goal.Name + " note " + it.note.ID
+	case it.problem != nil:
+		return it.row.goal.Name + " problem " + it.problem.ID
 	}
 	return fmt.Sprintf("%s %d", it.row.goal.Name, it.kind)
 }
@@ -79,7 +95,11 @@ type Next struct {
 	// scroll is how far down the item's text is shown, and room how many of
 	// its lines showed last time, for scrolling by half.
 	scroll, room int
-	answer       textarea.Model
+	// pick is which of what the asking task recorded the context is on,
+	// newest first, and reading is set while that entry is open below.
+	pick    int
+	reading bool
+	answer  textarea.Model
 	// confirm is the item a first enter on an empty answer asked to sign
 	// off, and act the action selected on a goal ready to finish.
 	confirm string
@@ -91,6 +111,9 @@ type Next struct {
 	// more is set while the human says what more a goal ready to finish
 	// needs, in the answer box.
 	more bool
+	// fix is the key of the problem fix whose value the human is typing,
+	// "" while they type a reply instead.
+	fix string
 	// only is the goal seen to from its page, "" for all of Next: its items
 	// are the only ones shown, in Next's order.
 	only string
@@ -142,19 +165,23 @@ func NewNext(ctx context.Context, env Env, status *Status) *Next {
 // reload rebuilds the items from the status's rows, reloaded first.
 func (n *Next) reload() {
 	n.loadErr = nil
-	var tiers [4][]item
+	var tiers [itemKinds][]item
 	n.earlier = map[string]int{}
 	for i := range n.status.rows {
 		r := &n.status.rows[i]
+		for _, p := range r.problems {
+			tiers[itemProblem] = append(tiers[itemProblem],
+				item{kind: itemProblem, row: r, problem: p})
+		}
 		if planReady(r) {
 			tiers[itemPlan] = append(tiers[itemPlan], item{kind: itemPlan, row: r})
 		}
-		if r.questions > 0 {
+		if r.questions > 0 || r.unread > 0 {
 			tiers[itemQuestion] = append(tiers[itemQuestion], n.questions(r)...)
 		}
 		if readyToFinish(*r) && !n.status.landing(r.goal.Name) {
 			tiers[itemFinish] = append(tiers[itemFinish], item{kind: itemFinish, row: r})
-			n.stats[r.goal.Name] = n.diffStat(r.goal)
+			n.stats[r.goal.Name] = n.diffStat(r)
 		}
 		switch {
 		case r.landingReview > 0:
@@ -165,8 +192,8 @@ func (n *Next) reload() {
 			tiers[itemReview] = append(tiers[itemReview], item{kind: itemReview, row: r})
 		}
 	}
-	n.items = slices.Concat(tiers[itemFinish], tiers[itemPlan], tiers[itemQuestion],
-		tiers[itemReview])
+	n.items = slices.Concat(tiers[itemProblem], tiers[itemFinish], tiers[itemPlan],
+		tiers[itemQuestion], tiers[itemReview])
 	// What the human put off waits behind everything else.
 	slices.SortStableFunc(n.items, func(a, b item) int {
 		return cmp.Compare(boolInt(n.later[a.id()]), boolInt(n.later[b.id()]))
@@ -177,12 +204,13 @@ func (n *Next) reload() {
 		// keyboard.
 		n.cur = n.first()
 		n.scroll, n.confirm, n.act, n.more = 0, "", 0, false
+		n.pick, n.reading = 0, false
 		n.area = areaBody
 		n.answer.Blur()
 	}
 	n.area = min(n.area, nextArea(n.areas()-1))
 	if it := n.shown(); it != nil && it.kind == itemReview {
-		if rv := n.reviewer(it.row.goal.Name); rv != nil {
+		if rv := n.reviewer(it.row); rv != nil {
 			rv.Refresh()
 		}
 	}
@@ -211,39 +239,59 @@ func (n *Next) shownReviewer() *reviewui.Model {
 }
 
 // reviewer is the goal's reviewer, opened the first time it is needed.
-func (n *Next) reviewer(goal string) *reviewui.Model {
-	if rv, ok := n.reviews[goal]; ok {
+func (n *Next) reviewer(r *goalRow) *reviewui.Model {
+	if rv, ok := n.reviews[r.goal.Name]; ok {
 		return rv
 	}
-	rv, err := n.env.reviewer(n.ctx, goal)
+	rv, err := n.env.reviewer(n.ctx, r.store, r.goal.Name)
 	if err != nil {
 		n.loadErr = err
 		return nil
 	}
-	n.reviews[goal] = rv
+	n.reviews[r.goal.Name] = rv
 	return rv
 }
 
-// questions are a goal's open questions still unanswered, and they count
-// its answered ones.
+// questions are a goal's open notes and its unanswered questions, each note
+// just before the question of the task that left it, and they count the
+// goal's answered questions.
 func (n *Next) questions(r *goalRow) []item {
-	store, name := n.env.Store, r.goal.Name
+	store, name := r.store, r.goal.Name
 	qs, err := store.Questions(name, queue.QuestionOpen)
 	if err != nil {
 		n.loadErr = err
 	}
+	notes, err := store.Notes(name, queue.NoteOpen)
+	if err != nil {
+		n.loadErr = err
+	}
+	task := func(id string) *queue.Task {
+		t, err := store.Task(name, id)
+		if err != nil {
+			return nil
+		}
+		return t
+	}
 	var items []item
+	told := map[string]bool{}
 	for _, q := range qs {
 		if q.Answer != "" {
 			// Answered, and waiting for its task to take the answer in.
 			n.earlier[name]++
 			continue
 		}
-		it := item{kind: itemQuestion, row: r, q: q}
-		if t, err := store.Task(name, q.Task); err == nil {
-			it.task = t
+		for _, nt := range notes {
+			if nt.Task == q.Task && !told[nt.ID] {
+				told[nt.ID] = true
+				items = append(items, item{kind: itemNote, row: r, note: nt, task: task(nt.Task)})
+			}
 		}
-		items = append(items, it)
+		items = append(items, item{kind: itemQuestion, row: r, q: q, task: task(q.Task)})
+	}
+	for _, nt := range notes {
+		if !told[nt.ID] {
+			items = append(items, item{kind: itemNote, row: r, note: nt, task: task(nt.Task)})
+		}
 	}
 	if closed, err := store.Questions(name, queue.QuestionClosed); err == nil {
 		n.earlier[name] += len(closed)
@@ -282,7 +330,7 @@ func (n *Next) areas() int {
 	switch {
 	case it == nil:
 		return 1
-	case it.kind == itemReview:
+	case it.kind == itemReview, it.kind == itemNote:
 		return 2
 	}
 	return int(nextAreas)
@@ -299,7 +347,8 @@ func (n *Next) typing() bool {
 		return n.area == areaBody && rv != nil && rv.Editing()
 	}
 	return n.area == areaAnswer &&
-		(it.kind == itemQuestion || (it.kind == itemFinish || it.kind == itemPlan) && n.more)
+		(it.kind == itemQuestion ||
+			(it.kind == itemFinish || it.kind == itemPlan || it.kind == itemProblem) && n.more)
 }
 
 // setArea moves the keyboard to an area, and the cursor with it.
@@ -318,7 +367,9 @@ func (n *Next) moveOn() tea.Cmd {
 	n.cur = ""
 	n.reload()
 	n.scroll, n.confirm, n.act, n.more = 0, "", 0, false
+	n.pick, n.reading = 0, false
 	n.answer.Reset()
+	n.fix = ""
 	if len(n.items) == 0 {
 		n.flash += "; nothing else waits on you"
 	}
@@ -347,6 +398,19 @@ func (n *Next) key(msg tea.KeyPressMsg) nextKey {
 	}
 	switch n.area {
 	case areaContext:
+		if rec := taskRecord(it.task); len(rec) > 0 {
+			switch k {
+			case "j", "down":
+				n.pick = min(n.pick+1, len(rec)-1)
+				return nextKey{}
+			case "k", "up":
+				n.pick = max(n.pick-1, 0)
+				return nextKey{}
+			case "enter":
+				n.reading, n.scroll = true, 0
+				return nextKey{cmd: n.setArea(areaBody)}
+			}
+		}
 		switch k {
 		case "esc", "left":
 			return nextKey{back: true}
@@ -356,11 +420,17 @@ func (n *Next) key(msg tea.KeyPressMsg) nextKey {
 	case areaBody:
 		return n.bodyKey(*it, msg)
 	case areaAnswer:
+		if n.more && (it.kind == itemProblem) {
+			return n.replyText(*it, msg)
+		}
 		if it.kind == itemFinish && n.more {
 			return n.moreKey(*it, msg)
 		}
 		if it.kind == itemPlan && n.more {
 			return n.commentKey(*it, msg)
+		}
+		if it.kind == itemProblem {
+			return nextKey{cmd: n.problemKey(*it, k)}
 		}
 		if it.kind == itemFinish {
 			return nextKey{cmd: n.finishKey(*it, k)}
@@ -378,6 +448,9 @@ func (n *Next) key(msg tea.KeyPressMsg) nextKey {
 // scrolling.
 func (n *Next) bodyKey(it item, msg tea.KeyPressMsg) nextKey {
 	k := msg.String()
+	if n.reading {
+		return n.recordKey(it, k)
+	}
 	switch {
 	case it.kind == itemReview:
 		return n.reviewKey(it, msg)
@@ -388,6 +461,16 @@ func (n *Next) bodyKey(it item, msg tea.KeyPressMsg) nextKey {
 		return nextKey{cmd: n.putOff(it)}
 	case it.kind == itemQuestion && k == sameKey:
 		return nextKey{cmd: n.sameAnswer(it)}
+	case it.kind == itemQuestion && k == openKey:
+		return nextKey{cmd: n.openWorktree(it)}
+	case it.kind == itemNote && k == laterKey:
+		return nextKey{cmd: n.putOff(it)}
+	case it.kind == itemNote && k == "enter":
+		return nextKey{cmd: n.readNote(it)}
+	case it.kind == itemProblem && k == laterKey:
+		return nextKey{cmd: n.putOff(it)}
+	case it.kind == itemProblem && k == openKey:
+		return nextKey{cmd: n.openWorktree(it)}
 	}
 	switch k {
 	case "esc", "left":
@@ -410,10 +493,37 @@ func (n *Next) bodyKey(it item, msg tea.KeyPressMsg) nextKey {
 
 func (n *Next) scrollBy(d int) { n.scroll = max(n.scroll+d, 0) }
 
+// recordKey hands a key to the entry of the record being read: n and p go
+// to the next and the previous entry, and esc goes back to the context.
+func (n *Next) recordKey(it item, k string) nextKey {
+	switch k {
+	case "esc", "left":
+		n.reading, n.scroll = false, 0
+		return nextKey{cmd: n.setArea(areaContext)}
+	case "n":
+		n.pick, n.scroll = min(n.pick+1, max(len(taskRecord(it.task))-1, 0)), 0
+	case "p":
+		n.pick, n.scroll = max(n.pick-1, 0), 0
+	case "j", "down":
+		n.scrollBy(1)
+	case "k", "up":
+		n.scrollBy(-1)
+	case "space", " ":
+		n.scrollBy(max(n.room/2, 1))
+	case "shift+space":
+		n.scrollBy(-max(n.room/2, 1))
+	case "pgdown":
+		n.scrollBy(max(n.room-1, 1))
+	case "pgup":
+		n.scrollBy(-max(n.room-1, 1))
+	}
+	return nextKey{}
+}
+
 // reviewKey hands a key to the goal's reviewer. Once a decision leaves the
 // goal nothing to review, Next moves on.
 func (n *Next) reviewKey(it item, msg tea.KeyPressMsg) nextKey {
-	rv := n.reviewer(it.row.goal.Name)
+	rv := n.reviewer(it.row)
 	if rv == nil {
 		return nextKey{back: msg.String() == "esc"}
 	}
@@ -429,6 +539,7 @@ func (n *Next) reviewKey(it item, msg tea.KeyPressMsg) nextKey {
 			// A decision is a point to move on at: something more urgent,
 			// such as a plan, comes first, in the order Next keeps.
 			n.cur, n.scroll, n.confirm, n.act, n.more = f, 0, "", 0, false
+			n.pick, n.reading = 0, false
 			n.area = areaBody
 		}
 	}
@@ -455,7 +566,7 @@ func (n *Next) answerKey(it item, msg tea.KeyPressMsg) nextKey {
 			}
 			text = "Done."
 		}
-		if err := n.env.Store.Answer(it.row.goal.Name, it.q.ID, text, n.env.Now()); err != nil {
+		if err := it.row.store.Answer(it.row.goal.Name, it.q.ID, text, n.env.Now()); err != nil {
 			n.err = err
 			return nextKey{}
 		}
@@ -526,9 +637,9 @@ func (n *Next) approve(it item, byEnter bool) tea.Cmd {
 			g.Name, len(it.row.plan.Workstreams), len(it.row.plan.Tasks))
 		return nil
 	}
-	cfg, err := n.env.config()
+	cfg, err := n.env.configFor(it.row.store)
 	if err == nil {
-		err = plan.Approve(n.ctx, n.env.Store, cfg, g.Name, n.env.Now())
+		err = plan.Approve(n.ctx, it.row.store, cfg, g.Name, n.env.Now())
 	}
 	if err != nil {
 		n.err = err
@@ -557,7 +668,7 @@ func (n *Next) commentKey(it item, msg tea.KeyPressMsg) nextKey {
 			return nextKey{}
 		}
 		g := it.row.goal
-		if _, err := intake.Write(plan.FeedbackDir(n.env.Store.GoalDir(g.Name)),
+		if _, err := intake.Write(plan.FeedbackDir(it.row.store.GoalDir(g.Name)),
 			intake.Intake{Source: "questions", Created: n.env.Now(), Text: text}); err != nil {
 			n.err = err
 			return nextKey{}
@@ -650,7 +761,7 @@ func (n *Next) moreKey(it item, msg tea.KeyPressMsg) nextKey {
 			n.flash = "say what more it needs, or esc goes back"
 			return nextKey{}
 		}
-		if err := finish.MoreWork(n.env.Store, it.row.goal, text, n.env.now()); err != nil {
+		if err := finish.MoreWork(it.row.store, it.row.goal, text, n.env.now()); err != nil {
 			n.err = err
 			return nextKey{}
 		}
@@ -664,6 +775,53 @@ func (n *Next) moreKey(it item, msg tea.KeyPressMsg) nextKey {
 
 // sameKey answers a question with the answer an earlier one already got.
 const sameKey = "s"
+
+// openKey opens the editor on the work a question is about.
+const openKey = "o"
+
+// openWorktree opens the editor in the worktree of the task that asked, so
+// the code the question is about is there as that work left it.
+func (n *Next) openWorktree(it item) tea.Cmd {
+	cmd := n.openCommand(it)
+	if cmd == nil {
+		return nil
+	}
+	return tea.ExecProcess(cmd, func(err error) tea.Msg { return reviewui.EditedMsg{Err: err} })
+}
+
+// openCommand is the editor's command for the item's work, nil for none. A
+// task with no worktree yet opens the repo itself.
+func (n *Next) openCommand(it item) *exec.Cmd {
+	cfg, err := n.env.configFor(it.row.store)
+	if err != nil {
+		n.err = err
+		return nil
+	}
+	editor := strings.Fields(cfg.Editor)
+	if len(editor) == 0 {
+		n.flash = "no editor is set in the config"
+		return nil
+	}
+	dir := it.row.store.Repo()
+	if it.task != nil && it.task.Workstream != "" {
+		if wt := it.row.store.WorktreeDir(it.row.goal.Name, it.task.Workstream); isDir(wt) {
+			dir = wt
+		}
+	}
+	cmd := exec.CommandContext(n.ctx, editor[0], editor[1:]...)
+	cmd.Dir = dir
+	if it.problem != nil {
+		// A problem's output is the whole of its file, more than Next shows.
+		cmd.Args = append(cmd.Args,
+			it.row.store.ProblemFile(it.row.goal.Name, it.problem.State, it.problem.ID))
+	}
+	return cmd
+}
+
+func isDir(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.IsDir()
+}
 
 // sameAnswer hands a question the answer an earlier one already got, once it
 // is asked for twice. The task's own answers come first, then the rest of
@@ -681,7 +839,7 @@ func (n *Next) sameAnswer(it item) tea.Cmd {
 		return nil
 	}
 	text := fmt.Sprintf("Question %s asked this too, and the answer was:\n\n%s", src.ID, src.Answer)
-	if err := n.env.Store.Answer(it.row.goal.Name, it.q.ID, text, n.env.Now()); err != nil {
+	if err := it.row.store.Answer(it.row.goal.Name, it.q.ID, text, n.env.Now()); err != nil {
 		n.err = err
 		return nil
 	}
@@ -694,7 +852,7 @@ func (n *Next) sameAnswer(it item) tea.Cmd {
 func (n *Next) lastAnswered(it item) *queue.Question {
 	var answered []*queue.Question
 	for _, st := range []queue.QuestionState{queue.QuestionOpen, queue.QuestionClosed} {
-		qs, err := n.env.Store.Questions(it.row.goal.Name, st)
+		qs, err := it.row.store.Questions(it.row.goal.Name, st)
 		if err != nil {
 			n.err = err
 			continue
@@ -732,6 +890,11 @@ func (n *Next) lower(it item, w int) []string {
 		return n.answerBox(hint, w)
 	case itemFinish:
 		acts, hint = finishActions(it), moreHint
+	case itemProblem:
+		acts, hint = problemActions(it), replyHint
+		if n.fix != "" {
+			hint = it.problem.Hint()
+		}
 	case itemPlan:
 		acts, hint = planActions(it), planHint
 	default:
@@ -746,7 +909,11 @@ func (n *Next) lower(it item, w int) []string {
 		if i == n.act {
 			mark = tui.Color("› ", tui.Accent)
 		}
-		lines = append(lines, mark+tui.Color(a.key, tui.Yellow)+"  "+a.label)
+		line := mark + tui.Color(a.key, tui.Yellow) + "  " + a.label
+		if n.status.confirming(it.row, a.key) {
+			line += tui.Color("  ← press again to confirm", tui.Yellow)
+		}
+		lines = append(lines, line)
 	}
 	return lines
 }
@@ -769,6 +936,20 @@ func (n *Next) putOff(it item) tea.Cmd {
 	if it.kind == itemQuestion {
 		n.flash = "question " + it.q.ID + " waits until the rest are done"
 	}
+	if it.kind == itemNote {
+		n.flash = "note " + it.note.ID + " waits until the rest are done"
+	}
+	return n.moveOn()
+}
+
+// readNote puts a note the human has read behind them, and moves on. A note
+// never blocks its task, so reading it changes nothing but what waits.
+func (n *Next) readNote(it item) tea.Cmd {
+	if err := it.row.store.ReadNote(it.row.goal.Name, it.note); err != nil {
+		n.err = err
+		return nil
+	}
+	n.flash = "note " + it.note.ID + " read"
 	return n.moveOn()
 }
 
@@ -877,6 +1058,9 @@ func (n *Next) contextLines(it item, w int) []string {
 	}
 	state, c := goalStatus(*r)
 	var lines []string
+	if n.env.many() {
+		lines = append(lines, tui.Dim(emoji("📁")+" "+filepath.Base(r.repo)))
+	}
 	if r.intake {
 		lines = append(lines, tui.Bold("Intake"), tui.Dim("triage is sorting what you sent"))
 	} else {
@@ -903,11 +1087,27 @@ func (n *Next) contextLines(it item, w int) []string {
 			}
 			lines = append(lines, clipLines(asked, w, 2)...)
 		}
+		secs, first := n.record(it)
+		for i, sec := range secs {
+			lines = append(lines, recordLine(sec, w, first+i == n.pick))
+		}
 		lines = append(lines, tui.Dim("waiting since "+stamp(it.q.Created)))
 	case itemPlan:
 		lines = append(lines, tui.Dim("Grilling's plan, waiting for you to approve it"))
+	case itemNote:
+		if it.task != nil {
+			lines = append(
+				lines,
+				clipLines(fmt.Sprintf("%s Noted by task %s: %s", emoji("\U0001F4CC"),
+					it.task.ID, it.task.Title), w, 2)...)
+		}
+		lines = append(lines, tui.Dim("left "+stamp(it.note.Created)+" · nothing is held up by it"))
 	case itemFinish:
 		lines = append(lines, tui.Dim("All its work is done and reviewed"))
+	case itemProblem:
+		lines = append(lines, tui.Color(emoji("⚠")+" diatom is stuck on it", tui.Yellow))
+		lines = append(lines, tui.Dim("nothing of it runs until you deal with this · "+
+			openKey+" opens the whole output"))
 	case itemReview:
 		lines = append(lines, tui.Dim(fmt.Sprintf("%d hunks wait for review", r.toReview)))
 	}
@@ -915,14 +1115,42 @@ func (n *Next) contextLines(it item, w int) []string {
 	if r.intake {
 		more = "enter opens the intake"
 	}
+	if it.kind == itemQuestion && len(taskRecord(it.task)) > 0 {
+		more = strings.Replace(more, "enter", "space", 1)
+	}
 	if it.kind == itemQuestion {
 		more = fmt.Sprintf("%s puts it off · %s answers it as the last one was · %s",
 			laterKey, sameKey, more)
 	}
+	if it.kind == itemNote {
+		more = fmt.Sprintf("enter marks it read · %s puts it off · %s", laterKey, more)
+	}
 	if e := n.earlier[name]; e > 0 {
 		more = fmt.Sprintf("%d earlier answers · %s", e, more)
 	}
-	return append(lines, tui.Dim(more))
+	lines = append(lines, tui.Dim(more))
+	if it.kind == itemQuestion {
+		hint := openKey + " opens its worktree in your editor"
+		switch {
+		case n.reading:
+			hint = "n and p go between the context · esc goes back to it"
+		case len(taskRecord(it.task)) > 0:
+			hint = "enter reads the context picked · " + hint
+		}
+		lines = append(lines, tui.Dim(hint))
+	}
+	return lines
+}
+
+// record is what of the asking task shows above a question: the few entries
+// around the one picked, newest first, and where in the record they start.
+func (n *Next) record(it item) (secs []string, first int) {
+	all := taskRecord(it.task)
+	if len(all) <= recall {
+		return all, 0
+	}
+	first = min(max(n.pick-recall+1, 0), len(all)-recall)
+	return all[first : first+recall], first
 }
 
 // aboutLines is how much of what a goal is for shows above an item: a
@@ -954,16 +1182,66 @@ func hang(s string, w int) []string {
 
 // bodyText is the item itself.
 func (n *Next) bodyText(it item) string {
+	if n.reading {
+		if secs := taskRecord(it.task); n.pick < len(secs) {
+			head, text, _ := strings.Cut(secs[n.pick], "\n")
+			return tui.Bold(head) + "\n\n" + strings.TrimSpace(text)
+		}
+	}
 	switch it.kind {
 	case itemQuestion:
 		return it.q.Text
+	case itemNote:
+		return it.note.Text
 	case itemPlan:
 		return plan.Describe(it.row.plan)
 	case itemFinish:
 		return n.finishText(it)
+	case itemProblem:
+		return n.problemText(it)
 	}
 	return fmt.Sprintf("%d hunks of %s's commits wait for your review.", it.row.toReview,
 		it.row.goal.Name)
+}
+
+// recall is how many of what the task recorded show above a question
+// unasked: enough to see the answer it last got, the question before that,
+// and what the agent said that prompted it.
+const recall = 3
+
+// taskRecord is what a task has gathered since it was written, newest
+// first: the agent's notes and summaries, and the questions it asked before
+// with the answers they got. Nowhere else does the human see a note.
+func taskRecord(t *queue.Task) []string {
+	if t == nil {
+		return nil
+	}
+	body := strings.TrimSpace(t.Body)
+	i := strings.Index("\n"+body, "\n## ")
+	if i < 0 {
+		return nil
+	}
+	var secs []string
+	for s := range strings.SplitSeq(body[i:], "\n## ") {
+		if s = strings.TrimSpace(strings.TrimPrefix(s, "## ")); s != "" {
+			secs = append(secs, s)
+		}
+	}
+	slices.Reverse(secs)
+	return secs
+}
+
+// recordLine is one of what a task recorded on a single line: what it is,
+// and the start of what it says, marked when it is the one picked.
+func recordLine(sec string, w int, on bool) string {
+	head, text, _ := strings.Cut(sec, "\n")
+	mark := "  "
+	if on {
+		mark = tui.Color("› ", tui.Accent)
+	}
+	label := "context · " + head + ": "
+	flat := strings.Join(strings.Fields(text), " ")
+	return mark + tui.Dim(label) + oneLine(flat, w-len(label)-2)
 }
 
 // finishText is what finishing a goal lands, and what it lets start.
@@ -982,7 +1260,7 @@ func (n *Next) finishText(it item) string {
 	}
 	var unblocks []string
 	for _, r := range n.status.rows {
-		if slices.Contains(r.goal.After, g.Name) {
+		if r.repo == it.row.repo && slices.Contains(r.goal.After, g.Name) {
 			unblocks = append(unblocks, r.goal.Name)
 		}
 	}
@@ -993,8 +1271,9 @@ func (n *Next) finishText(it item) string {
 }
 
 // diffStat sums up what the goal's integration branch changes.
-func (n *Next) diffStat(g *queue.Goal) string {
-	repo := git.Repo{Dir: n.env.Store.Repo()}
+func (n *Next) diffStat(r *goalRow) string {
+	g := r.goal
+	repo := git.Repo{Dir: r.store.Repo()}
 	sha, err := repo.RevParse(n.ctx, g.IntegrationBranch())
 	if err != nil {
 		return ""
@@ -1053,6 +1332,8 @@ func (n *Next) onScreen() (goal, context string) {
 			excerpt(it.row.plan.Summary))
 	case itemFinish:
 		return goal, fmt.Sprintf("%s (%q), ready to finish", g.Name, g.Title)
+	case itemProblem:
+		return goal, fmt.Sprintf("%s (%q) is stuck: %s", g.Name, g.Title, it.problem.Summary())
 	}
 	return goal, fmt.Sprintf("%s (%q), with %d hunks to review", g.Name, g.Title, it.row.toReview)
 }

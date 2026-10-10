@@ -23,13 +23,13 @@ func ensureGate(s *queue.Store, paths config.Paths, in io.Reader, out io.Writer,
 		return err
 	}
 	name := filepath.Base(s.Repo())
-	path := filepath.Join(s.Repo(), config.DirName, config.FileName)
+	path := filepath.Join(paths.XDG, config.FileName)
 	kind := "go"
 	if kinds := config.Kinds(s.Repo()); len(kinds) > 0 {
 		kind = kinds[0]
 	}
-	hint := fmt.Sprintf("set gate in %s, or gates.%s in %s to give every %s repo one",
-		path, kind, filepath.Join(paths.XDG, config.FileName), kind)
+	hint := fmt.Sprintf("set gate in the repo's block of %s, or gates.%s there to give every "+
+		"%s repo one", path, kind, kind)
 	if !ask {
 		return fmt.Errorf("%s has no gate, the command every commit must pass: %s", name, hint)
 	}
@@ -43,7 +43,7 @@ func ensureGate(s *queue.Store, paths config.Paths, in io.Reader, out io.Writer,
 	if gate == "" {
 		return fmt.Errorf("no gate given: %s", hint)
 	}
-	if err := config.SetGate(s.Repo(), gate); err != nil {
+	if err := config.Set(paths, paths.Key, map[string]any{"gate": gate}); err != nil {
 		return err
 	}
 	_, _ = fmt.Fprintf(out, "Saved `%s` as %s's gate.\n", gate, name)

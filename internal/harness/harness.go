@@ -1,8 +1,8 @@
-// Package harness is diatom's scheduler: the one headless process per repo
-// that owns the repo's queue, git operations and agent sessions (ADR 0007).
-// Each pass of its loop turns new intake into triage tasks, applies answered
-// questions and review decisions, asks schedule for the batches to start, and
-// runs each batch in its workstream's worktree.
+// Package harness is diatom's scheduler: the one loop inside the window that
+// owns the queue, git operations and agent sessions of every repo of the
+// workspace (ADR 0007). Each pass of its loop turns new intake into triage
+// tasks, applies answered questions and review decisions, asks schedule for
+// the batches to start, and runs each batch in its workstream's worktree.
 package harness
 
 import (
@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -31,11 +32,18 @@ import (
 type Harness struct {
 	// Paths locate the config walk-up's stopping points.
 	Paths config.Paths
-	// Root is the repo the scheduler works in, one per scheduler (ADR 0007).
-	Root string
-	// Config is Root's config, read once when diatom starts, so a change to
-	// it, or a mistake in it, takes effect on the next start rather than
-	// stopping the running scheduler. Nil reads it afresh each time.
+	// Roots are the repos the scheduler works in: one when diatom is opened
+	// in a repo, and every repo under the directory when it is opened over a
+	// workspace (ADR 0007). One scheduler covers them all, so its session
+	// limit is shared.
+	Roots []string
+	// Stores are the queues of Roots, in the same order, as the workspace
+	// opened them outside the repos (ADR 0013). Empty falls back to the old
+	// in-repo layout, which the tests use.
+	Stores []*queue.Store
+	// Config is the first repo's config, read once when diatom starts, so a
+	// change to it, or a mistake in it, takes effect on the next start rather
+	// than stopping the running scheduler. Nil reads it afresh each time.
 	Config *config.Config
 	// Runner runs agent sessions.
 	Runner runner.Runner
@@ -61,12 +69,22 @@ type Harness struct {
 	// checked holds when each commit's checks were last read, so a parked
 	// task doesn't poll GitHub on every pass (ADR 0014).
 	checked sync.Map
-	// spent adds up what the repo's sessions cost, for its budget, and
-	// spentNote is the budget last found spent, "" for none.
+	// spent adds up what the repos' sessions cost, for their budgets, and
+	// spentNote holds each repo's budget last found spent, "" for none.
 	spent     *spend.Tally
-	spentNote string
+	spentNote map[string]string
 	// fetched is when followBases last fetched the goals' base branches.
 	fetched time.Time
+}
+
+// store is the queue of the repo rooted at root.
+func (h *Harness) store(root string) *queue.Store {
+	for _, s := range h.Stores {
+		if s.Repo() == root {
+			return s
+		}
+	}
+	return queue.Open(root)
 }
 
 // lockRepo takes the repo's git lock and returns its unlock.
@@ -102,6 +120,9 @@ func (h *Harness) Run(stop, kill context.Context) error {
 		return err
 	}
 	h.backfillLedger(kill)
+	if len(h.Stores) > 0 {
+		h.orphans(h.Stores[0])
+	}
 	p := &slots{
 		running: map[schedule.Running]bool{},
 		cooling: map[schedule.Running]time.Time{},
@@ -129,8 +150,10 @@ func (h *Harness) Run(stop, kill context.Context) error {
 		}
 		if kill.Err() == nil {
 			// The status pane shows it: until it clears, nothing starts.
-			if err := queue.Open(h.Root).SetStuck(errString(err), h.now()); err != nil {
-				h.log().Warn("recording the planning error failed", "err", err)
+			for _, root := range h.Roots {
+				if err := h.store(root).SetStuck(errString(err), h.now()); err != nil {
+					h.log().Warn("recording the planning error failed", "repo", root, "err", err)
+				}
 			}
 		}
 		for _, b := range batches {
@@ -141,6 +164,12 @@ func (h *Harness) Run(stop, kill context.Context) error {
 					h.log().
 						Error("batch failed", "repo", b.Repo, "goal", b.Goal, "workstream", b.Workstream,
 							"retryIn", cooldown, "err", err)
+					h.hit(repos[b.Repo].Store, b.Goal, &queue.Problem{
+						Kind: queue.ProblemCommit,
+						What: "A batch of " + b.Goal + " failed",
+						Op:   "batch " + b.Workstream,
+						Text: err.Error(),
+					})
 				}
 				return err
 			})
@@ -213,28 +242,95 @@ type Repo struct {
 	Config *config.Config
 }
 
-// plan gathers the repo's ready work and returns the batches to start.
+// WorkspaceRepo is one repo of the workspace as triage sees it: the name it
+// is placed by, which is its directory's.
+type WorkspaceRepo struct {
+	Name string
+	Repo Repo
+}
+
+// workspace is every repo the scheduler works in, in the order they were
+// given. A repo whose config can't be read is left out, so the others go on.
+func (h *Harness) workspace() ([]WorkspaceRepo, error) {
+	var ws []WorkspaceRepo
+	var errs []error
+	for _, root := range h.Roots {
+		cfg, err := h.config(root)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		ws = append(ws, WorkspaceRepo{
+			Name: filepath.Base(root),
+			Repo: Repo{Store: h.store(root), Config: cfg},
+		})
+	}
+	return ws, errors.Join(errs...)
+}
+
+// repoOf is the repo of the workspace holding the goal named, by name or by
+// title, and whether one does. Goal names are unique across the workspace,
+// so triage can name a goal in another repo without saying which.
+func repoOf(ws []WorkspaceRepo, goal string) (Repo, bool) {
+	for _, w := range ws {
+		goals, err := w.Repo.Store.Goals()
+		if err != nil {
+			continue
+		}
+		for _, g := range goals {
+			if g.Name == goal || strings.EqualFold(g.Title, goal) {
+				return w.Repo, true
+			}
+		}
+	}
+	return Repo{}, false
+}
+
+// plan gathers every repo's ready work and returns the batches to start.
 func (h *Harness) plan(
 	ctx context.Context,
 	busy []schedule.Running,
 ) ([]schedule.Batch, map[string]Repo, error) {
-	repo, goals, err := h.load(ctx, h.Root)
-	if repo.Config == nil {
-		return nil, nil, err
+	repos := map[string]Repo{}
+	lim := schedule.Limits{Repos: map[string]schedule.RepoLimits{}}
+	var goals []*schedule.Goal
+	var errs []error
+	for _, root := range h.Roots {
+		repo, rg, err := h.load(ctx, root)
+		if err != nil {
+			errs = append(errs, err)
+		}
+		if repo.Config == nil {
+			continue
+		}
+		repos[root] = repo
+		if lim.Covers == nil {
+			lim.Covers = repo.Config.Covers
+		}
+		if root == h.first() {
+			// The first repo's config is the workspace's: its session
+			// limit is how many run across every repo at once.
+			lim.Machine = repo.Config.MaxSessions
+		}
+		if h.overBudget(root, repo) {
+			continue
+		}
+		lim.Repos[root] = schedule.RepoLimits{
+			Sessions: repo.Config.MaxSessions,
+			Batch:    repo.Config.MaxBatch,
+		}
+		goals = append(goals, rg...)
 	}
-	if h.overBudget(repo) {
-		return nil, map[string]Repo{h.Root: repo}, err
+	if len(h.Roots) < 2 {
+		// One repo answers to its own limit alone.
+		lim.Machine = 0
 	}
-	lim := schedule.Limits{Repos: map[string]schedule.RepoLimits{h.Root: {
-		Sessions: repo.Config.MaxSessions,
-		Batch:    repo.Config.MaxBatch,
-	}}, Covers: repo.Config.Covers}
-	return schedule.Next(goals, busy, lim), map[string]Repo{h.Root: repo}, err
+	return schedule.Next(goals, busy, lim), repos, errors.Join(errs...)
 }
 
 // overBudget reports whether one of the repo's budgets is spent, when no new
 // session may start: the ones running carry on. It logs each change.
-func (h *Harness) overBudget(repo Repo) bool {
+func (h *Harness) overBudget(root string, repo Repo) bool {
 	h.tally()
 	b := repo.Config.Budget
 	over := ""
@@ -242,23 +338,35 @@ func (h *Harness) overBudget(repo Repo) bool {
 		over = h.spent.Repo(repo.Store, h.now()).Over(b)
 	}
 	switch {
-	case over == h.spentNote:
+	case over == h.spentNote[root]:
 	case over != "":
 		h.log().Warn("the budget is spent: no new session starts until spending falls under it",
-			"budget", over)
+			"repo", root, "budget", over)
 	default:
-		h.log().Info("spending is under the budget again: sessions start")
+		h.log().Info("spending is under the budget again: sessions start", "repo", root)
 	}
-	h.spentNote = over
+	if h.spentNote == nil {
+		h.spentNote = map[string]string{}
+	}
+	h.spentNote[root] = over
 	return over != ""
 }
 
-// config is the repo's config: the one read at start for Root.
+// config is the repo's config: the one read at start for the first repo.
 func (h *Harness) config(repo string) (*config.Config, error) {
-	if h.Config != nil && repo == h.Root {
+	if h.Config != nil && repo == h.first() {
 		return h.Config, nil
 	}
-	return config.Load(repo, h.Paths)
+	return config.Load(repo, h.Paths.For(h.store(repo).Key()))
+}
+
+// first is the repo the workspace is named after, and the only one when
+// diatom is opened in a repo.
+func (h *Harness) first() string {
+	if len(h.Roots) == 0 {
+		return ""
+	}
+	return h.Roots[0]
 }
 
 // load reads one repo's active goals and their ready tasks, applying answered
@@ -268,7 +376,7 @@ func (h *Harness) load(ctx context.Context, path string) (Repo, []*schedule.Goal
 	if err != nil {
 		return Repo{}, nil, err
 	}
-	repo := Repo{Store: queue.Open(path), Config: cfg}
+	repo := Repo{Store: h.store(path), Config: cfg}
 	if err := h.applyIntake(ctx, repo.Store); err != nil {
 		return repo, nil, err
 	}
@@ -312,6 +420,18 @@ func (h *Harness) loadGoal(
 	s := repo.Store
 	if err := h.applyAnswers(s, g.Name); err != nil {
 		return nil, err
+	}
+	if err := h.applyReplies(s, g); err != nil {
+		return nil, err
+	}
+	open, err := s.Problems(g.Name, queue.ProblemOpen)
+	if err != nil {
+		return nil, err
+	}
+	if len(open) > 0 {
+		// A problem parks the goal as a question parks its task: retrying
+		// by itself would only hit the same wall (ADR 0014).
+		return &schedule.Goal{}, nil
 	}
 	tasks, err := s.Tasks(g.Name)
 	if err != nil {
@@ -490,15 +610,17 @@ func (h *Harness) recordLanded(ctx context.Context, s *queue.Store, g *queue.Goa
 	h.log().Info("landed goal recorded", "goal", g.Name, "added", l.Added(), "costUSD", l.CostUSD)
 }
 
-// backfillLedger records the repo's finished goals the ledger lacks, such as
+// backfillLedger records the repos' finished goals the ledger lacks, such as
 // those that finished before it was kept.
 func (h *Harness) backfillLedger(ctx context.Context) {
-	n, err := ledger.Backfill(ctx, ledger.Path(h.Paths), queue.Open(h.Root), h.tally())
-	if err != nil {
-		h.log().Warn("backfilling the ledger of landed goals failed", "err", err)
-	}
-	if n > 0 {
-		h.log().Info("the ledger took in finished goals", "goals", n)
+	for _, root := range h.Roots {
+		n, err := ledger.Backfill(ctx, ledger.Path(h.Paths), h.store(root), h.tally())
+		if err != nil {
+			h.log().Warn("backfilling the ledger of landed goals failed", "repo", root, "err", err)
+		}
+		if n > 0 {
+			h.log().Info("the ledger took in finished goals", "repo", root, "goals", n)
+		}
 	}
 }
 
@@ -514,6 +636,7 @@ func (h *Harness) watchLanding(ctx context.Context, s *queue.Store, g *queue.Goa
 			Warn("checking a done goal upstream failed", "repo", s.Repo(), "goal", g.Name, "err", err)
 	}
 	if !finished {
+		h.watchClosed(s, g)
 		return
 	}
 	h.log().Info("goal finished: merged upstream and passing", "repo", s.Repo(), "goal", g.Name)

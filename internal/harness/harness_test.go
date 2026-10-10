@@ -139,7 +139,6 @@ func newFixture(t *testing.T) *fixture {
 	if _, err := main.Commit(ctx, "chore: start"); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, repo, ".diatom/config.toml", "gate = \"check\"\nmaxSessions = 2\n")
 
 	store := queue.Open(repo)
 	if err := store.CreateGoal(
@@ -154,11 +153,12 @@ func newFixture(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	base := t.TempDir()
+	writeFile(t, filepath.Join(base, "xdg"), "config.toml", "gate = \"check\"\nmaxSessions = 2\n")
 	f := &fixture{t: t, store: store, main: main, gateOK: func(string) bool { return true }}
 	f.agent = &agent{t: t}
 	f.h = &Harness{
 		Paths:  config.Paths{Home: base, XDG: filepath.Join(base, "xdg")},
-		Root:   repo,
+		Roots:  []string{repo},
 		Runner: f.agent,
 		Exe:    "/usr/bin/true",
 		Gate: func(_ context.Context, dir, _ string) (gate.Result, error) {
@@ -291,6 +291,66 @@ func TestBatchCommitsAndIntegrates(t *testing.T) {
 	}
 }
 
+// TestRecordStaysOffNext pins the two audiences apart: a record reaches the
+// task's body only, where its later sessions and the reviewer read it, and a
+// note also waits for the human in Next (ADR 0009).
+func TestRecordStaysOffNext(t *testing.T) {
+	f := newFixture(t)
+	a := f.add("engine", "Add ward")
+	f.agent.act = func(_ *testing.T, _ string, s agentSession) {
+		s.report(session.EntryRecord, a.ID, "Ward is parsed in parse.go, not lex.go.")
+		s.report(session.EntryNote, a.ID, "The ward rules contradict the README.")
+		s.report(session.EntryDone, a.ID, "")
+	}
+	f.step()
+
+	body := f.task(a.ID).Body
+	if !strings.Contains(body, "Ward is parsed in parse.go, not lex.go.") ||
+		!strings.Contains(body, "The ward rules contradict the README.") {
+		t.Errorf("body misses the record or the note: %q", body)
+	}
+	notes, err := f.store.Notes("set", queue.NoteOpen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(notes) != 1 ||
+		strings.TrimSpace(notes[0].Text) != "The ward rules contradict the README." {
+		t.Errorf("open notes = %+v, want the note alone", notes)
+	}
+}
+
+// TestBatchDropsItsGoal pins that a task can give up on its goal: the goal
+// ends dropped, its branches go, and nothing of it is scheduled again.
+func TestBatchDropsItsGoal(t *testing.T) {
+	f := newFixture(t)
+	a := f.add("engine", "Add ward")
+	b := f.add("engine", "Add poison")
+	f.agent.act = func(t *testing.T, wt string, s agentSession) {
+		writeFile(t, wt, "ward.txt", "ward\n")
+		s.report(session.EntryDrop, a.ID, "DIP-4225 duplicates DIP-3999")
+		s.report(session.EntryDone, a.ID, "")
+	}
+	if got := f.step(); len(got) != 1 {
+		t.Fatalf("batches = %+v", got)
+	}
+	g, err := f.store.Goal("set")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.State != queue.GoalDropped || g.Reason != "DIP-4225 duplicates DIP-3999" {
+		t.Fatalf("goal = %+v", g)
+	}
+	if f.task(b.ID).State != queue.Done {
+		t.Errorf("task %s is %s, want closed with the goal", b.ID, f.task(b.ID).State)
+	}
+	if f.main.BranchExists(context.Background(), g.IntegrationBranch()) {
+		t.Error("the dropped goal kept its integration branch")
+	}
+	if got := f.step(); len(got) != 0 {
+		t.Errorf("the dropped goal started %+v", got)
+	}
+}
+
 func TestDependenciesWait(t *testing.T) {
 	f := newFixture(t)
 	first := f.add("engine", "Engine hook")
@@ -350,7 +410,7 @@ func TestQuestionParksAndAnswerResumes(t *testing.T) {
 // started with: a mistake saved to the config file mid-run doesn't stop it.
 func TestConfigIsReadOnce(t *testing.T) {
 	f := newFixture(t)
-	cfg, err := config.Load(f.h.Root, f.h.Paths)
+	cfg, err := config.Load(f.h.Roots[0], f.h.Paths)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -820,7 +880,8 @@ func TestSessionContext(t *testing.T) {
 		t,
 		f.h.Paths.XDG,
 		"config.toml",
-		"skills = [\"grill-me\", \"grilling\"]\ninstructions = [\"~/org.md\"]\n"+
+		"gate = \"check\"\nskills = [\"grill-me\", \"grilling\"]\ninstructions = [\"~/org.md\"]\n"+
+			"[mcpServers.docs]\ncommand = \"docs-mcp\"\npurpose = \"the API docs\"\n"+
 			"[profiles.implementation]\nskills = [\"grilling\"]\n",
 	)
 	// The directory above the repo has its own, and a link to it is read once.
@@ -831,12 +892,6 @@ func TestSessionContext(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(
-		t,
-		f.main.Dir,
-		".diatom/config.toml",
-		"gate = \"check\"\n[mcpServers.docs]\ncommand = \"docs-mcp\"\npurpose = \"the API docs\"\n",
-	)
 	writeFile(t, f.main.Dir, "AGENTS.md", "Run mage.\n")
 	writeFile(t, f.main.Dir, "internal/cards/AGENTS.md", "Card rules.\n")
 	if _, err := f.main.StageAll(ctx); err != nil {
@@ -882,7 +937,7 @@ func TestSessionContext(t *testing.T) {
 
 func TestConnectorIsAttachedOnlyAfterItIsAskedFor(t *testing.T) {
 	f := newFixture(t)
-	writeFile(t, f.store.Repo(), ".diatom/config.toml",
+	writeFile(t, f.h.Paths.XDG, "config.toml",
 		"gate = \"check\"\nmaxSessions = 2\n"+
 			"[mcpServers.metrics]\ncommand = \"dd-mcp\"\npurpose = \"live error rates\"\n")
 	task := f.add("engine", "Chase the errors")
@@ -917,7 +972,7 @@ func TestConnectorIsAttachedOnlyAfterItIsAskedFor(t *testing.T) {
 
 func TestNoGateAsksInsteadOfRunning(t *testing.T) {
 	f := newFixture(t)
-	writeFile(t, f.store.Repo(), ".diatom/config.toml", "maxSessions = 2\n")
+	writeFile(t, f.h.Paths.XDG, "config.toml", "maxSessions = 2\n")
 	task := f.add("engine", "Add ward")
 	f.step()
 	qs, _ := f.store.Questions("set", queue.QuestionOpen)
@@ -1044,7 +1099,7 @@ func TestBudgetHoldsNewSessions(t *testing.T) {
 	f.add("engine", "Add ward")
 	var logged bytes.Buffer
 	f.h.Log = slog.New(slog.NewTextHandler(&logged, nil))
-	writeFile(t, f.store.Repo(), ".diatom/config.toml",
+	writeFile(t, f.h.Paths.XDG, "config.toml",
 		"gate = \"check\"\nmaxSessions = 2\n[budget]\nday = 5\n")
 	// A settled session that spent the day's budget.
 	dir := filepath.Join(f.store.SessionsDir("set"), "20260101T000000Z-cards")
@@ -1064,7 +1119,7 @@ func TestBudgetHoldsNewSessions(t *testing.T) {
 	if !bytes.Contains(logged.Bytes(), []byte("budget=today's")) {
 		t.Errorf("the budget going unlogged:\n%s", logged.String())
 	}
-	writeFile(t, f.store.Repo(), ".diatom/config.toml",
+	writeFile(t, f.h.Paths.XDG, "config.toml",
 		"gate = \"check\"\nmaxSessions = 2\n[budget]\nday = 50\n")
 	if batches, _, err := f.h.plan(ctx, nil); err != nil || len(batches) != 1 {
 		t.Fatalf("under budget planned %v, %v", batches, err)

@@ -31,6 +31,10 @@ type PromptInput struct {
 	Guides []string
 	// Goals are the repo's goals, this one included.
 	Goals []roster.Brief
+	// Repos are the workspace's repos, for a triage session that may place a
+	// goal in any of them. One repo, or none, leaves the goal where the
+	// session runs (ADR 0007).
+	Repos []WorkspaceRepo
 	// Connectors is the repo's catalog of MCP servers, and Attached the ones
 	// this session already has (ADR 0013).
 	Connectors []config.Connector
@@ -95,8 +99,15 @@ func Prompt(in PromptInput) string {
 			"end the session, end it without starting another task: the rest go to fresh sessions.\n",
 	)
 	b.WriteString(
-		"  - `diatom task note <id> \"<text>\"` to record something a later task or the reviewer " +
-			"should know.\n",
+		"  - `diatom task note <id> \"<text>\"` to tell the human something, and only the human. " +
+			"It waits in their queue until they read it, so leave one only for what they would want to be " +
+			"told: a surprise in the repo, a risk outside this task, something they should check. Your " +
+			"working notes, your findings and your reasoning are not this.\n",
+	)
+	b.WriteString(
+		"  - `diatom task record <id> \"<text>\"` to keep something for this task's later sessions " +
+			"and for the reviewer: what you found, what you chose and why, anything you'd want to know on " +
+			"picking the task up again. The human doesn't read these, so record freely.\n",
 	)
 	b.WriteString(
 		"  - `diatom task ask <id> \"<question>\"` when the task needs a decision from the human. " +
@@ -105,6 +116,7 @@ func Prompt(in PromptInput) string {
 	)
 	b.WriteString(askGuide)
 	b.WriteString(manualGuide)
+	b.WriteString(dropGuide)
 	b.WriteString(newGoalGuide(in))
 	b.WriteString(
 		"- A task you don't mark done goes back in the queue, and a later session continues from " +
@@ -268,7 +280,7 @@ const askGuide = "    Ask only what changes what gets built, how it is shaped or
 	"up: structure, architecture, behaviour, and anything unclear in what is wanted. Never ask about " +
 	"the order work is done in, and never ask the human to approve a choice you have reasoned through: " +
 	"the human wants the work done, done well and with the least effort, not to sequence it. Make those " +
-	"choices yourself and record the reasoning with `diatom task note`.\n" +
+	"choices yourself and record the reasoning with `diatom task record`.\n" +
 	"    Write each question so the human can answer it without the code open: say what it " +
 	"decides and why it matters now, then give real examples from the repo for each option, such as " +
 	"the card, function, file, command output or case it is about, quoted briefly, so the choice is " +
@@ -283,6 +295,15 @@ const manualGuide = "  - `diatom task manual <id> \"<steps>\"` when the task nee
 	"    Write numbered steps the human can follow without the code open: the exact commands, " +
 	"where to run them, what to check in the output, and what to do if it fails. Say why each step " +
 	"is needed, briefly, and never ask for a decision here: that is a question.\n"
+
+// dropGuide is how an agent ends a goal nobody wants any more.
+const dropGuide = "  - `diatom task drop <id> \"<why>\"` when the goal itself turns out not to be " +
+	"wanted, such as work already done elsewhere or a ticket closed as a duplicate. Nothing of the " +
+	"goal lands: its tasks close, its questions close, and its branches and worktrees go. Use it only " +
+	"when the human has said to drop the goal, or when the only honest answer is that there is " +
+	"nothing to build; anything less certain is a question. Say in `<why>` what was found and where " +
+	"the work went instead, since that line is all the goal leaves behind. Mark the task done and end " +
+	"the session after it.\n"
 
 // newGoalGuide is how a session other than triage starts a goal: only when
 // the human asks for one.
@@ -339,6 +360,14 @@ func (h *Harness) planningPrompt(repo Repo, g *queue.Goal, in PromptInput) (stri
 				"read-only checkout of %s: read the code freely, but anything you write in it is thrown away.\n\n",
 			g.Base,
 		)
+		if len(in.Repos) > 1 {
+			fmt.Fprintf(
+				&b,
+				"diatom is open over a workspace of %d repos, listed below, and a goal you start "+
+					"goes in one of them. You can only read this one's code here.\n\n",
+				len(in.Repos),
+			)
+		}
 	} else {
 		fmt.Fprintf(
 			&b,
@@ -363,7 +392,14 @@ func (h *Harness) planningPrompt(repo Repo, g *queue.Goal, in PromptInput) (stri
 			"answer, which comes back in the task text.\n",
 	)
 	b.WriteString(askGuide)
-	b.WriteString("  - `diatom task note <id> \"<text>\"` records something worth keeping.\n")
+	b.WriteString(
+		"  - `diatom task record <id> \"<text>\"` keeps what you found and why you chose " +
+			"what you chose, for the later rounds of this task.\n",
+	)
+	b.WriteString(
+		"  - `diatom task note <id> \"<text>\"` tells the human something they would want " +
+			"to be told, and nothing else: it waits in their queue until they read it.\n",
+	)
 	b.WriteString("  - `diatom task done <id>` marks the task done.\n")
 	if in.Batch.Kind != queue.Triage {
 		b.WriteString(newGoalGuide(in))
@@ -417,7 +453,7 @@ func writeTriage(b *strings.Builder, repo Repo, briefs []roster.Brief, in Prompt
 			"the title of one you start in this session. No -after clears it.\n",
 	)
 	b.WriteString(
-		"  - `diatom task new-goal <id> -title \"<title>\" -description \"<line>\" [-after <goals>] " +
+		"  - `diatom task new-goal <id> -title \"<title>\" -description \"<line>\" [-repo <repo>] [-after <goals>] " +
 			"[-branch <name>] [-ticket <id>] [-plan <plan.yaml>] < brief` starts a new goal, which is grilled before any work starts. The " +
 			"description says in one plain sentence what the goal is for, beyond its title: it is how agents on " +
 			"other goals, and the human answering its questions, tell it apart. The brief on stdin is " +
@@ -426,13 +462,20 @@ func writeTriage(b *strings.Builder, repo Repo, briefs []roster.Brief, in Prompt
 			"links to it. Pass -plan only when the input already " +
 			"decides everything, workstreams and tasks: the goal then skips grilling and waits for the human " +
 			"to sign the plan off. The plan's format is below.\n" +
+			repoGuide(
+				in,
+			) +
 			ticketGuide(
 				in,
 			) + "\n",
 	)
+	scope := "the repo's goals"
+	if len(in.Repos) > 1 {
+		scope = "the workspace's goals"
+	}
 	b.WriteString(
 		"## Triage\n\nEach task below is one intake: whatever the human sent, from a new goal " +
-			"to a handful of playtest notes or a comment from review. Sort it into the repo's goals:\n\n" +
+			"to a handful of playtest notes or a comment from review. Sort it into " + scope + ":\n\n" +
 			"- Small, clear-cut work for an existing goal becomes tasks on its workstreams.\n" +
 			"- New intent becomes a new goal, or several when the input covers separate things that land " +
 			"apart. Draw each goal's brief from the input and the files it points at, so grilling " +
@@ -455,20 +498,67 @@ func writeTriage(b *strings.Builder, repo Repo, briefs []roster.Brief, in Prompt
 	if err != nil {
 		return err
 	}
-	b.WriteString("## The repo's goals\n\n")
-	if len(goals) == 0 {
-		b.WriteString("None yet.\n\n")
-	}
 	descriptions := map[string]string{}
 	for _, br := range briefs {
 		descriptions[br.Name] = br.Description
 	}
+	if len(in.Repos) > 1 {
+		return writeWorkspaceGoals(b, in, descriptions)
+	}
+	b.WriteString("## The repo's goals\n\n")
+	if len(goals) == 0 {
+		b.WriteString("None yet.\n\n")
+	}
 	for _, g := range goals {
-		if g.State == queue.GoalFinished {
+		if g.Over() {
 			continue
 		}
-		if err := writeGoal(b, repo.Store, g, descriptions[g.Name]); err != nil {
+		if err := writeGoal(b, repo.Store, g, descriptions[g.Name], "###"); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// repoGuide tells triage to work out the repo a new goal goes in, and to
+// ask only when nothing settles it.
+func repoGuide(in PromptInput) string {
+	if len(in.Repos) < 2 {
+		return ""
+	}
+	names := make([]string, 0, len(in.Repos))
+	for _, w := range in.Repos {
+		names = append(names, w.Name)
+	}
+	return "    Pass -repo with the repo the goal belongs in, one of " + strings.Join(names, ", ") +
+		". Work it out yourself: from what the input names, from each repo's goals below, and " +
+		"from the repo this intake was sent to, which is this one and is the default when you " +
+		"leave -repo off. Ask the human only when none of that settles it. One goal belongs in " +
+		"one repo; work that spans two is two goals, one waiting for the other.\n"
+}
+
+// writeWorkspaceGoals lists every repo of the workspace with its goals, so
+// triage can tell which repo an intake is about.
+func writeWorkspaceGoals(b *strings.Builder, in PromptInput, descriptions map[string]string) error {
+	b.WriteString("## The workspace's repos and their goals\n\n")
+	for _, w := range in.Repos {
+		fmt.Fprintf(b, "### Repo %s\n\n", w.Name)
+		goals, err := w.Repo.Store.Goals()
+		if err != nil {
+			return err
+		}
+		open := 0
+		for _, g := range goals {
+			if g.Over() {
+				continue
+			}
+			open++
+			if err := writeGoal(b, w.Repo.Store, g, descriptions[g.Name], "####"); err != nil {
+				return err
+			}
+		}
+		if open == 0 {
+			b.WriteString("No goals yet.\n\n")
 		}
 	}
 	return nil
@@ -476,8 +566,13 @@ func writeTriage(b *strings.Builder, repo Repo, briefs []roster.Brief, in Prompt
 
 // writeGoal describes a goal for triage: its workstreams, and the tasks new
 // work can be placed after.
-func writeGoal(b *strings.Builder, s *queue.Store, g *queue.Goal, description string) error {
-	fmt.Fprintf(b, "### %s: %s (%s)\n\n", g.Name, g.Title, g.State)
+func writeGoal(
+	b *strings.Builder,
+	s *queue.Store,
+	g *queue.Goal,
+	description, heading string,
+) error {
+	fmt.Fprintf(b, "%s %s: %s (%s)\n\n", heading, g.Name, g.Title, g.State)
 	if description != "" {
 		b.WriteString(description + "\n\n")
 	}

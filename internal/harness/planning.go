@@ -282,10 +282,8 @@ func (h *Harness) finishPlanning(
 	if err != nil {
 		return err
 	}
-	for _, n := range report.Notes {
-		if err := s.AppendNote(g.Name, n.Task, "Note", n.Text); err != nil {
-			return err
-		}
+	if err := h.applyNotes(s, g.Name, report); err != nil {
+		return err
 	}
 	if err := appendSummaries(s, g.Name, report); err != nil {
 		return err
@@ -326,7 +324,8 @@ func (h *Harness) finishPlanning(
 	for _, t := range tasks {
 		t.Usage = append(t.Usage, share)
 		done := report.Done[t.ID]
-		if t.Kind == queue.Grilling && done && !planned[t.ID] && !asked[t.ID] {
+		if t.Kind == queue.Grilling && done && !planned[t.ID] && !asked[t.ID] &&
+			len(report.Drops) == 0 {
 			t.Body = appendSection(
 				t.Body,
 				"No plan",
@@ -346,11 +345,11 @@ func (h *Harness) finishPlanning(
 			}
 		}
 	}
-	return nil
+	return h.applyDrops(ctx, repo, g, report)
 }
 
-// applyTriage applies what triage handed in: tasks for the repo's goals,
-// feedback for goals in grilling, and new goals.
+// applyTriage applies what triage handed in: tasks for the workspace's
+// goals, feedback for goals in grilling, and new goals.
 func (h *Harness) applyTriage(
 	ctx context.Context,
 	repo Repo,
@@ -358,18 +357,67 @@ func (h *Harness) applyTriage(
 	origin queue.Origin,
 	ask func(task, text string) error,
 ) error {
-	s := repo.Store
+	ws, err := h.workspace()
+	if err != nil {
+		return err
+	}
 	for _, e := range report.Feedback {
-		if err := h.feedback(s, e.Task, e.Goal, e.Text, ask); err != nil {
+		if err := h.feedback(
+			goalRepo(ws, repo, e.Goal).Store,
+			e.Task,
+			e.Goal,
+			e.Text,
+			ask,
+		); err != nil {
 			return err
 		}
 	}
 	for _, e := range report.Adds {
-		if err := h.applyAdd(repo, e, ask); err != nil {
+		if err := h.applyAdd(goalRepo(ws, repo, e.Goal), e, ask); err != nil {
 			return err
 		}
 	}
-	return h.startGoals(ctx, repo, report.Goals, report.Afters, origin, ask)
+	return h.startGoals(ctx, ws, repo, report.Goals, report.Afters, origin, ask)
+}
+
+// goalRepo is the repo a goal named by triage is in, or the session's own
+// when no repo holds it, so the caller reports the miss as it always has.
+func goalRepo(ws []WorkspaceRepo, repo Repo, goal string) Repo {
+	if r, ok := repoOf(ws, goal); ok {
+		return r
+	}
+	return repo
+}
+
+// newGoalRepo is the repo a goal triage handed in belongs in. With one repo
+// it is that one. With several, triage names one, and an entry that names
+// none falls back to the repo whose intake it came from, which is where the
+// human sent it. Only a repo the workspace doesn't hold goes back to them;
+// the returned repo is empty then.
+func newGoalRepo(
+	ws []WorkspaceRepo,
+	repo Repo,
+	e session.Entry,
+	ask func(task, text string) error,
+) (Repo, error) {
+	if len(ws) < 2 || e.Repo == "" {
+		return repo, nil
+	}
+	names := make([]string, 0, len(ws))
+	for _, w := range ws {
+		if w.Name == e.Repo {
+			return w.Repo, nil
+		}
+		names = append(names, w.Name)
+	}
+	return Repo{}, ask(e.Task, fmt.Sprintf(
+		"Triage wanted to start the goal %q (%s), but put it in %q, which this workspace "+
+			"doesn't hold. Which of these repos should it go in: %s?",
+		e.Title,
+		e.Description,
+		e.Repo,
+		strings.Join(names, ", "),
+	))
 }
 
 // startGoals starts the goals a session handed in, then makes goals wait
@@ -380,39 +428,55 @@ func (h *Harness) applyTriage(
 // started twice.
 func (h *Harness) startGoals(
 	ctx context.Context,
+	ws []WorkspaceRepo,
 	repo Repo,
 	goals, afters []session.Entry,
 	origin queue.Origin,
 	ask func(task, text string) error,
 ) error {
-	existing, err := repo.Store.Goals()
-	if err != nil {
-		return err
-	}
 	started := map[string]string{}
+	stores := map[string]*queue.Store{}
 	var waits []session.Entry
 	for _, e := range goals {
+		target, err := newGoalRepo(ws, repo, e, ask)
+		if err != nil {
+			return err
+		}
+		if target.Store == nil {
+			// The human was asked which repo; the goal waits for them.
+			continue
+		}
+		existing, err := target.Store.Goals()
+		if err != nil {
+			return err
+		}
 		if i := slices.IndexFunc(existing, func(g *queue.Goal) bool {
 			return strings.EqualFold(g.Title, e.Title)
 		}); i >= 0 {
 			started[strings.ToLower(e.Title)] = existing[i].Name
+			stores[existing[i].Name] = target.Store
 			continue
 		}
 		o := origin
 		if o.Ref == "" {
 			o.Ref = e.Task
 		}
-		g, err := h.startGoal(ctx, repo, e, o)
+		g, err := h.startGoal(ctx, ws, target, e, o)
 		if err != nil {
 			return err
 		}
 		started[strings.ToLower(e.Title)] = g.Name
+		stores[g.Name] = target.Store
 		if len(e.After) > 0 {
 			waits = append(waits, session.Entry{Task: e.Task, Goal: g.Name, After: e.After})
 		}
 	}
 	for _, e := range append(waits, afters...) {
-		if err := h.setAfter(repo.Store, e, started, ask); err != nil {
+		s := stores[e.Goal]
+		if s == nil {
+			s = goalRepo(ws, repo, e.Goal).Store
+		}
+		if err := h.setAfter(s, e, started, ask); err != nil {
 			return err
 		}
 	}
@@ -491,7 +555,7 @@ func (h *Harness) applyAdd(repo Repo, e session.Entry, ask func(task, text strin
 	switch {
 	case err != nil:
 		problems = append(problems, fmt.Sprintf("there is no goal %q", e.Goal))
-	case g.State == queue.GoalDone || g.State == queue.GoalFinished:
+	case g.State == queue.GoalDone || g.Over():
 		problems = append(problems, fmt.Sprintf("goal %s is %s", g.Name, g.State))
 	default:
 		if _, ok := g.Workstream(e.Workstream); !ok {
@@ -538,6 +602,7 @@ func (h *Harness) applyAdd(repo Repo, e session.Entry, ask func(task, text strin
 // plan waits for the human's sign-off straight away.
 func (h *Harness) startGoal(
 	ctx context.Context,
+	ws []WorkspaceRepo,
 	repo Repo,
 	e session.Entry,
 	origin queue.Origin,
@@ -547,7 +612,14 @@ func (h *Harness) startGoal(
 	if body == "" {
 		body = e.Title
 	}
-	g, err := plan.NewGoal(ctx, s, "", e.Title, e.Description, body, origin, h.now())
+	// A goal's name is unique across the workspace, so it names the goal on
+	// its own wherever it is shown or asked about.
+	stores := make([]*queue.Store, 0, len(ws))
+	for _, w := range ws {
+		stores = append(stores, w.Repo.Store)
+	}
+	name := plan.UniqueName(stores, e.Title)
+	g, err := plan.NewGoal(ctx, s, name, e.Title, e.Description, body, origin, h.now())
 	if err != nil {
 		return nil, err
 	}

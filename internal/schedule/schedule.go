@@ -79,7 +79,8 @@ type Limits struct {
 	// Repos are each repo's own caps; a repo missing from it gets one
 	// session and uncapped batches.
 	Repos map[string]RepoLimits
-	// Machine caps the sessions across every repo given; 0 is no cap.
+	// Machine caps the sessions across every repo given; 0 is no cap. Every
+	// repo in Repos keeps one of those sessions to itself.
 	Machine int
 	// Covers reports whether profile a can do profile b's work, so a chain
 	// may go on from one to the other on a. Nil covers only a profile itself.
@@ -139,7 +140,7 @@ func Next(goals []*Goal, running []Running, lim Limits) []Batch {
 		key := wsKey{c.goal.Repo, c.goal.Name, c.task.Workstream}
 		rl := repoLimits(lim, key.repo)
 		if taken[c.task] || busy[key] || perRepo[key.repo] >= rl.Sessions ||
-			(lim.Machine > 0 && total >= lim.Machine) {
+			!machineRoom(lim, perRepo, total, key.repo) {
 			continue
 		}
 		b := Batch{
@@ -174,6 +175,31 @@ func repoLimits(lim Limits, repo string) RepoLimits {
 		return rl
 	}
 	return RepoLimits{Sessions: 1}
+}
+
+// machineRoom reports whether the machine's cap leaves repo a session. Every
+// repo of the workspace keeps one slot to itself, so a busy repo never
+// starves a quiet one: a repo with a session running takes another only
+// while there are more free slots than there are repos still waiting for
+// their own.
+func machineRoom(lim Limits, perRepo map[string]int, total int, repo string) bool {
+	if lim.Machine <= 0 {
+		return true
+	}
+	free := lim.Machine - total
+	if free <= 0 {
+		return false
+	}
+	if perRepo[repo] == 0 {
+		return true
+	}
+	idle := 0
+	for r := range lim.Repos {
+		if r != repo && perRepo[r] == 0 {
+			idle++
+		}
+	}
+	return free > idle
 }
 
 // chain adds to b, one at a time and in priority order, the goal's later
