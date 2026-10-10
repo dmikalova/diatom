@@ -27,7 +27,18 @@ model = "opus"
 effort = "high"
 maxTurns = 200
 skills = ["grilling"]
-tools = ["Read", "Glob", "Grep", "Edit", "Write", "Bash", "Skill", "TodoWrite", "WebFetch", "WebSearch"]
+tools = [
+  "Read",
+  "Glob",
+  "Grep",
+  "Edit",
+  "Write",
+  "Bash",
+  "Skill",
+  "TodoWrite",
+  "WebFetch",
+  "WebSearch"
+]
 
 [profiles.implementation]
 model = "opus"
