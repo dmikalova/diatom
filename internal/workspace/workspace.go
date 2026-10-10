@@ -27,7 +27,13 @@ type Workspace struct {
 	Repos []*queue.Store
 	// Skipped names the repos the window left out and says why, such as a
 	// repo with no origin to name its state by (ADR 0013).
-	Skipped map[string]string
+	Skipped map[string]Skip
+}
+
+// Skip is why one repo was left out, and the kind of problem it raises.
+type Skip struct {
+	Kind queue.ProblemKind
+	Why  string
 }
 
 // Open finds the repos to work in from dir, anywhere inside a repo, a goal's
@@ -71,27 +77,22 @@ func under(dir string) ([]string, error) {
 	return repos, nil
 }
 
-// build makes the workspace. Diatom's state is outside the repos now (ADR
-// 0013), so each one is moved out first if it still holds a `.diatom/`, and
-// keyed by its origin. A repo with no origin, and a second checkout of one
-// already in the workspace, are left out and said so.
+// build makes the workspace. Diatom's state is outside the repos (ADR 0013),
+// keyed by each one's origin. A repo with no origin, and a second checkout of
+// one already in the workspace, are left out and said so.
 func build(ctx context.Context, root string, repos []string) (*Workspace, error) {
-	w := &Workspace{Root: root, Skipped: map[string]string{}}
+	w := &Workspace{Root: root, Skipped: map[string]Skip{}}
 	base := state.Dir(home())
 	taken := map[string]string{}
 	for _, repo := range repos {
-		if _, err := state.Migrate(ctx, base, repo); err != nil {
-			w.Skipped[repo] = err.Error()
-			continue
-		}
 		s, err := state.Open(ctx, base, repo)
 		if err != nil {
-			w.Skipped[repo] = err.Error()
+			w.Skipped[repo] = Skip{Kind: queue.ProblemRepo, Why: err.Error()}
 			continue
 		}
 		if first, ok := taken[s.Root]; ok {
-			w.Skipped[repo] = "the same repository as " + first +
-				", which diatom already works in: one checkout at a time"
+			w.Skipped[repo] = Skip{Kind: queue.ProblemCheckout, Why: "the same repository as " +
+				first + ", which diatom already works in: one checkout at a time"}
 			continue
 		}
 		taken[s.Root] = repo
@@ -104,10 +105,10 @@ func build(ctx context.Context, root string, repos []string) (*Workspace, error)
 }
 
 // why lists the repos left out and the reason for each.
-func why(skipped map[string]string) string {
+func why(skipped map[string]Skip) string {
 	var b strings.Builder
 	for _, repo := range slices.Sorted(maps.Keys(skipped)) {
-		fmt.Fprintf(&b, "  %s: %s\n", repo, skipped[repo])
+		fmt.Fprintf(&b, "  %s: %s\n", repo, skipped[repo].Why)
 	}
 	return b.String()
 }

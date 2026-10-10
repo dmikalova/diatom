@@ -1,5 +1,5 @@
 # diatom's built-in defaults, the lowest layer of every config merge. Override
-# any of them in ~/.config/diatom/config.toml or a .diatom/config.toml.
+# any of them in ~/.config/diatom/config.toml, at its top or in a repo's block.
 gateAttempts = 3
 gateTimeout = "5m"
 commandTimeout = "2m"
@@ -10,6 +10,17 @@ editor = "nvim"
 # The repo's own commit-msg hook, such as its commitlint, on each message
 # diatom writes; "$0" is the message file.
 commitCheck = "git hook run --ignore-missing commit-msg --"
+
+# The gate each kind of project gets when it sets none of its own: what that
+# ecosystem checks with by default. A repo that needs something else sets its
+# own gate, and one of no kind gets none and is asked for one when work on it
+# starts.
+[gates]
+go = "go build ./... && go vet ./... && go test ./..."
+node = "npm test"
+deno = "deno check . && deno lint && deno test"
+rust = "cargo check && cargo clippy && cargo test"
+python = "python -m pytest"
 
 [profiles.planning]
 model = "opus"

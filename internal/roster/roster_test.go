@@ -10,7 +10,7 @@ import (
 )
 
 func TestBriefs(t *testing.T) {
-	s := queue.Open(t.TempDir())
+	s := queue.At(t.TempDir(), t.TempDir(), "github.com/me/toy")
 	now := time.Unix(100, 0)
 	for i, g := range []*queue.Goal{
 		{Name: "web", Title: "Web client", Description: "Play in a browser.", State: queue.GoalActive,
@@ -91,7 +91,7 @@ func TestBriefs(t *testing.T) {
 }
 
 func TestAbout(t *testing.T) {
-	s := queue.Open(t.TempDir())
+	s := queue.At(t.TempDir(), t.TempDir(), "github.com/me/toy")
 	g := &queue.Goal{Name: "set", Title: "Next set", Description: "The set after this one.",
 		State: queue.GoalPlanning}
 	if err := s.CreateGoal(g); err != nil {

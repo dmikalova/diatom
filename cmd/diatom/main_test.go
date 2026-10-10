@@ -11,10 +11,11 @@ import (
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/queue"
 	"github.com/dmikalova/diatom/internal/session"
+	"github.com/dmikalova/diatom/internal/state"
 )
 
-// inRepo makes a git repo that ignores .diatom/, with an isolated registry,
-// and changes into it.
+// inRepo makes a git repo with an isolated state directory, and changes into
+// it.
 func inRepo(t *testing.T) string {
 	t.Helper()
 	ctx := context.Background()
@@ -28,16 +29,6 @@ func inRepo(t *testing.T) string {
 		if _, err := r.Run(ctx, args...); err != nil {
 			t.Fatal(err)
 		}
-	}
-	if err := os.MkdirAll(filepath.Join(dir, ".git", "info"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(dir, ".git", "info", "exclude"),
-		[]byte(".diatom/\n"),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
 	}
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
@@ -417,8 +408,11 @@ func TestOutsideARepo(t *testing.T) {
 }
 
 func TestTaskGoals(t *testing.T) {
-	inRepo(t)
-	s := queue.Open(".")
+	dir := inRepo(t)
+	s, err := state.Open(context.Background(), state.Dir(""), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := s.CreateGoal(&queue.Goal{Name: "set", Title: "Next set", State: queue.GoalActive,
 		Workstreams: []queue.Workstream{{Name: "engine"}}}); err != nil {
 		t.Fatal(err)

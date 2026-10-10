@@ -15,7 +15,7 @@ var FileTools = []string{"Read", "Grep", "Glob", "Edit", "MultiEdit", "Write", "
 // `diatom task goals`, not from their files. The zero Scope allows every
 // path, as outside a session.
 type Scope struct {
-	// State is the repo's .diatom directory.
+	// State is the repo's state directory, outside the repo.
 	State string
 	// Allowed are the directories inside State the session may use.
 	Allowed []string

@@ -93,7 +93,7 @@ func TestAppTabsThroughItsParts(t *testing.T) {
 	// Letters are the intake's text, and enter sends it.
 	typeText(a, "quit halving")
 	key(a, "enter")
-	items, _ := intake.Pending(intake.Dir(f.repo))
+	items, _ := intake.Pending(intake.Dir(f.store.Root))
 	if len(items) != 1 || items[0].Text != "quit halving" {
 		t.Errorf("intake = %+v", items)
 	}

@@ -270,14 +270,27 @@ func TestGateByKind(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte("{}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(root, paths); err == nil || !strings.Contains(err.Error(), "set its own in") {
-		t.Errorf("a Go and node repo = %v, want it told to set its own gate", err)
+	if cfg, err := Load(root, paths); err != nil || cfg.Gate != "mage ci:check" {
+		t.Errorf("a Go and node repo = %q, %v, want the first kind's", cfg.Gate, err)
 	}
 	if err := Set(paths, paths.Key, map[string]any{"gate": "make check"}); err != nil {
 		t.Fatal(err)
 	}
 	if cfg, err := Load(root, paths); err != nil || cfg.Gate != "make check" {
 		t.Errorf("after Set = %q, %v", cfg.Gate, err)
+	}
+}
+
+// TestADefaultGateComesWithTheKind pins that a repo diatom recognises can be
+// opened without anybody being asked for a gate first.
+func TestADefaultGateComesWithTheKind(t *testing.T) {
+	root, paths := tree(t)
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(root, paths)
+	if err != nil || !strings.Contains(cfg.Gate, "go test") {
+		t.Errorf("a Go repo with no config = %q, %v", cfg.Gate, err)
 	}
 }
 

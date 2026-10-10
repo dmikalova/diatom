@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dmikalova/diatom/internal/queue"
 )
 
 // repo makes a git repository at dir with an origin to name it by, and with
@@ -101,7 +103,8 @@ func TestOpenLeavesOutARepoWithNoOrigin(t *testing.T) {
 	if len(w.Repos) != 1 || Name(w.Repos[0]) != "web" {
 		t.Errorf("repos = %+v, want web alone", w.Repos)
 	}
-	if why, ok := w.Skipped[nameless]; !ok || !strings.Contains(why, "origin") {
+	skip, ok := w.Skipped[nameless]
+	if !ok || !strings.Contains(skip.Why, "origin") || skip.Kind != queue.ProblemRepo {
 		t.Errorf("skipped = %v, want api said to have no origin", w.Skipped)
 	}
 }
@@ -124,6 +127,15 @@ func TestOpenRefusesASecondCheckout(t *testing.T) {
 	}
 	if len(w.Repos) != 1 || len(w.Skipped) != 1 {
 		t.Errorf("repos = %+v, skipped = %v", w.Repos, w.Skipped)
+	}
+	for _, skip := range w.Skipped {
+		if skip.Kind != queue.ProblemCheckout {
+			t.Errorf(
+				"the second checkout is a %s problem, want %s",
+				skip.Kind,
+				queue.ProblemCheckout,
+			)
+		}
 	}
 }
 

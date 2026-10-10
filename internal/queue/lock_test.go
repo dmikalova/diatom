@@ -7,7 +7,7 @@ import (
 )
 
 func TestLockScheduler(t *testing.T) {
-	s := Open(t.TempDir())
+	s := bare(t)
 	if _, err := s.Scheduler(); !errors.Is(err, ErrNotRunning) {
 		t.Errorf("Scheduler before any ran = %v", err)
 	}
@@ -22,7 +22,7 @@ func TestLockScheduler(t *testing.T) {
 		t.Errorf("second lock = %v, want ErrRunning", err)
 	}
 	// Another repo has its own scheduler.
-	other, err := Open(t.TempDir()).LockScheduler()
+	other, err := bare(t).LockScheduler()
 	if err != nil {
 		t.Errorf("a second repo's lock = %v", err)
 	} else {

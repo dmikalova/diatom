@@ -159,6 +159,49 @@ func writeMarker(dir, repo string) error {
 	return os.WriteFile(path, []byte(repo+"\n"), 0o644)
 }
 
+// Repoint says where the repository of the state directory dir, under base,
+// is now that it has moved on disk, and tells git where the worktrees in it
+// are (ADR 0013).
+func Repoint(ctx context.Context, base, dir, repo string) error {
+	root, err := under(base, dir)
+	if err != nil {
+		return err
+	}
+	repo = filepath.Clean(strings.TrimSpace(repo))
+	if !filepath.IsAbs(repo) {
+		return fmt.Errorf("%s is no absolute path", repo)
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".git")); err != nil {
+		return fmt.Errorf("there is no repository at %s", repo)
+	}
+	if err := writeMarker(root, repo); err != nil {
+		return err
+	}
+	return repair(ctx, repo, root)
+}
+
+// Forget throws away everything diatom keeps about one repository: the
+// state directory dir under base, worktrees and all.
+func Forget(base, dir string) error {
+	root, err := under(base, dir)
+	if err != nil {
+		return err
+	}
+	return os.RemoveAll(root)
+}
+
+// under is the path of the state directory dir, which must be a directory
+// under base and not base itself.
+func under(base, dir string) (string, error) {
+	root := filepath.Join(base, dir)
+	rel, err := filepath.Rel(base, root)
+	if err != nil || rel == "." || rel == string(filepath.Separator) ||
+		strings.HasPrefix(rel, "..") {
+		return "", fmt.Errorf("%q names no state directory of %s", dir, base)
+	}
+	return root, nil
+}
+
 // origin is the URL of the repository's origin remote.
 func origin(ctx context.Context, repo string) (string, error) {
 	out, err := (git.Repo{Dir: repo}).Run(ctx, "remote", "get-url", "origin")

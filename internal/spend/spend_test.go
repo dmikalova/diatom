@@ -40,7 +40,7 @@ func ended(t *testing.T, s *queue.Store, goal, id string, at time.Time, usd, com
 }
 
 func TestRepo(t *testing.T) {
-	s := queue.Open(t.TempDir())
+	s := queue.At(t.TempDir(), t.TempDir(), "github.com/me/toy")
 	now := time.Date(2026, 9, 27, 15, 0, 0, 0, time.Local)
 	ended(t, s, "set", "a", now.Add(-time.Hour), 10, 0.5, true)
 	ended(t, s, "set", "b", now.Add(-16*time.Hour), 20, 0, true) // yesterday
@@ -73,7 +73,7 @@ func TestRepo(t *testing.T) {
 func usd(c Session) string { return fmt.Sprintf("%.2f", c.USD) }
 
 func TestSessionCache(t *testing.T) {
-	s := queue.Open(t.TempDir())
+	s := queue.At(t.TempDir(), t.TempDir(), "github.com/me/toy")
 	now := time.Now()
 	settled := ended(t, s, "set", "a", now, 1, 0, true)
 	open := ended(t, s, "set", "b", now, 2, 0, false)
@@ -101,7 +101,7 @@ func TestSessionCache(t *testing.T) {
 }
 
 func TestSpreadOverTheDaysWorked(t *testing.T) {
-	s := queue.Open(t.TempDir())
+	s := queue.At(t.TempDir(), t.TempDir(), "github.com/me/toy")
 	now := time.Date(2026, 9, 27, 15, 0, 0, 0, time.Local)
 	yesterday := now.AddDate(0, 0, -1)
 	// A run stopped yesterday evening, and resumed today: 3 steps
@@ -134,7 +134,7 @@ func TestSpreadOverTheDaysWorked(t *testing.T) {
 }
 
 func TestSuspendedRunsCount(t *testing.T) {
-	s := queue.Open(t.TempDir())
+	s := queue.At(t.TempDir(), t.TempDir(), "github.com/me/toy")
 	now := time.Now()
 	dir := filepath.Join(s.SessionsDir("set"), "a")
 	if err := session.Create(dir, session.Spec{ID: "a"}); err != nil {
@@ -161,7 +161,7 @@ func TestSuspendedRunsCount(t *testing.T) {
 }
 
 func TestDays(t *testing.T) {
-	s := queue.Open(t.TempDir())
+	s := queue.At(t.TempDir(), t.TempDir(), "github.com/me/toy")
 	now := time.Date(2026, 9, 27, 15, 0, 0, 0, time.Local)
 	ended(t, s, "set", "a", now.Add(-time.Hour), 10, 0, true)
 	ended(t, s, "set", "b", now.Add(-2*time.Hour), 30, 0, true)
@@ -197,7 +197,15 @@ func TestDays(t *testing.T) {
 // TestDaysAddsUpAWorkspace pins that several stores are one workspace: their
 // days are added together, and each goal says which repo it is in (ADR 0007).
 func TestDaysAddsUpAWorkspace(t *testing.T) {
-	one, two := queue.Open(t.TempDir()), queue.Open(t.TempDir())
+	one, two := queue.At(
+		t.TempDir(),
+		t.TempDir(),
+		"github.com/me/toy",
+	), queue.At(
+		t.TempDir(),
+		t.TempDir(),
+		"github.com/me/toy",
+	)
 	now := time.Date(2026, 9, 27, 15, 0, 0, 0, time.Local)
 	ended(t, one, "set", "a", now.Add(-time.Hour), 10, 0, true)
 	ended(t, two, "set", "b", now.Add(-2*time.Hour), 30, 0, true)

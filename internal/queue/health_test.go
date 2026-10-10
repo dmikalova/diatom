@@ -6,7 +6,7 @@ import (
 )
 
 func TestStuck(t *testing.T) {
-	s := Open(t.TempDir())
+	s := bare(t)
 	if st, err := s.Stuck(); err != nil || st != nil {
 		t.Fatalf("Stuck before = %+v, %v", st, err)
 	}

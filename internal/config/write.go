@@ -145,8 +145,43 @@ func Set(paths Paths, key string, values map[string]any) error {
 	return writeFile(path, file)
 }
 
-// write puts the whole config back, annotated. Diatom owns this file: it
-// explains every lever itself, so the comments in it are always the ones
+// DeleteKey takes a setting out of the config file, wherever it is: at the
+// top level and in every repo block. Blocks merge flat, so a key diatom has
+// no lever for could have come from any of them, and the human asked for it
+// gone rather than for one copy of it gone (ADR 0014). key is the dotted
+// path the error named, such as gate or profiles.fast.model.
+func DeleteKey(paths Paths, key string) error {
+	path := filepath.Join(paths.XDG, FileName)
+	file, err := read(path)
+	if err != nil {
+		return err
+	}
+	parts := strings.Split(key, ".")
+	drop(file, parts)
+	if repos, ok := file[reposKey].(map[string]any); ok {
+		for _, block := range repos {
+			if m, ok := block.(map[string]any); ok {
+				drop(m, parts)
+			}
+		}
+	}
+	return writeFile(path, file)
+}
+
+// drop removes the key at path from m, walking the tables along the way. A
+// path that isn't there is left alone.
+func drop(m map[string]any, path []string) {
+	for _, k := range path[:len(path)-1] {
+		next, ok := m[k].(map[string]any)
+		if !ok {
+			return
+		}
+		m = next
+	}
+	delete(m, path[len(path)-1])
+}
+
+// write puts the whole config back, annotated. Diatom owns this file: it// explains every lever itself, so the comments in it are always the ones
 // that match the diatom reading them (ADR 0013).
 func writeFile(path string, file map[string]any) error {
 	var b strings.Builder

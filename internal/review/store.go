@@ -178,9 +178,9 @@ func (s Store) intake(h Hunk, comments []Comment, now time.Time) error {
 	for _, c := range comments {
 		fmt.Fprintf(&b, "- Line %d: %s\n", h.NewLine(c.Line), c.Text)
 	}
-	// The goal's directory is <repo>/.diatom/goals/<goal>.
-	repo := filepath.Dir(filepath.Dir(filepath.Dir(s.Dir)))
-	_, err := intake.Write(intake.Dir(repo), intake.Intake{
+	// The goal's directory is <state>/goals/<goal>.
+	root := filepath.Dir(filepath.Dir(s.Dir))
+	_, err := intake.Write(intake.Dir(root), intake.Intake{
 		Source: "review", Created: now, Goal: filepath.Base(s.Dir),
 		Commit: h.Commit, Hunk: h.ID, Text: b.String(),
 	})

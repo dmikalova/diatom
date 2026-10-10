@@ -20,6 +20,7 @@ import (
 	"github.com/dmikalova/diatom/internal/runner/claude"
 	"github.com/dmikalova/diatom/internal/ui"
 	"github.com/dmikalova/diatom/internal/update"
+	"github.com/dmikalova/diatom/internal/workspace"
 )
 
 // logKeep is how big the scheduler's log may grow before the next start sets
@@ -47,12 +48,6 @@ func cmdApp(ctx context.Context) error {
 	if err := config.Ensure(paths); err != nil {
 		return err
 	}
-	for _, r := range w.Repos {
-		if err := ensureGate(r, paths.For(r.Key()), os.Stdin, os.Stderr,
-			terminal(os.Stdin)); err != nil {
-			return err
-		}
-	}
 	// The config is read once: a change to it takes effect when diatom
 	// next starts, as U does, and a mistake in it can't stop the running
 	// scheduler.
@@ -72,7 +67,7 @@ func cmdApp(ctx context.Context) error {
 		return update.Exec(bin)
 	}
 
-	sched, err := startScheduler(w.Repos, paths, cfg, log)
+	sched, err := startScheduler(w, paths, cfg, log)
 	if err != nil {
 		return err
 	}
@@ -132,11 +127,12 @@ type scheduler struct {
 // diatom is open on one of its repos elsewhere, none: the app then only
 // views. One scheduler covers every repo, so its session limit is shared.
 func startScheduler(
-	repos []*queue.Store,
+	w *workspace.Workspace,
 	paths config.Paths,
 	cfg *config.Config,
 	log *slog.Logger,
 ) (*scheduler, error) {
+	repos := w.Repos
 	var unlocks []func()
 	unlock := func() {
 		for _, u := range unlocks {
@@ -180,8 +176,8 @@ func startScheduler(
 	}
 	log.Info("diatom scheduler starting", "version", update.Version(), "repos", roots)
 	h := &harness.Harness{
-		Paths: paths, Roots: roots, Stores: repos, Config: cfg, Runner: claude.Runner{},
-		Exe: exe, Log: log,
+		Paths: paths, Roots: roots, Stores: repos, Skipped: w.Skipped,
+		Config: cfg, Runner: claude.Runner{}, Exe: exe, Log: log,
 	}
 	go func() {
 		defer close(done)

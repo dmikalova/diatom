@@ -2,7 +2,7 @@
 // goals and tasks (ADR 0009): notes typed into the intake pane, and comments on
 // approved hunks. Each intake is one Markdown file. An intake aimed at a goal
 // sits in the goal's intake/ directory; one with no goal yet, such as a new
-// goal, sits in the repo's .diatom/intake/. Triage moves a sorted intake to
+// goal, sits in the repo's own intake/. Triage moves a sorted intake to
 // done/ beside it.
 package intake
 
@@ -42,9 +42,9 @@ type Intake struct {
 }
 
 // Dir returns the repo's intake, where everything the human sends waits for
-// triage (ADR 0009).
-func Dir(repo string) string {
-	return filepath.Join(repo, ".diatom", "intake")
+// triage (ADR 0009). root is the repo's state directory, outside it.
+func Dir(root string) string {
+	return filepath.Join(root, "intake")
 }
 
 // Write saves an intake in dir under a name sorted by time.

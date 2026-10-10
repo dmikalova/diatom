@@ -38,9 +38,9 @@ func newFixture(t *testing.T) *fixture {
 	} {
 		f.git("config", kv[0], kv[1])
 	}
-	f.write(".gitignore", ".diatom/\n")
+	f.write(".gitignore", "node_modules/\n")
 	f.commitAll("chore: start")
-	f.store = queue.Open(f.repo.Dir)
+	f.store = queue.At(f.repo.Dir, t.TempDir(), "github.com/me/toy")
 	f.goal = &queue.Goal{
 		Name:  "set",
 		Title: "New set",

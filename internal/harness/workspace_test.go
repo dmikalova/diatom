@@ -31,7 +31,6 @@ func addRepo(t *testing.T, f *fixture, goal, ws string) *queue.Store {
 			t.Fatal(err)
 		}
 	}
-	writeFile(t, dir, ".git/info/exclude", ".diatom/\n")
 	writeFile(t, dir, "shared.txt", "base\n")
 	if _, err := r.StageAll(ctx); err != nil {
 		t.Fatal(err)
@@ -39,7 +38,7 @@ func addRepo(t *testing.T, f *fixture, goal, ws string) *queue.Store {
 	if _, err := r.Commit(ctx, "chore: start"); err != nil {
 		t.Fatal(err)
 	}
-	s := queue.Open(dir)
+	s := queue.At(dir, t.TempDir(), "github.com/me/"+goal)
 	if err := s.CreateGoal(&queue.Goal{
 		Name: goal, Title: goal, State: queue.GoalActive, Base: "main",
 		Workstreams: []queue.Workstream{{Name: ws}},
@@ -53,6 +52,7 @@ func addRepo(t *testing.T, f *fixture, goal, ws string) *queue.Store {
 		t.Fatal(err)
 	}
 	f.h.Roots = append(f.h.Roots, dir)
+	f.h.Stores = append(f.h.Stores, s)
 	return s
 }
 

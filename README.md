@@ -192,8 +192,9 @@ instead, naming the file and line.
 Every repo needs a gate, the check every commit must pass. A repo that sets
 none gets the one `[gates]` names for its kind of project: go (a `go.mod`),
 node (`package.json`), deno (`deno.json`), rust (`Cargo.toml`) or python
-(`pyproject.toml`). With neither, diatom asks for one when it opens and saves
-it in that repo's block.
+(`pyproject.toml`). Each kind has a default, so most repos need nothing set.
+A repo of several kinds takes the first one's, and a repo of no kind gets no
+gate: diatom opens on it either way, and asks for one when work on it starts.
 
 ```toml
 gate = "mage ci:check"            # this repo's gate

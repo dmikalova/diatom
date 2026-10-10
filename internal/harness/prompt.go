@@ -248,8 +248,8 @@ func writeOthers(b *strings.Builder, in PromptInput) {
 		"## The repo's other goals\n\nOther work under way in this repo. Where yours touches one, " +
 			"this is where it stands. `diatom task goals <name>` shows one in full: its plan, workstreams " +
 			"and tasks. That command and this list are the only record of other goals: don't read " +
-			"`.diatom/` or other worktrees for it, and don't take the repo's own notes or todo files as " +
-			"their status.\n\n",
+			"diatom's own files or other worktrees for it, and don't take the repo's own notes or todo " +
+			"files as their status.\n\n",
 	)
 	b.WriteString(list.String() + "\n")
 }

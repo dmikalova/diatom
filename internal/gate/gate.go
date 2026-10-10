@@ -46,7 +46,8 @@ func Echo(w io.Writer) Runner {
 
 func run(ctx context.Context, dir, command string, echo io.Writer) (Result, error) {
 	if strings.TrimSpace(command) == "" {
-		return Result{}, errors.New("no gate is configured: set gate in .diatom/config.toml")
+		return Result{}, errors.New(
+			"no gate is configured: set gate in ~/.config/diatom/config.toml")
 	}
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	cmd.Dir = dir

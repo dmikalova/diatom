@@ -1,6 +1,6 @@
 // Package ui is diatom's window (ADR 0007): a nav of Next, the intake and
 // the repo's goals down the left, and a main pane showing what it selects.
-// Everything it shows is read from .diatom/, and everything it changes is
+// Everything it shows is read from the repo's state directory, and everything it changes is
 // written there, so the scheduler running beside it needs no other channel.
 package ui
 
@@ -271,7 +271,7 @@ func (s *Status) repoRows(store *queue.Store) []goalRow {
 		return nil
 	}
 	notes := map[string]int{}
-	if pending, err := intake.Pending(intake.Dir(store.Repo())); err == nil {
+	if pending, err := intake.Pending(intake.Dir(store.Root)); err == nil {
 		for _, in := range pending {
 			if in.Source == "review" {
 				notes[in.Goal]++

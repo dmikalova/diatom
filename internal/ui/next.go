@@ -1036,15 +1036,77 @@ func (n *Next) render(focused bool, foot []string) string {
 	return strings.Join(append(out, foot...), "\n")
 }
 
-// idle is what Next says with nothing waiting.
+// idle is what Next says with nothing waiting: the pull requests left for
+// the human to merge, or that there is nothing at all.
 func (n *Next) idle() string {
+	var head strings.Builder
+	head.WriteString("Nothing needs you")
 	for _, r := range n.status.rows {
 		name, _ := goalStatus(r)
 		if len(r.activeWork) > 0 || name == "queued" {
-			return "Nothing needs you · work in progress"
+			head.WriteString(" · work in progress")
+			break
 		}
 	}
-	return "Nothing needs you"
+	prs := n.openPRs()
+	if len(prs) == 0 {
+		return head.String()
+	}
+	return strings.Join(
+		append([]string{head.String(), "", tui.Dim("Waiting to be merged")}, prs...),
+		"\n",
+	)
+}
+
+// openPRs lists the pull requests of every done goal that are open upstream,
+// goal by goal. Merging them is the last thing left on those goals, and it
+// is the human's: with everything else dealt with, Next hands them over
+// rather than saying nothing needs them.
+func (n *Next) openPRs() []string {
+	var out []string
+	for _, r := range n.status.rows {
+		if !awaitingMerge(r) {
+			continue
+		}
+		var urls []string
+		for _, pr := range r.landing.Landing.PRs {
+			if pr.State != "" && pr.State != "OPEN" {
+				continue
+			}
+			urls = append(urls, "    "+pr.URL+checksNote(pr))
+		}
+		if len(urls) == 0 {
+			continue
+		}
+		out = append(out, "  "+goalName(r.goal))
+		out = append(out, urls...)
+	}
+	return out
+}
+
+// goalName is what to call a goal on screen: its title, or its name when it
+// has none.
+func goalName(g *queue.Goal) string {
+	if g.Title != "" {
+		return g.Title
+	}
+	return g.Name
+}
+
+// checksNote says how a pull request's checks stand, and nothing when they
+// have passed: a list of links is for picking out the ones that need a look.
+func checksNote(pr finish.PRState) string {
+	switch pr.Checks {
+	case finish.ChecksFailed:
+		note := " checks failed"
+		if len(pr.Failing) > 0 {
+			note += ": " + strings.Join(pr.Failing, ", ")
+		}
+		return tui.Color(note, tui.Red)
+	case finish.ChecksPending:
+		return tui.Dim(" checks running")
+	}
+	return ""
 }
 
 // contextLines say what an item is about: its goal, where it stands, what it

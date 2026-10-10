@@ -1,5 +1,6 @@
 // Package queue is diatom's runtime state: goals, their tasks and the questions
-// they raise, stored as plain files under `$REPO/.diatom/` (ADR 0002).
+// they raise, stored as plain files in the repo's state directory, outside the
+// repo itself (ADRs 0002, 0013).
 //
 // Each task is one Markdown file with YAML frontmatter, and its state is the
 // directory it sits in. State changes are atomic renames, so after a crash a
@@ -8,16 +9,17 @@
 //
 // The layout of one goal:
 //
-//	.diatom/goals/<goal>/
+//	goals/<goal>/
 //	  goal.yaml                  the goal's state, branches and workstreams
 //	  tasks/<state>/<id>.md      pending, active, blocked or done
 //	  questions/<state>/<id>.md  open or closed
 //	  notes/<state>/<id>.md      open or read
+//	  problems/<state>/<id>.md   open or done
 //	  sessions/<id>/             one agent session's spec, report and log
 //	  worktrees/<workstream>/    one git worktree per workstream
 //
-// The repo also keeps `.diatom/landing/`, the one worktree every goal is
-// laid out and gated in.
+// Beside the goals sit `intake/`, what the human has sent for triage, and
+// `landing/`, the one worktree every goal is laid out and gated in.
 package queue
 
 import (
@@ -355,6 +357,9 @@ type Problem struct {
 	// Fix is a value a kind's own action took, such as the URL of the pull
 	// request that replaced a closed one.
 	Fix string `yaml:"fix,omitempty"`
+	// About names what the problem is about when that isn't the goal it is
+	// filed on, such as the state directory of an orphaned worktree.
+	About string `yaml:"about,omitempty"`
 
 	State ProblemState `yaml:"-"`
 	// Text is the whole output of what failed, the file's body. It can be
@@ -368,18 +373,11 @@ type Problem struct {
 type Store struct {
 	// Root is the directory the store is in.
 	Root string
-	// repo is the repository Root is the queue of, empty for the old layout
-	// where Root was the repository's own `.diatom/` directory.
+	// repo is the repository Root is the queue of.
 	repo string
 	// key names the repository by its origin, which is what the config's
 	// per-repo blocks are keyed by (ADR 0013).
 	key string
-}
-
-// Open returns the store in the repository's own `.diatom/` directory: the
-// layout before ADR 0013, which the migration reads and tests still use.
-func Open(repo string) *Store {
-	return &Store{Root: filepath.Join(repo, ".diatom")}
 }
 
 // At returns the store of the repository rooted at repo, kept in root
@@ -392,12 +390,7 @@ func At(repo, root, key string) *Store {
 func (s *Store) Key() string { return s.key }
 
 // Repo is the repository the store belongs to.
-func (s *Store) Repo() string {
-	if s.repo != "" {
-		return s.repo
-	}
-	return filepath.Dir(s.Root)
-}
+func (s *Store) Repo() string { return s.repo }
 
 // GoalDir is the directory of the named goal.
 func (s *Store) GoalDir(goal string) string { return filepath.Join(s.Root, "goals", goal) }

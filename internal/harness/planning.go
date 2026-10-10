@@ -34,7 +34,7 @@ func planningKind(k queue.Kind) bool { return k == queue.Triage || k == queue.Gr
 // the human was looking at is only a hint. The intake stays until its triage
 // is done.
 func (h *Harness) applyIntake(ctx context.Context, s *queue.Store) error {
-	items, err := intake.Pending(intake.Dir(s.Repo()))
+	items, err := intake.Pending(intake.Dir(s.Root))
 	if err != nil || len(items) == 0 {
 		return err
 	}
@@ -340,7 +340,7 @@ func (h *Harness) finishPlanning(
 		}
 		// A triage that asked is waiting on the human, not done.
 		if done && !asked[t.ID] && t.Kind == queue.Triage && t.Origin.Type == "intake" {
-			if err := doneIntake(s.Repo(), t.Origin.Ref); err != nil {
+			if err := doneIntake(s.Root, t.Origin.Ref); err != nil {
 				return err
 			}
 		}
@@ -694,8 +694,8 @@ func (h *Harness) applyPlan(
 }
 
 // doneIntake moves a triaged intake to done/.
-func doneIntake(repo, name string) error {
-	in, err := intake.Read(filepath.Join(intake.Dir(repo), name))
+func doneIntake(root, name string) error {
+	in, err := intake.Read(filepath.Join(intake.Dir(root), name))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}

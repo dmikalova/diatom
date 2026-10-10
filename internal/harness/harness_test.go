@@ -116,6 +116,9 @@ type fixture struct {
 	gateRan int
 }
 
+// repoKey names the fixture's repo as a store and the config key it.
+const repoKey = "github.com/me/toy"
+
 // newFixture makes a repo with one commit on main, a goal with the engine and
 // cards workstreams, and a harness over it.
 func newFixture(t *testing.T) *fixture {
@@ -131,7 +134,6 @@ func newFixture(t *testing.T) *fixture {
 			t.Fatal(err)
 		}
 	}
-	writeFile(t, repo, ".git/info/exclude", ".diatom/\n")
 	writeFile(t, repo, "shared.txt", "base\n")
 	if _, err := main.StageAll(ctx); err != nil {
 		t.Fatal(err)
@@ -140,7 +142,8 @@ func newFixture(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 
-	store := queue.Open(repo)
+	base := t.TempDir()
+	store := queue.At(repo, filepath.Join(base, "state", repoKey), repoKey)
 	if err := store.CreateGoal(
 		&queue.Goal{
 			Name:        "set",
@@ -152,13 +155,13 @@ func newFixture(t *testing.T) *fixture {
 	); err != nil {
 		t.Fatal(err)
 	}
-	base := t.TempDir()
 	writeFile(t, filepath.Join(base, "xdg"), "config.toml", "gate = \"check\"\nmaxSessions = 2\n")
 	f := &fixture{t: t, store: store, main: main, gateOK: func(string) bool { return true }}
 	f.agent = &agent{t: t}
 	f.h = &Harness{
 		Paths:  config.Paths{Home: base, XDG: filepath.Join(base, "xdg")},
 		Roots:  []string{repo},
+		Stores: []*queue.Store{store},
 		Runner: f.agent,
 		Exe:    "/usr/bin/true",
 		Gate: func(_ context.Context, dir, _ string) (gate.Result, error) {

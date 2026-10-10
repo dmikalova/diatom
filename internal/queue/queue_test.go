@@ -8,9 +8,16 @@ import (
 	"time"
 )
 
+// bare is an empty queue of a repository that need not exist: the tests of
+// the queue itself never touch it.
+func bare(t *testing.T) *Store {
+	t.Helper()
+	return At(t.TempDir(), t.TempDir(), "github.com/me/toy")
+}
+
 func newStore(t *testing.T) *Store {
 	t.Helper()
-	s := Open(t.TempDir())
+	s := bare(t)
 	if err := s.CreateGoal(
 		&Goal{
 			Name:  "new-set",
@@ -74,7 +81,7 @@ func TestValidName(t *testing.T) {
 			t.Errorf("ValidName(%q) accepted it", n)
 		}
 	}
-	s := Open(t.TempDir())
+	s := bare(t)
 	if err := s.CreateGoal(
 		&Goal{Name: "ok", Workstreams: []Workstream{{Name: "Bad"}}},
 	); err == nil {

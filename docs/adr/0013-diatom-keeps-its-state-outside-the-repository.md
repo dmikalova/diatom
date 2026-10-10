@@ -81,14 +81,16 @@ keys that change. A map or a list is the file's, and the page opens the file.
 
 ### The migration
 
-Diatom migrates a repository the first time it opens it: it moves `.diatom/`
-to the new place with one rename, then repairs every worktree with one
-`git worktree repair`. It refuses to migrate while the scheduler lock is held
-or while any session is unsettled, because a move under a running session
-loses work. The old directory is removed, not kept.
+Diatom migrated a repository the first time it opened it: it moved
+`.diatom/` to the new place with one rename, then repaired every worktree
+with one `git worktree repair`. It refused to migrate while the scheduler
+lock was held or while any session was unsettled, because a move under a
+running session loses work.
 
-The migration is a one-time mechanism. Remove it, and the global gitignore
-rule, once every repository has moved.
+The migration was a one-time mechanism, and it is gone. What it needed stays:
+a queue whose repository has moved is an orphan, which diatom raises as a
+`worktree` problem and repoints with the same `git worktree repair`
+(ADR 0014).
 
 ## Consequences
 

@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/dmikalova/diatom/internal/finish"
 	"github.com/dmikalova/diatom/internal/git"
 	"github.com/dmikalova/diatom/internal/intake"
 	"github.com/dmikalova/diatom/internal/plan"
@@ -411,7 +412,7 @@ func TestIntakeSendsWhatIsOnScreen(t *testing.T) {
 	key(a, "i")
 	typeText(a, "poison stacks too")
 	key(a, "enter")
-	items, _ := intake.Pending(intake.Dir(f.repo))
+	items, _ := intake.Pending(intake.Dir(f.store.Root))
 	if len(items) != 1 || items[0].Goal != "set" ||
 		!strings.Contains(items[0].Context, "question 0001 of set") ||
 		!strings.Contains(items[0].Context, "Does ward stack? It matters for poison.") {
@@ -622,7 +623,7 @@ func TestReviewNotesHoldTheLanding(t *testing.T) {
 		{Source: "review", Goal: "set", Created: time.Unix(10, 0), Text: "check the shark"},
 		{Source: "pane", Goal: "set", Created: time.Unix(11, 0), Text: "just a hint"},
 	} {
-		if _, err := intake.Write(intake.Dir(f.repo), in); err != nil {
+		if _, err := intake.Write(intake.Dir(f.store.Root), in); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -860,4 +861,43 @@ func TestNextAsksForMoreWork(t *testing.T) {
 	if it := a.next.shown(); it == nil || it.row.goal.Name == "late" || a.next.more {
 		t.Errorf("Next still on the goal: %v", it)
 	}
+}
+
+// TestNextHandsOverTheOpenPullRequests pins that with nothing else waiting,
+// Next lists the pull requests left for the human to merge rather than only
+// saying nothing needs them.
+func TestNextHandsOverTheOpenPullRequests(t *testing.T) {
+	n := &Next{status: &Status{rows: []goalRow{
+		{
+			goal: &queue.Goal{Name: "ward", Title: "Ward", State: queue.GoalDone},
+			landing: landedPRs(finish.PRState{URL: "https://example.com/pr/7", State: "OPEN"},
+				finish.PRState{URL: "https://example.com/pr/8", State: "OPEN",
+					Checks: finish.ChecksFailed, Failing: []string{"lint"}},
+				finish.PRState{URL: "https://example.com/pr/6", State: "MERGED"}),
+		},
+		{goal: &queue.Goal{Name: "poison", State: queue.GoalDone}},
+	}}}
+	out := ansi.Strip(n.idle())
+	for _, want := range []string{"Nothing needs you", "Waiting to be merged", "Ward",
+		"https://example.com/pr/7", "https://example.com/pr/8 checks failed: lint"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the idle page lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "pr/6") {
+		t.Errorf("a merged pull request is still listed:\n%s", out)
+	}
+	if strings.Contains(out, "poison") {
+		t.Errorf("a goal with no pull requests is listed:\n%s", out)
+	}
+
+	n.status.rows = n.status.rows[1:]
+	if got := n.idle(); got != "Nothing needs you" {
+		t.Errorf("with no pull requests open, idle = %q", got)
+	}
+}
+
+// landedPRs is a done goal's layout with its stack's pull requests open.
+func landedPRs(prs ...finish.PRState) *finish.Result {
+	return &finish.Result{Landing: &finish.Landing{Remote: "origin", How: finish.PRs, PRs: prs}}
 }

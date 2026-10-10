@@ -6,7 +6,7 @@ import (
 )
 
 func TestSetAfterAndWaiting(t *testing.T) {
-	s := Open(t.TempDir())
+	s := bare(t)
 	for _, name := range []string{"a", "b", "c"} {
 		if err := s.CreateGoal(&Goal{Name: name, State: GoalActive}); err != nil {
 			t.Fatal(err)

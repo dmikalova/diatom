@@ -8,11 +8,11 @@ import (
 )
 
 func TestWriteReadDone(t *testing.T) {
-	repo := t.TempDir()
-	if Dir(repo) != filepath.Join(repo, ".diatom", "intake") {
+	root := t.TempDir()
+	if Dir(root) != filepath.Join(root, "intake") {
 		t.Fatal("Dir is wrong")
 	}
-	dir := Dir(repo)
+	dir := Dir(root)
 	for i, text := range []string{"second\n", "  first  "} {
 		if _, err := Write(
 			dir,
@@ -35,7 +35,7 @@ func TestWriteReadDone(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "done", filepath.Base(pending[0].Path))); err != nil {
 		t.Errorf("Done did not move the intake: %v", err)
 	}
-	if none, err := Pending(filepath.Join(repo, "missing")); err != nil || none != nil {
+	if none, err := Pending(filepath.Join(root, "missing")); err != nil || none != nil {
 		t.Errorf("Pending of a missing dir = %v, %v", none, err)
 	}
 	if err := os.WriteFile(

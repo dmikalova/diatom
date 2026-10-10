@@ -26,11 +26,12 @@ import (
 	"github.com/dmikalova/diatom/internal/runner"
 	"github.com/dmikalova/diatom/internal/schedule"
 	"github.com/dmikalova/diatom/internal/spend"
+	"github.com/dmikalova/diatom/internal/workspace"
 )
 
 // Harness runs the scheduler loop.
 type Harness struct {
-	// Paths locate the config walk-up's stopping points.
+	// Paths say where the home config and the state directory are.
 	Paths config.Paths
 	// Roots are the repos the scheduler works in: one when diatom is opened
 	// in a repo, and every repo under the directory when it is opened over a
@@ -38,9 +39,11 @@ type Harness struct {
 	// limit is shared.
 	Roots []string
 	// Stores are the queues of Roots, in the same order, as the workspace
-	// opened them outside the repos (ADR 0013). Empty falls back to the old
-	// in-repo layout, which the tests use.
+	// opened them outside the repos (ADR 0013).
 	Stores []*queue.Store
+	// Skipped are the repos the window left out and why, each of which
+	// becomes a problem for the human (ADR 0014).
+	Skipped map[string]workspace.Skip
 	// Config is the first repo's config, read once when diatom starts, so a
 	// change to it, or a mistake in it, takes effect on the next start rather
 	// than stopping the running scheduler. Nil reads it afresh each time.
@@ -69,6 +72,9 @@ type Harness struct {
 	// checked holds when each commit's checks were last read, so a parked
 	// task doesn't poll GitHub on every pass (ADR 0014).
 	checked sync.Map
+	// prFails counts, per goal, how many times reading its pull requests
+	// has failed in a row: one failure passes, a run of them is a problem.
+	prFails sync.Map
 	// spent adds up what the repos' sessions cost, for their budgets, and
 	// spentNote holds each repo's budget last found spent, "" for none.
 	spent     *spend.Tally
@@ -77,14 +83,15 @@ type Harness struct {
 	fetched time.Time
 }
 
-// store is the queue of the repo rooted at root.
+// store is the queue of the repo rooted at root. Roots and Stores are the
+// same repos in the same order, so every root diatom works in has one.
 func (h *Harness) store(root string) *queue.Store {
 	for _, s := range h.Stores {
 		if s.Repo() == root {
 			return s
 		}
 	}
-	return queue.Open(root)
+	return nil
 }
 
 // lockRepo takes the repo's git lock and returns its unlock.
@@ -122,6 +129,7 @@ func (h *Harness) Run(stop, kill context.Context) error {
 	h.backfillLedger(kill)
 	if len(h.Stores) > 0 {
 		h.orphans(h.Stores[0])
+		h.leftOut(h.Stores[0])
 	}
 	p := &slots{
 		running: map[schedule.Running]bool{},
@@ -149,12 +157,7 @@ func (h *Harness) Run(stop, kill context.Context) error {
 			h.log().Error("planning failed", "err", err)
 		}
 		if kill.Err() == nil {
-			// The status pane shows it: until it clears, nothing starts.
-			for _, root := range h.Roots {
-				if err := h.store(root).SetStuck(errString(err), h.now()); err != nil {
-					h.log().Warn("recording the planning error failed", "repo", root, "err", err)
-				}
-			}
+			h.planFailed(err)
 		}
 		for _, b := range batches {
 			key := schedule.Running{
@@ -388,23 +391,36 @@ func (h *Harness) load(ctx context.Context, path string) (Repo, []*schedule.Goal
 	if err != nil {
 		return repo, nil, err
 	}
-	h.watchDone(ctx, repo.Store, all)
-	h.watchCI(ctx, repo, all)
-	h.followBases(ctx, repo.Store, all)
 	// Triage runs beside the goals, in the goal that holds it.
 	if g, err := repo.Store.Goal(queue.IntakeGoal); err == nil {
 		all = append([]*queue.Goal{g}, all...)
 	}
+	// Replies are taken in for every goal, and before anything is watched:
+	// a done goal is never scheduled, and watching it again would spend the
+	// reply the human has just given (ADR 0014).
+	for _, g := range all {
+		if err := h.applyReplies(ctx, repo.Store, g); err != nil {
+			return repo, nil, err
+		}
+	}
+	h.watchDone(ctx, repo.Store, all)
+	h.watchCI(ctx, repo, all)
+	h.followBases(ctx, repo.Store, all)
 	var goals []*schedule.Goal
 	// A goal that fails to load waits, and says why; the others go on.
 	var errs []error
 	for _, g := range all {
-		if g.State == queue.GoalParked {
-			if err := h.catchUpAfter(ctx, repo, g); err != nil {
-				errs = append(errs, fmt.Errorf("goal %s: %w", g.Name, err))
-			}
+		if g.State != queue.GoalActive && g.State != queue.GoalPlanning &&
+			g.State != queue.GoalParked {
+			continue
 		}
-		if g.State != queue.GoalActive && g.State != queue.GoalPlanning {
+		// A parked goal is never scheduled, but its branch still takes in
+		// what the goals it waits for landed.
+		if err := h.catchUpAfter(ctx, repo, g); err != nil {
+			errs = append(errs, fmt.Errorf("goal %s: %w", g.Name, err))
+			continue
+		}
+		if g.State == queue.GoalParked {
 			continue
 		}
 		sg, err := h.loadGoal(ctx, repo, g)
@@ -428,12 +444,6 @@ func (h *Harness) loadGoal(
 ) (*schedule.Goal, error) {
 	s := repo.Store
 	if err := h.applyAnswers(s, g.Name); err != nil {
-		return nil, err
-	}
-	if err := h.applyReplies(s, g); err != nil {
-		return nil, err
-	}
-	if err := h.catchUpAfter(ctx, repo, g); err != nil {
 		return nil, err
 	}
 	open, err := s.Problems(g.Name, queue.ProblemOpen)
@@ -742,6 +752,9 @@ func (h *Harness) watchLanding(ctx context.Context, s *queue.Store, g *queue.Goa
 	if err != nil {
 		h.log().
 			Warn("checking a done goal upstream failed", "repo", s.Repo(), "goal", g.Name, "err", err)
+		h.watchFailed(s, g, err)
+	} else {
+		h.watchWorked(s, g)
 	}
 	if !finished {
 		h.watchClosed(s, g)
@@ -751,6 +764,21 @@ func (h *Harness) watchLanding(ctx context.Context, s *queue.Store, g *queue.Goa
 	h.recordLanded(ctx, s, g)
 	if err := finish.RemoveWorktrees(ctx, s, g); err != nil {
 		h.log().Warn("removing a finished goal's worktrees failed", "goal", g.Name, "err", err)
+	}
+}
+
+// planFailed records what the last pass of planning hit, err nil for
+// nothing. Every repo shows it as stuck, and until it clears nothing starts.
+func (h *Harness) planFailed(err error) {
+	// A config diatom cannot read stops every repo, so it is a problem of
+	// the human's rather than only a line in the status pane (ADR 0014).
+	if err != nil && len(h.Stores) > 0 {
+		h.configProblem(h.Stores[0], err)
+	}
+	for _, root := range h.Roots {
+		if err := h.store(root).SetStuck(errString(err), h.now()); err != nil {
+			h.log().Warn("recording the planning error failed", "repo", root, "err", err)
+		}
 	}
 }
 

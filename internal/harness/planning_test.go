@@ -44,7 +44,7 @@ func (s agentSession) entry(e session.Entry) {
 func (f *fixture) queueIntake(t *testing.T, goal, text string) {
 	t.Helper()
 	if _, err := intake.Write(
-		intake.Dir(f.main.Dir),
+		intake.Dir(f.store.Root),
 		intake.Intake{Source: "pane", Created: time.Now(), Goal: goal, Text: text},
 	); err != nil {
 		t.Fatal(err)
@@ -53,7 +53,7 @@ func (f *fixture) queueIntake(t *testing.T, goal, text string) {
 
 func (f *fixture) pendingIntake(t *testing.T) int {
 	t.Helper()
-	items, err := intake.Pending(intake.Dir(f.main.Dir))
+	items, err := intake.Pending(intake.Dir(f.store.Root))
 	if err != nil {
 		t.Fatal(err)
 	}

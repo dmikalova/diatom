@@ -129,7 +129,7 @@ func newRepo(t *testing.T) *queue.Store {
 			t.Fatal(err)
 		}
 	}
-	return queue.Open(r.Dir)
+	return queue.At(r.Dir, t.TempDir(), "github.com/me/toy")
 }
 
 func TestNewGoal(t *testing.T) {

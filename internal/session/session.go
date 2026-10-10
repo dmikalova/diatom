@@ -34,12 +34,7 @@ import (
 const EnvVar = "DIATOM_SESSION"
 
 // Store is the queue the session's repo keeps, where the spec says it is.
-func (s Spec) Store() *queue.Store {
-	if s.State != "" {
-		return queue.At(s.Repo, s.State, s.Key)
-	}
-	return queue.Open(s.Repo)
-}
+func (s Spec) Store() *queue.Store { return queue.At(s.Repo, s.State, s.Key) }
 
 // Spec is what a session is for.
 type Spec struct {
@@ -47,8 +42,8 @@ type Spec struct {
 	Repo string `json:"repo"`
 	// State is where the repo's queue is, outside the repo (ADR 0013), and
 	// Key names the repo by its origin.
-	State      string     `json:"state,omitempty"`
-	Key        string     `json:"key,omitempty"`
+	State      string     `json:"state"`
+	Key        string     `json:"key"`
 	Goal       string     `json:"goal"`
 	Workstream string     `json:"workstream"`
 	Worktree   string     `json:"worktree"`

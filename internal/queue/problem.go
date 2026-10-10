@@ -40,10 +40,12 @@ func (p *Problem) Fixes() []Fix {
 	case ProblemWorktree:
 		return []Fix{
 			{Key: "u", Label: "Its repo moved: give the path it is at now", Value: true},
-			{Key: "x", Label: "Delete the worktree and build it again", Set: DeleteFix},
+			{Key: "x", Label: "Its repo is gone: forget its goals too", Set: DeleteFix},
 		}
 	case ProblemRepo, ProblemCheckout:
-		return []Fix{{Key: "x", Label: "Forget this repo", Set: DeleteFix}}
+		// Nothing of this repo's is diatom's to throw away: it kept none,
+		// which is the problem. The human fixes the repo, or gives up on it.
+		return nil
 	case ProblemConfigKey:
 		return []Fix{{Key: "x", Label: "Delete the key from the config", Set: DeleteFix}}
 	}

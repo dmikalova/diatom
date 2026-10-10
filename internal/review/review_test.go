@@ -32,13 +32,7 @@ func newFixture(t *testing.T) *fixture {
 			t.Fatal(err)
 		}
 	}
-	f := &fixture{t: t, repo: r, store: queue.Open(r.Dir)}
-	// diatom relies on .diatom/ being ignored, which a developer's global
-	// excludes do but CI's do not.
-	if err := os.MkdirAll(filepath.Join(r.Dir, ".git", "info"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	f.write(".git/info/exclude", ".diatom/\n")
+	f := &fixture{t: t, repo: r, store: queue.At(r.Dir, t.TempDir(), "github.com/me/toy")}
 	f.write("ward.go", lines(1, 20))
 	f.commit("chore: start")
 	if err := f.store.CreateGoal(&queue.Goal{Name: "set", State: queue.GoalActive}); err != nil {
@@ -239,7 +233,7 @@ func TestApprovedCommentBecomesIntake(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	inbox := intake.Dir(f.store.Repo())
+	inbox := intake.Dir(f.store.Root)
 	entries, err := os.ReadDir(inbox)
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("intake = %v, %v", entries, err)

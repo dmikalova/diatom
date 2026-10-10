@@ -43,6 +43,7 @@ func (h *Harness) followBases(ctx context.Context, s *queue.Store, goals []*queu
 		if err != nil {
 			h.log().Warn("taking in what a goal's base gained failed", "goal", g.Name, "base", tip,
 				"err", err)
+			h.catchUpFailed(s, g, tip, err)
 			continue
 		}
 		h.log().Info("a goal took in what its base gained", "goal", g.Name, "base", tip,

@@ -38,7 +38,6 @@ func landedRepo(t *testing.T) (*queue.Store, *queue.Goal) {
 			t.Fatal(err)
 		}
 	}
-	write(t, dir, ".git/info/exclude", ".diatom/\n")
 	write(t, dir, "ward.go", "package ward\n")
 	commit := func(msg string) string {
 		if _, err := r.StageAll(ctx); err != nil {
@@ -55,7 +54,7 @@ func landedRepo(t *testing.T) (*queue.Store, *queue.Goal) {
 	write(t, dir, "ward_test.go", "package ward\n\nfunc TestWard() {}\n")
 	write(t, dir, "docs/ward.md", "# Ward\n")
 	tip := commit("feat: ward")
-	s := queue.Open(dir)
+	s := queue.At(dir, t.TempDir(), "github.com/me/toy")
 	g := &queue.Goal{Name: "ward", Title: "Add ward", State: queue.GoalFinished, Base: "main",
 		Finished: time.Date(2026, 9, 24, 12, 0, 0, 0, time.Local)}
 	if err := s.CreateGoal(g); err != nil {

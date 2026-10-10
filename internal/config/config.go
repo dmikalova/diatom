@@ -1,9 +1,9 @@
-// Package config loads diatom's configuration (ADR 0007). A repo's settings are
-// merged from `.diatom/config.toml` in the repository root and in each of its
-// parent directories, then the XDG file `~/.config/diatom/config.toml`, where
-// the search stops. The closest file wins. Home-only settings (the profiles,
-// and updating diatom itself) are read from the XDG file alone, and setting
-// one anywhere else is an error.
+// Package config loads diatom's configuration (ADR 0013). A repo's settings
+// are the built-in defaults, then the top of the one file
+// `~/.config/diatom/config.toml`, then each `[repos."<prefix>"]` block of it
+// that covers the repo, longest last. Home-only settings (the profiles, and
+// updating diatom itself) are read from the top of the file alone, and
+// setting one in a block is an error.
 package config
 
 import (
@@ -24,11 +24,7 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// DirName is the directory that holds diatom's state and config in a repo, and
-// its config in any directory above one (ADR 0002).
-const DirName = ".diatom"
-
-// FileName is the config file inside DirName, and inside the XDG directory.
+// FileName is the config file inside the XDG directory.
 const FileName = "config.toml"
 
 // oldFileName is the YAML config diatom read before, which is now an error
@@ -398,8 +394,9 @@ func Kinds(root string) []string {
 }
 
 // kindCommand is the command table gives the repo at root, such as its gate
-// from gates, or "" when it gives none. A repo of two kinds that both have
-// one must set its own.
+// from gates, or "" when it gives none. A repo of several kinds takes the
+// first kind's, in the order kinds lists them, and sets its own where that
+// is the wrong one.
 func kindCommand(root, table string, gates map[string]string) (string, error) {
 	for name := range gates {
 		if !slices.ContainsFunc(kinds, func(k kind) bool { return k.name == name }) {
@@ -407,19 +404,12 @@ func kindCommand(root, table string, gates map[string]string) (string, error) {
 				table, name, kindNames())
 		}
 	}
-	var gate, from string
 	for _, k := range Kinds(root) {
-		g := strings.TrimSpace(gates[k])
-		switch {
-		case g == "":
-		case gate != "" && g != gate:
-			return "", fmt.Errorf("config: %s is both a %s and a %s project, whose %s differ: "+
-				"set its own in the config's block for it", root, from, k, table)
-		default:
-			gate, from = g, k
+		if g := strings.TrimSpace(gates[k]); g != "" {
+			return g, nil
 		}
 	}
-	return gate, nil
+	return "", nil
 }
 
 func kindNames() string {
@@ -563,6 +553,15 @@ func merge(dst, src map[string]any) {
 	}
 }
 
+// UnknownKeyError is a setting in the config diatom has no lever for. It is
+// typed so the harness can offer to delete the key (ADR 0014).
+type UnknownKeyError struct{ Key string }
+
+func (e *UnknownKeyError) Error() string {
+	return fmt.Sprintf("config: unknown setting %s: a typo, or a setting newer than this "+
+		"diatom, which updating it would fix", e.Key)
+}
+
 // decode turns the merged layers into a Config, rejecting unknown keys.
 func decode(m map[string]any) (*Config, error) {
 	var b bytes.Buffer
@@ -578,8 +577,7 @@ func decode(m map[string]any) (*Config, error) {
 		// MCP servers are in Claude Code's format, which diatom passes on
 		// as it is.
 		if key[0] != "mcpServers" {
-			return nil, fmt.Errorf("config: unknown setting %s: a typo, or a setting "+
-				"newer than this diatom, which updating it would fix", key)
+			return nil, &UnknownKeyError{Key: key.String()}
 		}
 	}
 	if c.Land != "" && c.Land != LandMerge && c.Land != LandPRs {

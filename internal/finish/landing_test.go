@@ -233,7 +233,7 @@ func TestWatchOffGitHubHasNoChecks(t *testing.T) {
 }
 
 func TestMoreWork(t *testing.T) {
-	s := queue.Open(t.TempDir())
+	s := queue.At(t.TempDir(), t.TempDir(), "github.com/me/toy")
 	g := &queue.Goal{Name: "set", State: queue.GoalDone, Base: "main",
 		Workstreams: []queue.Workstream{{Name: "a"}, {Name: "b", DependsOn: []string{"a"}}}}
 	if err := s.CreateGoal(g); err != nil {

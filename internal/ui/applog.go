@@ -15,7 +15,7 @@ import (
 // logTail is how much of the end of the log the window reads.
 const logTail = 256 << 10
 
-// LogPath is where the scheduler logs: in the repo's .diatom/.
+// LogPath is where the scheduler logs: in the repo's state directory.
 func LogPath(s *queue.Store) string { return filepath.Join(s.Root, "diatom.log") }
 
 // logLines are the end of the scheduler's log, wrapped to w, errors in red

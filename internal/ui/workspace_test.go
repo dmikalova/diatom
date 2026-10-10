@@ -36,7 +36,7 @@ func second(t *testing.T, f *fixture, name, goal string) *queue.Store {
 	if _, err := r.Commit(ctx, "feat: card"); err != nil {
 		t.Fatal(err)
 	}
-	store := queue.Open(dir)
+	store := queue.At(dir, t.TempDir(), "github.com/me/"+goal)
 	if err := store.CreateGoal(&queue.Goal{Name: goal, Title: "Draw a card",
 		State: queue.GoalActive, Base: "main"}); err != nil {
 		t.Fatal(err)

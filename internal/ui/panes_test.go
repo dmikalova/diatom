@@ -53,7 +53,6 @@ func newFixture(t *testing.T) *fixture {
 			t.Fatal(err)
 		}
 	}
-	write(t, filepath.Join(repo, ".git", "info", "exclude"), ".diatom/\n")
 	write(t, filepath.Join(repo, "ward.go"), "package ward\n")
 	if _, err := r.StageAll(ctx); err != nil {
 		t.Fatal(err)
@@ -62,7 +61,7 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := queue.Open(repo)
+	store := queue.At(repo, t.TempDir(), "github.com/me/toy")
 	if err := store.CreateGoal(
 		&queue.Goal{Name: "set", State: queue.GoalActive, Base: "main"},
 	); err != nil {
@@ -442,7 +441,7 @@ func TestIntakeBox(t *testing.T) {
 	typeText(a, "new goal:")
 	key(a, "shift+enter")
 	typeText(a, "implement the next set")
-	if pending, _ := intake.Pending(intake.Dir(f.repo)); len(pending) != 0 {
+	if pending, _ := intake.Pending(intake.Dir(f.store.Root)); len(pending) != 0 {
 		t.Fatal("shift+enter sent the intake")
 	}
 	key(a, "enter")
@@ -451,7 +450,7 @@ func TestIntakeBox(t *testing.T) {
 	}
 	typeText(a, "playtest: ward felt too strong")
 	key(a, "enter")
-	pending, err := intake.Pending(intake.Dir(f.repo))
+	pending, err := intake.Pending(intake.Dir(f.store.Root))
 	if err != nil || len(pending) != 2 || pending[0].Text != "new goal:\nimplement the next set" ||
 		pending[1].Text != "playtest: ward felt too strong" || pending[1].Goal != "set" ||
 		pending[1].Source != "window" {

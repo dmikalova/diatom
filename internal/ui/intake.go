@@ -41,7 +41,7 @@ func NewIntake(env Env) *Intake {
 }
 
 func (m *Intake) reload() {
-	items, err := intake.Pending(intake.Dir(m.store().Repo()))
+	items, err := intake.Pending(intake.Dir(m.store().Root))
 	m.err = err
 	m.pending = len(items)
 	m.area.Placeholder = m.placeholder()
@@ -102,7 +102,7 @@ func (m *Intake) submit() {
 	if m.about != nil {
 		in.Goal, in.Context = m.about()
 	}
-	if _, err := intake.Write(intake.Dir(m.store().Repo()), in); err != nil {
+	if _, err := intake.Write(intake.Dir(m.store().Root), in); err != nil {
 		m.err = err
 		m.resize()
 		return

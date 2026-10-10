@@ -127,3 +127,33 @@ func TestOrphansAreTheReposThatAreGone(t *testing.T) {
 		t.Errorf("orphans = %v, want the one repo that is gone", got)
 	}
 }
+
+// TestRepointAndForgetDealWithAnOrphan pins the two answers to an orphan:
+// say where its repo went, or throw away what is kept of it (ADR 0013).
+func TestRepointAndForgetDealWithAnOrphan(t *testing.T) {
+	base := t.TempDir()
+	dir := repo(t, "git@github.com:me/toy.git")
+	if _, err := Open(context.Background(), base, dir); err != nil {
+		t.Fatal(err)
+	}
+	const key = "github.com/me/toy"
+	moved := repo(t, "git@github.com:me/toy.git")
+	if err := Repoint(context.Background(), base, key, moved); err != nil {
+		t.Fatal(err)
+	}
+	if at := Markers(base)[key]; at != moved {
+		t.Errorf("the marker says %q, want %q", at, moved)
+	}
+	if err := Repoint(context.Background(), base, key, filepath.Join(base, "nowhere")); err == nil {
+		t.Error("repointing at a path with no repo was allowed")
+	}
+	if err := Forget(base, ".."); err == nil {
+		t.Error("forgetting a directory outside the base was allowed")
+	}
+	if err := Forget(base, key); err != nil {
+		t.Fatal(err)
+	}
+	if got := Markers(base); len(got) != 0 {
+		t.Errorf("after forgetting it, the markers are %v", got)
+	}
+}

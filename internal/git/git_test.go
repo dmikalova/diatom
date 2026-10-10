@@ -65,7 +65,7 @@ func TestWorktreeAndBranches(t *testing.T) {
 	if err := r.CreateBranch(ctx, "g/integration", "main"); err != nil {
 		t.Fatal(err)
 	}
-	wt := filepath.Join(r.Dir, ".diatom", "wt")
+	wt := filepath.Join(t.TempDir(), "wt")
 	if err := r.EnsureWorktree(ctx, wt, "g/ws/engine", "g/integration"); err != nil {
 		t.Fatal(err)
 	}
@@ -259,9 +259,9 @@ func TestFingerprintAndDirty(t *testing.T) {
 func TestIsIgnored(t *testing.T) {
 	ctx := context.Background()
 	r := newRepo(t)
-	writeFile(t, r, ".gitignore", ".diatom/\n")
-	if !r.IsIgnored(ctx, ".diatom/") {
-		t.Error(".diatom/ not reported ignored")
+	writeFile(t, r, ".gitignore", "build/\n")
+	if !r.IsIgnored(ctx, "build/") {
+		t.Error("build/ not reported ignored")
 	}
 	if r.IsIgnored(ctx, "a.txt") {
 		t.Error("a.txt reported ignored")
