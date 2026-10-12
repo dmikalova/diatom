@@ -224,6 +224,11 @@ func watch(
 		return false, err
 	}
 	merged, err := Merged(ctx, repo, res.Tip(), upstream)
+	// GitHub merging every pull request lands the goal even when its own
+	// commits never reach upstream, as after one was closed and replaced.
+	if !merged && allMerged(l.PRs) {
+		merged, err = true, nil
+	}
 	if err != nil || !merged {
 		l.Merged, l.MergedAt, l.Checks, l.Failing = "", time.Time{}, "", nil
 		return false, errors.Join(append(errs, err)...)
@@ -231,15 +236,21 @@ func watch(
 	if l.Merged == "" {
 		l.Merged, l.MergedAt = upstream, now
 	}
-	// Checks are read from GitHub; a remote elsewhere has none to read.
+	// Checks are read from GitHub; a remote elsewhere has none to read. They
+	// are read from the commit the goal was seen merged into, not from the
+	// branch now: a busy base branch moves every few minutes, and chasing its
+	// tip reads everyone else's work forever.
 	var runs []check
 	if strings.Contains(url, "github.com") {
-		if runs, err = checkRuns(ctx, gh, repo.Dir, upstream); err != nil {
+		if runs, err = checkRuns(ctx, gh, repo.Dir, l.Merged); err != nil {
 			return false, errors.Join(append(errs, err)...)
 		}
 	}
 	l.Checks, l.Failing = verdict(runs)
-	finished := l.Checks == ChecksPassed ||
+	// A merged pull request is the end of the goal. What the base branch's own
+	// CI does afterwards is the branch's to fix, not this goal's, and holding
+	// the goal open for it leaves it done forever.
+	finished := allMerged(l.PRs) || l.Checks == ChecksPassed ||
 		l.Checks == ChecksNone && now.Sub(l.MergedAt) >= NoChecksGrace
 	return finished, errors.Join(errs...)
 }
@@ -257,6 +268,14 @@ func Merged(ctx context.Context, repo git.Repo, tip, upstream string) (bool, err
 	}
 	have, err := repo.Run(ctx, "rev-parse", upstream+"^{tree}")
 	return tree == have, err
+}
+
+// allMerged reports whether GitHub has merged every pull request of the
+// stack.
+func allMerged(prs []PRState) bool {
+	return len(prs) > 0 && !slices.ContainsFunc(prs, func(pr PRState) bool {
+		return !strings.EqualFold(pr.State, "MERGED")
+	})
 }
 
 // check is one check on a commit, GitHub's check run or commit status

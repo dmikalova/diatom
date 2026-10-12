@@ -126,10 +126,11 @@ func TestWatchFinishesOnceMergedAndPassing(t *testing.T) {
 		t.Error("watched again before WatchEvery")
 	}
 
-	// Squash-merged upstream: another commit with the goal's files.
+	// Landed upstream as another commit with the goal's files, by a human
+	// cherry-picking it, so the pull request itself is still open.
 	squash := f.git("commit-tree", res.Tip()+"^{tree}", "-p", "main", "-m", "New set (#7)")
 	f.git("push", "--quiet", "origin", squash+":refs/heads/main")
-	gh.prState, gh.runs = "MERGED", "ci\tin_progress\t"
+	gh.runs = "ci\tin_progress\t"
 	now = now.Add(WatchEvery)
 	if watch(now) {
 		t.Fatal("finished with the checks still running")
@@ -158,6 +159,35 @@ func TestWatchFinishesOnceMergedAndPassing(t *testing.T) {
 	}
 	if g, _ := f.store.Goal("set"); g.State != queue.GoalFinished || !g.Finished.Equal(now) {
 		t.Errorf("goal state = %s, finished %v", g.State, g.Finished)
+	}
+}
+
+// A pull request that replaced a closed one lands commits of its own, so
+// the goal's tip never reaches upstream. GitHub merging it settles the goal
+// all the same, whatever the base branch's own checks do afterwards.
+func TestWatchFinishesOnceEveryPRIsMerged(t *testing.T) {
+	f := newFixture(t)
+	f.task("engine", f.work("engine", "engine.txt", "ward\n", "feat: add ward"))
+	f.withRemote()
+	res := f.build(Options{})
+	gh := &fakeGH{prState: "OPEN"}
+	if _, err := Land(f.ctx, f.store, f.goal, res, PRs, "origin", gh.run); err != nil {
+		t.Fatal(err)
+	}
+	// The replacement carries different work, with none of the goal's own.
+	f.git("checkout", "--quiet", "main")
+	f.write("other.txt", "reworked\n")
+	f.git("add", "other.txt")
+	f.git("commit", "--quiet", "-m", "feat: add ward, reworked (#8)")
+	f.git("push", "--quiet", "origin", "main")
+
+	gh.prState, gh.runs = "MERGED", "ci\tcompleted\tfailure"
+	finished, err := Watch(f.ctx, f.store, f.goal, gh.run, time.Unix(1000, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !finished {
+		t.Error("a goal whose only pull request merged never finished")
 	}
 }
 
