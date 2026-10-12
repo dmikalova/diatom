@@ -3,9 +3,12 @@ package finish
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os/exec"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/dmikalova/diatom/internal/git"
@@ -44,7 +47,8 @@ func push(ctx context.Context, s *queue.Store, g *queue.Goal, res *Result, remot
 // OpenPRs pushes each pull request's branch to remote and opens a pull
 // request for it on top of the one before, the first on the base branch. A
 // pull request already open for a branch is kept, and pointed at the branch
-// before it again. It returns each pull request's URL.
+// before it again. The pull requests are then linked into a GitHub stack. It
+// returns each pull request's URL.
 func OpenPRs(
 	ctx context.Context,
 	s *queue.Store,
@@ -105,7 +109,72 @@ func OpenPRs(
 		lines := strings.Split(out, "\n")
 		urls = append(urls, lines[len(lines)-1])
 	}
+	if len(urls) > 1 {
+		return urls, linkStack(ctx, repo.Dir, gh, urls)
+	}
 	return urls, nil
+}
+
+// linkStack makes GitHub itself treat the pull requests as one stack. Chaining
+// the base branches is only the precondition: without the stack object there
+// is no stack map, mid-stack pull requests don't get the trunk's rules and
+// checks, and merging the bottom one doesn't retarget the rest.
+//
+// Linking is additive and idempotent, so reopening a goal's pull requests
+// after a failure here picks up where it stopped.
+func linkStack(ctx context.Context, dir string, gh GH, urls []string) error {
+	nums := make([]int, 0, len(urls))
+	for _, u := range urls {
+		n, err := prNumber(u)
+		if err != nil {
+			return err
+		}
+		nums = append(nums, n)
+	}
+	out, err := gh(ctx, dir, "api",
+		fmt.Sprintf("repos/{owner}/{repo}/stacks?pull_request=%d", nums[0]))
+	if err != nil {
+		return err
+	}
+	var stacks []struct {
+		Number       int `json:"number"`
+		PullRequests []struct {
+			Number int `json:"number"`
+		} `json:"pull_requests"`
+	}
+	if err := json.Unmarshal([]byte(out), &stacks); err != nil {
+		return fmt.Errorf("reading the stacks of pull request %d: %w", nums[0], err)
+	}
+	path, add := "repos/{owner}/{repo}/stacks", nums
+	if len(stacks) > 0 {
+		path = fmt.Sprintf("repos/{owner}/{repo}/stacks/%d/add", stacks[0].Number)
+		in := make([]int, 0, len(stacks[0].PullRequests))
+		for _, pr := range stacks[0].PullRequests {
+			in = append(in, pr.Number)
+		}
+		add = slices.DeleteFunc(
+			slices.Clone(nums),
+			func(n int) bool { return slices.Contains(in, n) },
+		)
+		if len(add) == 0 {
+			return nil
+		}
+	}
+	args := []string{"api", "--method", "POST", path}
+	for _, n := range add {
+		args = append(args, "-F", "pull_requests[]="+strconv.Itoa(n))
+	}
+	_, err = gh(ctx, dir, args...)
+	return err
+}
+
+// prNumber is the pull request number a gh URL ends in.
+func prNumber(url string) (int, error) {
+	n, err := strconv.Atoi(url[strings.LastIndex(url, "/")+1:])
+	if err != nil {
+		return 0, fmt.Errorf("no pull request number in %q", url)
+	}
+	return n, nil
 }
 
 // noSuchPR reports whether gh failed only because the branch has no pull
@@ -130,7 +199,7 @@ func prBody(g *queue.Goal, res *Result, i int, before []string) string {
 		fmt.Fprintf(&b, "The %s workstream of goal %s, pull request %d of %d.",
 			pr.Workstream, g.Name, i+1, len(res.Stack))
 		if i > 0 {
-			fmt.Fprintf(&b, " It is stacked on %s: merge that first.", before[i-1])
+			fmt.Fprintf(&b, " It is stacked on %s, which merges with it.", before[i-1])
 		}
 		b.WriteString("\n\n")
 	}

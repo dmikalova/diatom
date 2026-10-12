@@ -400,6 +400,13 @@ func TestPushAndOpenPRs(t *testing.T) {
 	var calls []string
 	open := map[string]bool{"diatom/set/review": true}
 	gh := func(_ context.Context, _ string, args ...string) (string, error) {
+		if args[0] == "api" {
+			calls = append(calls, strings.Join(args, " "))
+			if args[1] == "--method" {
+				return "", nil
+			}
+			return "[]", nil
+		}
 		calls = append(calls, strings.Join(args[:min(len(args), 6)], " "))
 		switch args[1] {
 		case "view":
@@ -424,6 +431,9 @@ func TestPushAndOpenPRs(t *testing.T) {
 		"pr edit diatom/set/review --base main",
 		"pr view diatom/set/pr/cards --json url --jq",
 		"pr create --head diatom/set/pr/cards --base diatom/set/review",
+		"api repos/{owner}/{repo}/stacks?pull_request=1",
+		"api --method POST repos/{owner}/{repo}/stacks " +
+			"-F pull_requests[]=1 -F pull_requests[]=2",
 	}
 	if !slices.Equal(calls, wantCalls) {
 		t.Errorf("gh calls:\n%s", strings.Join(calls, "\n"))
@@ -459,6 +469,42 @@ func TestPushAndOpenPRs(t *testing.T) {
 	if err := push(f.ctx, f.store, f.goal, res, "origin"); err == nil ||
 		!strings.Contains(err.Error(), "main on origin moved on") {
 		t.Errorf("push onto a moved main = %v", err)
+	}
+}
+
+// TestLinkStackAddsOnlyWhatIsMissing pins that a goal laid out again grows
+// the stack it already has rather than trying to create a second one, and
+// that a stack already holding every pull request is left alone.
+func TestLinkStackAddsOnlyWhatIsMissing(t *testing.T) {
+	urls := []string{"https://example.com/pull/7", "https://example.com/pull/8"}
+	for _, tc := range []struct {
+		name string
+		list string
+		want string
+	}{{
+		name: "grows",
+		list: `[{"number":3,"pull_requests":[{"number":7}]}]`,
+		want: "api --method POST repos/{owner}/{repo}/stacks/3/add -F pull_requests[]=8",
+	}, {
+		name: "complete",
+		list: `[{"number":3,"pull_requests":[{"number":7},{"number":8}]}]`,
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			var post string
+			gh := func(_ context.Context, _ string, args ...string) (string, error) {
+				if args[1] == "--method" {
+					post = strings.Join(args, " ")
+					return "", nil
+				}
+				return tc.list, nil
+			}
+			if err := linkStack(t.Context(), t.TempDir(), gh, urls); err != nil {
+				t.Fatal(err)
+			}
+			if post != tc.want {
+				t.Errorf("post = %q, want %q", post, tc.want)
+			}
+		})
 	}
 }
 

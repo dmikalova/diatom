@@ -123,7 +123,9 @@ agent's fix lands as a `fixup!` commit that comes back for review.
 
 A goal ready to finish comes up in Next. `P` merges it into the base branch,
 and `F` opens it as a stack of pull requests instead, one per workstream on
-`diatom/<goal>/pr/<ws>`, each stacked on the one before; `d` only marks it
+`diatom/<goal>/pr/<ws>`, each based on the one before and linked into a GitHub
+stack, so the merge box shows the whole stack and merging one takes the ones
+below it with it; `d` only marks it
 done, to land later. A goal's base is the branch `origin`'s HEAD points at,
 usually `main`, whatever you have checked out, and it starts from the remote's
 tip of it. The first of that stack is the pull request the goal has
